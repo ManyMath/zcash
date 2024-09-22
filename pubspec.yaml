@@ -1,14 +1,13 @@
 name: zcash
-description: Zcash Dart SDK.
+description: Zcash Dart SDK, JSON-RPC client for Zebra full nodes.
 version: 0.0.1-dev.1
 repository: https://github.com/ManyMath/zcashdart
 
 environment:
-  sdk: ^3.6.0-216.1.beta
+  sdk: '>=3.4.0 <4.0.0'
 
 dependencies:
-  native_toolchain_rust: ^0.1.0-dev.7
-  native_assets_cli: ^0.7.3
+  http: ^1.2.0
 
 dev_dependencies:
   lints: ^4.0.0
