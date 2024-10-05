@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import 'models/blockchain_info.dart';
+import 'models/block.dart';
 
 class ZebraRpcException implements Exception {
   final int code;
@@ -69,5 +70,14 @@ class ZebraClient {
   Future<BlockHeightAndHash> getBestBlockHeightAndHash() async {
     final result = await _call('getbestblockheightandhash');
     return BlockHeightAndHash.fromJson(result as Map<String, dynamic>);
+  }
+
+  Future<String> getRawBlock(String hashOrHeight) async {
+    return await _call('getblock', [hashOrHeight, 0]) as String;
+  }
+
+  Future<BlockInfo> getBlock(String hashOrHeight) async {
+    final result = await _call('getblock', [hashOrHeight, 1]);
+    return BlockInfo.fromJson(result as Map<String, dynamic>);
   }
 }
