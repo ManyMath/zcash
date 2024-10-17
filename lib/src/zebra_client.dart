@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 
 import 'models/blockchain_info.dart';
 import 'models/block.dart';
+import 'models/transaction.dart';
 
 class ZebraRpcException implements Exception {
   final int code;
@@ -79,5 +80,23 @@ class ZebraClient {
   Future<BlockInfo> getBlock(String hashOrHeight) async {
     final result = await _call('getblock', [hashOrHeight, 1]);
     return BlockInfo.fromJson(result as Map<String, dynamic>);
+  }
+
+  Future<String> getRawTransaction(String txid) async {
+    return await _call('getrawtransaction', [txid, 0]) as String;
+  }
+
+  Future<TransactionInfo> getTransaction(String txid) async {
+    final result = await _call('getrawtransaction', [txid, 1]);
+    return TransactionInfo.fromJson(result as Map<String, dynamic>);
+  }
+
+  Future<String> sendRawTransaction(String txHex) async {
+    return await _call('sendrawtransaction', [txHex]) as String;
+  }
+
+  Future<List<String>> getRawMempool() async {
+    final result = await _call('getrawmempool');
+    return (result as List).cast<String>();
   }
 }
