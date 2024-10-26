@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import 'models/blockchain_info.dart';
 import 'models/block.dart';
 import 'models/transaction.dart';
+import 'models/address.dart';
 
 class ZebraRpcException implements Exception {
   final int code;
@@ -98,5 +99,31 @@ class ZebraClient {
   Future<List<String>> getRawMempool() async {
     final result = await _call('getrawmempool');
     return (result as List).cast<String>();
+  }
+
+  Future<AddressBalance> getAddressBalance(List<String> addresses) async {
+    final result =
+        await _call('getaddressbalance', [{'addresses': addresses}]);
+    return AddressBalance.fromJson(result as Map<String, dynamic>);
+  }
+
+  Future<List<String>> getAddressTxIds(
+    List<String> addresses, {
+    int? startHeight,
+    int? endHeight,
+  }) async {
+    final params = <String, dynamic>{'addresses': addresses};
+    if (startHeight != null) params['start'] = startHeight;
+    if (endHeight != null) params['end'] = endHeight;
+    final result = await _call('getaddresstxids', [params]);
+    return (result as List).cast<String>();
+  }
+
+  Future<List<AddressUtxo>> getAddressUtxos(List<String> addresses) async {
+    final result =
+        await _call('getaddressutxos', [{'addresses': addresses}]);
+    return (result as List)
+        .map((e) => AddressUtxo.fromJson(e as Map<String, dynamic>))
+        .toList();
   }
 }
