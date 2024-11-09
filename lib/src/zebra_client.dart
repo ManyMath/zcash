@@ -6,6 +6,7 @@ import 'models/blockchain_info.dart';
 import 'models/block.dart';
 import 'models/transaction.dart';
 import 'models/address.dart';
+import 'models/tree_state.dart';
 
 class ZebraRpcException implements Exception {
   final int code;
@@ -125,5 +126,23 @@ class ZebraClient {
     return (result as List)
         .map((e) => AddressUtxo.fromJson(e as Map<String, dynamic>))
         .toList();
+  }
+
+  Future<TreeState> getTreeState(String hashOrHeight) async {
+    final result = await _call('z_gettreestate', [hashOrHeight]);
+    return TreeState.fromJson(result as Map<String, dynamic>);
+  }
+
+  Future<SubtreeList> getSubtreesByIndex(
+    String pool,
+    int startIndex, {
+    int? limit,
+  }) async {
+    final result = await _call('z_getsubtreesbyindex', [
+      pool,
+      startIndex,
+      if (limit != null) limit,
+    ]);
+    return SubtreeList.fromJson(result as Map<String, dynamic>);
   }
 }
