@@ -21,15 +21,27 @@ class ZebraRpcException implements Exception {
 class ZebraClient {
   final Uri _endpoint;
   final http.Client _http;
+  final String? _authHeader;
   int _id = 0;
 
-  ZebraClient({String host = 'localhost', int port = 8232, http.Client? client})
-      : _endpoint = Uri.http('$host:$port', '/'),
+  ZebraClient({
+    String host = 'localhost',
+    int port = 8232,
+    String? username,
+    String? password,
+    http.Client? client,
+  })  : _endpoint = Uri.http('$host:$port', '/'),
+        _authHeader = (username != null && password != null)
+            ? 'Basic ${base64Encode(utf8.encode('$username:$password'))}'
+            : null,
         _http = client ?? http.Client();
 
   void close() => _http.close();
 
   Future<dynamic> _call(String method, [List<dynamic>? params]) async {
+    final headers = <String, String>{'Content-Type': 'application/json'};
+    if (_authHeader != null) headers['Authorization'] = _authHeader;
+
     final body = jsonEncode({
       'jsonrpc': '2.0',
       'method': method,
@@ -37,11 +49,7 @@ class ZebraClient {
       'id': ++_id,
     });
 
-    final response = await _http.post(
-      _endpoint,
-      headers: const {'Content-Type': 'application/json'},
-      body: body,
-    );
+    final response = await _http.post(_endpoint, headers: headers, body: body);
 
     final decoded = jsonDecode(response.body) as Map<String, dynamic>;
 
@@ -144,5 +152,10 @@ class ZebraClient {
       if (limit != null) limit,
     ]);
     return SubtreeList.fromJson(result as Map<String, dynamic>);
+  }
+
+  // Regtest only.
+  Future<void> stop() async {
+    await _call('stop');
   }
 }
