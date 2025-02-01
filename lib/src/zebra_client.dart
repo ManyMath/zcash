@@ -7,6 +7,7 @@ import 'models/block.dart';
 import 'models/transaction.dart';
 import 'models/address.dart';
 import 'models/tree_state.dart';
+import 'models/block_header.dart';
 
 class ZebraRpcException implements Exception {
   final int code;
@@ -157,5 +158,10 @@ class ZebraClient {
   // Regtest only.
   Future<void> stop() async {
     await _call('stop');
+  }
+
+  Future<BlockHeader> getBlockHeader(String hashOrHeight) async {
+    final result = await _call('getblockheader', [hashOrHeight, true]);
+    return BlockHeader.fromJson(result as Map<String, dynamic>);
   }
 }
