@@ -164,4 +164,9 @@ class ZebraClient {
     final result = await _call('getblockheader', [hashOrHeight, true]);
     return BlockHeader.fromJson(result as Map<String, dynamic>);
   }
+
+  Future<BlockInfoFull> getBlockFull(String hashOrHeight) async {
+    final result = await _call('getblock', [hashOrHeight, 2]);
+    return BlockInfoFull.fromJson(result as Map<String, dynamic>);
+  }
 }
