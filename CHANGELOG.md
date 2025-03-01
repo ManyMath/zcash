@@ -1,3 +1,9 @@
+## 0.0.3
+
+- Target Zebra 2.2.
+- Add cookie auth, stop, getBlockHeader and getBlockFull (getblock verbosity 2).
+- Bump http to 1.3.
+
 ## 0.0.2
 
 - Add ZebraClient for the Zebra 1.9 JSON-RPC API.
