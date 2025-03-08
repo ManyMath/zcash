@@ -190,6 +190,81 @@ void main() {
       });
     });
 
+    group('getBlockHeader', () {
+      test('parses header fields', () async {
+        final client = ZebraClient(
+          client: mockClient({
+            'hash': 'headerhash',
+            'confirmations': 5,
+            'height': 2600000,
+            'version': 4,
+            'merkleroot': 'merkle',
+            'time': 1740000000,
+            'nonce': '0000',
+            'bits': '1f07ffff',
+            'previousblockhash': 'prevhash',
+          }),
+        );
+        final h = await client.getBlockHeader('2600000');
+        expect(h.hash, 'headerhash');
+        expect(h.height, 2600000);
+        expect(h.previousBlockHash, 'prevhash');
+        expect(h.nextBlockHash, isNull);
+        client.close();
+      });
+    });
+
+    group('getBlockFull', () {
+      test('parses verbosity-2 block with decoded txs', () async {
+        final tx = {'txid': 'fulltxid', 'hex': 'aa', 'size': 250};
+        final client = ZebraClient(
+          client: mockClient({
+            'hash': 'fullblockhash',
+            'confirmations': 2,
+            'height': 2600001,
+            'time': 1740000001,
+            'tx': [tx],
+          }),
+        );
+        final block = await client.getBlockFull('2600001');
+        expect(block.hash, 'fullblockhash');
+        expect(block.transactions, hasLength(1));
+        expect(block.transactions.first['txid'], 'fulltxid');
+        client.close();
+      });
+    });
+
+    group('stop', () {
+      test('sends stop RPC without error', () async {
+        final client = ZebraClient(client: mockClient(''));
+        await expectLater(client.stop(), completes);
+        client.close();
+      });
+    });
+
+    group('cookie auth', () {
+      test('sets Authorization header when credentials provided', () async {
+        String? capturedAuth;
+        final authClient = MockClient((request) async {
+          capturedAuth = request.headers['Authorization'];
+          final body = jsonDecode(request.body) as Map<String, dynamic>;
+          return http.Response(
+            jsonEncode({'jsonrpc': '2.0', 'id': body['id'], 'result': 'aa'}),
+            200,
+            headers: {'content-type': 'application/json'},
+          );
+        });
+        final client = ZebraClient(
+          username: 'zebra',
+          password: 'secret',
+          client: authClient,
+        );
+        await client.getBestBlockHash();
+        expect(capturedAuth, startsWith('Basic '));
+        client.close();
+      });
+    });
+
     group('error handling', () {
       test('throws ZebraRpcException on RPC error', () async {
         final client = ZebraClient(
