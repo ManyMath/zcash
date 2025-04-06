@@ -23,6 +23,7 @@ class ZebraClient {
   final Uri _endpoint;
   final http.Client _http;
   final String? _authHeader;
+  final Duration timeout;
   int _id = 0;
 
   ZebraClient({
@@ -30,6 +31,7 @@ class ZebraClient {
     int port = 8232,
     String? username,
     String? password,
+    this.timeout = const Duration(seconds: 30),
     http.Client? client,
   })  : _endpoint = Uri.http('$host:$port', '/'),
         _authHeader = (username != null && password != null)
@@ -50,7 +52,9 @@ class ZebraClient {
       'id': ++_id,
     });
 
-    final response = await _http.post(_endpoint, headers: headers, body: body);
+    final response = await _http
+        .post(_endpoint, headers: headers, body: body)
+        .timeout(timeout);
 
     final decoded = jsonDecode(response.body) as Map<String, dynamic>;
 
