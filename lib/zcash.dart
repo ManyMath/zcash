@@ -7,3 +7,4 @@ export 'src/models/transaction.dart';
 export 'src/models/address.dart';
 export 'src/models/tree_state.dart';
 export 'src/models/block_header.dart';
+export 'src/models/subsidy.dart';

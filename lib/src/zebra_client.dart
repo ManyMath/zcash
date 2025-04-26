@@ -8,6 +8,7 @@ import 'models/transaction.dart';
 import 'models/address.dart';
 import 'models/tree_state.dart';
 import 'models/block_header.dart';
+import 'models/subsidy.dart';
 
 class ZebraRpcException implements Exception {
   final int code;
@@ -167,6 +168,16 @@ class ZebraClient {
   Future<BlockHeader> getBlockHeader(String hashOrHeight) async {
     final result = await _call('getblockheader', [hashOrHeight, true]);
     return BlockHeader.fromJson(result as Map<String, dynamic>);
+  }
+
+  Future<BlockSubsidy> getBlockSubsidy({int? height}) async {
+    final params = height != null ? [height] : <dynamic>[];
+    final result = await _call('getblocksubsidy', params);
+    return BlockSubsidy.fromJson(result as Map<String, dynamic>);
+  }
+
+  Future<double> getDifficulty() async {
+    return (await _call('getdifficulty') as num).toDouble();
   }
 
   Future<BlockInfoFull> getBlockFull(String hashOrHeight) async {
