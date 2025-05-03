@@ -9,6 +9,7 @@ import 'models/address.dart';
 import 'models/tree_state.dart';
 import 'models/block_header.dart';
 import 'models/subsidy.dart';
+import 'models/network.dart';
 
 class ZebraRpcException implements Exception {
   final int code;
@@ -174,6 +175,18 @@ class ZebraClient {
     final params = height != null ? [height] : <dynamic>[];
     final result = await _call('getblocksubsidy', params);
     return BlockSubsidy.fromJson(result as Map<String, dynamic>);
+  }
+
+  Future<List<PeerInfo>> getPeerInfo() async {
+    final result = await _call('getpeerinfo');
+    return (result as List)
+        .map((e) => PeerInfo.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<NetworkInfo> getNetworkInfo() async {
+    final result = await _call('getnetworkinfo');
+    return NetworkInfo.fromJson(result as Map<String, dynamic>);
   }
 
   Future<double> getDifficulty() async {

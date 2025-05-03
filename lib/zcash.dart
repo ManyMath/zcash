@@ -8,3 +8,4 @@ export 'src/models/address.dart';
 export 'src/models/tree_state.dart';
 export 'src/models/block_header.dart';
 export 'src/models/subsidy.dart';
+export 'src/models/network.dart';
