@@ -1,3 +1,9 @@
+## 0.0.4
+
+- Add getPeerInfo, getNetworkInfo, getBlockSubsidy and getDifficulty.
+- Make the request timeout configurable.
+- Bump http to 1.4 and lints to 6.0.
+
 ## 0.0.3
 
 - Target Zebra 2.2.
