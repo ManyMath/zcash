@@ -9,3 +9,4 @@ export 'src/models/tree_state.dart';
 export 'src/models/block_header.dart';
 export 'src/models/subsidy.dart';
 export 'src/models/network.dart';
+export 'src/models/validation.dart';

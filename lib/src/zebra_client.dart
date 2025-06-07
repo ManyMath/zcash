@@ -10,6 +10,7 @@ import 'models/tree_state.dart';
 import 'models/block_header.dart';
 import 'models/subsidy.dart';
 import 'models/network.dart';
+import 'models/validation.dart';
 
 class ZebraRpcException implements Exception {
   final int code;
@@ -159,6 +160,20 @@ class ZebraClient {
       if (limit != null) limit,
     ]);
     return SubtreeList.fromJson(result as Map<String, dynamic>);
+  }
+
+  Future<AddressValidation> validateAddress(String address) async {
+    final result = await _call('validateaddress', [address]);
+    return AddressValidation.fromJson(result as Map<String, dynamic>);
+  }
+
+  Future<AddressValidation> zValidateAddress(String address) async {
+    final result = await _call('z_validateaddress', [address]);
+    return AddressValidation.fromJson(result as Map<String, dynamic>);
+  }
+
+  Future<void> reconsiderBlock(String hash) async {
+    await _call('reconsiderblock', [hash]);
   }
 
   // Regtest only.
