@@ -265,6 +265,70 @@ void main() {
       });
     });
 
+    group('validateAddress', () {
+      test('parses valid transparent address', () async {
+        final client = ZebraClient(
+          client: mockClient({
+            'isvalid': true,
+            'address': 't1addr',
+            'type': 'pubkeyhash',
+            'ismine': false,
+          }),
+        );
+        final v = await client.validateAddress('t1addr');
+        expect(v.isValid, isTrue);
+        expect(v.addressType, 'pubkeyhash');
+        client.close();
+      });
+
+      test('parses invalid address', () async {
+        final client =
+            ZebraClient(client: mockClient({'isvalid': false}));
+        final v = await client.validateAddress('notanaddr');
+        expect(v.isValid, isFalse);
+        client.close();
+      });
+    });
+
+    group('getPeerInfo', () {
+      test('parses peer list', () async {
+        final client = ZebraClient(
+          client: mockClient([
+            {
+              'addr': '1.2.3.4:8233',
+              'bytessent': 1024,
+              'bytesrecv': 2048,
+              'inbound': false,
+              'subver': '/Zebra:2.3.0/',
+            },
+          ]),
+        );
+        final peers = await client.getPeerInfo();
+        expect(peers, hasLength(1));
+        expect(peers.first.addr, '1.2.3.4:8233');
+        expect(peers.first.inbound, isFalse);
+        client.close();
+      });
+    });
+
+    group('getBlockSubsidy', () {
+      test('parses miner and funding streams', () async {
+        final client = ZebraClient(
+          client: mockClient({
+            'miner': 312500000,
+            'fundingstreams': [
+              {'recipient': 'ECC', 'valueZat': 62500000},
+            ],
+          }),
+        );
+        final sub = await client.getBlockSubsidy();
+        expect(sub.miner, 312500000);
+        expect(sub.fundingStreams, hasLength(1));
+        expect(sub.fundingStreams.first.recipient, 'ECC');
+        client.close();
+      });
+    });
+
     group('error handling', () {
       test('throws ZebraRpcException on RPC error', () async {
         final client = ZebraClient(
