@@ -3,6 +3,7 @@ library;
 
 import 'dart:io';
 import 'package:test/test.dart';
+import 'package:zcash/zcash.dart';
 import 'harness.dart';
 
 void main() {
@@ -107,6 +108,54 @@ void main() {
       if (harness == null || !harness!.meetsMinVersion('2.2.0')) return;
       final block = await harness!.client.getBlockFull('0');
       expect(block.transactions, isA<List>());
+    });
+  });
+
+  group('Zebra v2.3.0+ RPCs', () {
+    test('validateaddress returns isValid field', () async {
+      if (harness == null || !harness!.meetsMinVersion('2.3.0')) return;
+      final v = await harness!.client.validateAddress(
+        'tmL6RMFZ9yK2rscAKbJfXb9zZjQb7JHMP2',
+      );
+      expect(v.isValid, isA<bool>());
+    });
+
+    test('validateaddress returns false for invalid string', () async {
+      if (harness == null || !harness!.meetsMinVersion('2.3.0')) return;
+      final v = await harness!.client.validateAddress('notanaddress');
+      expect(v.isValid, isFalse);
+    });
+
+    test('z_validateaddress returns isValid field', () async {
+      if (harness == null || !harness!.meetsMinVersion('2.3.0')) return;
+      final v = await harness!.client.zValidateAddress(
+        'zs1qmj4rsmcz0zqpwkfcvfpvnj3p8sclmm5nqhcfmmjkjwz7mlr3wn3s8ky4mxp7w0z4f4zphpvj',
+      );
+      expect(v.isValid, isA<bool>());
+    });
+
+    test('getpeerinfo returns a list', () async {
+      if (harness == null || !harness!.meetsMinVersion('2.3.0')) return;
+      final peers = await harness!.client.getPeerInfo();
+      expect(peers, isA<List>());
+    });
+
+    test('getnetworkinfo returns subversion containing Zebra', () async {
+      if (harness == null || !harness!.meetsMinVersion('2.3.0')) return;
+      final net = await harness!.client.getNetworkInfo();
+      expect(net.subversion, contains('Zebra'));
+    });
+
+    test('getblocksubsidy returns miner >= 0', () async {
+      if (harness == null || !harness!.meetsMinVersion('2.3.0')) return;
+      final sub = await harness!.client.getBlockSubsidy(height: 1);
+      expect(sub.miner, greaterThanOrEqualTo(0));
+    });
+
+    test('getdifficulty returns a positive number', () async {
+      if (harness == null || !harness!.meetsMinVersion('2.3.0')) return;
+      final d = await harness!.client.getDifficulty();
+      expect(d, greaterThan(0));
     });
   });
 }
