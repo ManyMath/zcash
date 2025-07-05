@@ -162,6 +162,15 @@ class ZebraClient {
     return SubtreeList.fromJson(result as Map<String, dynamic>);
   }
 
+  Future<void> invalidateBlock(String hash) async {
+    await _call('invalidateblock', [hash]);
+  }
+
+  // command: 'add' | 'remove' | 'onetry'.
+  Future<void> addNode(String node, String command) async {
+    await _call('addnode', [node, command]);
+  }
+
   Future<AddressValidation> validateAddress(String address) async {
     final result = await _call('validateaddress', [address]);
     return AddressValidation.fromJson(result as Map<String, dynamic>);
