@@ -1,10 +1,14 @@
 class AddressBalance {
   final int zatoshis;
+  final int? received;
 
-  const AddressBalance({required this.zatoshis});
+  const AddressBalance({required this.zatoshis, this.received});
 
-  factory AddressBalance.fromJson(Map<String, dynamic> json) =>
-      AddressBalance(zatoshis: (json['balance'] as num).toInt());
+  factory AddressBalance.fromJson(Map<String, dynamic> json) => AddressBalance(
+        zatoshis: (json['balance'] as num).toInt(),
+        received:
+            json['received'] != null ? (json['received'] as num).toInt() : null,
+      );
 
   double get zec => zatoshis / 1e8;
 
