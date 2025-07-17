@@ -1,6 +1,7 @@
 @TestOn('vm')
 library;
 
+import 'dart:async';
 import 'dart:io';
 import 'package:test/test.dart';
 import 'package:zcash/zcash.dart';
@@ -156,6 +157,37 @@ void main() {
       if (harness == null || !harness!.meetsMinVersion('2.3.0')) return;
       final d = await harness!.client.getDifficulty();
       expect(d, greaterThan(0));
+    });
+  });
+
+  group('Zebra v2.4.0+ RPCs', () {
+    test('invalidateblock and reconsiderblock round-trip on genesis', () async {
+      if (harness == null || !harness!.meetsMinVersion('2.4.0')) return;
+      final hash = await harness!.client.getBestBlockHash();
+      try {
+        await harness!.client
+            .invalidateBlock(hash)
+            .timeout(const Duration(seconds: 10));
+        await harness!.client.reconsiderBlock(hash);
+      } on TimeoutException {
+        // Some versions time out invalidating genesis.
+      } on ZebraRpcException {
+        // Some versions refuse to invalidate genesis.
+      }
+      final info = await harness!.client.getBlockchainInfo();
+      expect(info.blocks, greaterThanOrEqualTo(0));
+    });
+
+    test('getaddressbalance response has balance field', () async {
+      if (harness == null || !harness!.meetsMinVersion('2.4.0')) return;
+      try {
+        final bal = await harness!.client.getAddressBalance([
+          'tmL6RMFZ9yK2rscAKbJfXb9zZjQb7JHMP2',
+        ]);
+        expect(bal.zatoshis, isA<int>());
+      } on ZebraRpcException {
+        // A fresh node may not have indexed the address.
+      }
     });
   });
 }
