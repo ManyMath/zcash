@@ -35,12 +35,31 @@ class NetworkUpgrade {
       'NetworkUpgrade(name: $name, height: $activationHeight, status: $status)';
 }
 
+// 'lockbox' replaced 'deferred' after NU6.1.
+class ValuePool {
+  final String id;
+  final int? chainValue;
+
+  const ValuePool({required this.id, this.chainValue});
+
+  factory ValuePool.fromJson(Map<String, dynamic> json) => ValuePool(
+        id: json['id'] as String,
+        chainValue: json['chainValue'] != null
+            ? (json['chainValue'] as num).toInt()
+            : null,
+      );
+
+  @override
+  String toString() => 'ValuePool(id: $id, chainValue: $chainValue)';
+}
+
 class BlockchainInfo {
   final String chain;
   final int blocks;
   final String bestBlockHash;
   final int estimatedHeight;
   final Map<String, NetworkUpgrade> upgrades;
+  final List<ValuePool> valuePools;
 
   const BlockchainInfo({
     required this.chain,
@@ -48,6 +67,7 @@ class BlockchainInfo {
     required this.bestBlockHash,
     required this.estimatedHeight,
     required this.upgrades,
+    this.valuePools = const [],
   });
 
   factory BlockchainInfo.fromJson(Map<String, dynamic> json) => BlockchainInfo(
@@ -61,6 +81,9 @@ class BlockchainInfo {
             NetworkUpgrade.fromJson(v as Map<String, dynamic>),
           ),
         ),
+        valuePools: (json['valuePools'] as List? ?? [])
+            .map((e) => ValuePool.fromJson(e as Map<String, dynamic>))
+            .toList(),
       );
 
   @override
