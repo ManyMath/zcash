@@ -82,6 +82,18 @@ class ZebraClient {
     return BlockchainInfo.fromJson(result as Map<String, dynamic>);
   }
 
+  Future<int> getBlockCount() async {
+    return (await _call('getblockcount') as num).toInt();
+  }
+
+  Future<String> getBlockHash(int height) async {
+    return await _call('getblockhash', [height]) as String;
+  }
+
+  Future<Map<String, dynamic>> getMempoolInfo() async {
+    return await _call('getmempoolinfo') as Map<String, dynamic>;
+  }
+
   Future<String> getBestBlockHash() async {
     return await _call('getbestblockhash') as String;
   }
