@@ -190,4 +190,44 @@ void main() {
       }
     });
   });
+
+  group('Zebra v2.5.0+ / v3.0.0+ RPCs', () {
+    test('getblockchaininfo includes valuePools list', () async {
+      if (harness == null || !harness!.meetsMinVersion('2.5.0')) return;
+      final info = await harness!.client.getBlockchainInfo();
+      expect(info.valuePools, isA<List>());
+      final ids = info.valuePools.map((p) => p.id).toList();
+      if (ids.isNotEmpty) {
+        expect(ids, isNot(contains('deferred')));
+      }
+    });
+
+    test('getblockcount returns int >= 0', () async {
+      if (harness == null || !harness!.meetsMinVersion('3.0.0')) return;
+      final count = await harness!.client.getBlockCount();
+      expect(count, isA<int>());
+      expect(count, greaterThanOrEqualTo(0));
+    });
+
+    test('getblockhash at height 0 returns 64-char hex', () async {
+      if (harness == null || !harness!.meetsMinVersion('3.0.0')) return;
+      final hash = await harness!.client.getBlockHash(0);
+      expect(hash, hasLength(64));
+      expect(hash, matches(RegExp(r'^[0-9a-f]+$')));
+    });
+
+    test('getMempoolInfo returns map with size key', () async {
+      if (harness == null || !harness!.meetsMinVersion('3.0.0')) return;
+      final info = await harness!.client.getMempoolInfo();
+      expect(info, isA<Map>());
+      expect(info.containsKey('size'), isTrue);
+      expect(info['size'], isA<int>());
+    });
+
+    test('getRawMempoolVerbose returns map on fresh node', () async {
+      if (harness == null || !harness!.meetsMinVersion('3.0.0')) return;
+      final verbose = await harness!.client.getRawMempoolVerbose();
+      expect(verbose, isA<Map>());
+    });
+  });
 }
