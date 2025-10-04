@@ -1,3 +1,10 @@
+## 0.0.5
+
+- Add getBlockCount, getBlockHash, getMempoolInfo, invalidateBlock and addNode.
+- Expose the value pools, including the NU6.1 lockbox, and the received total
+  of an address balance.
+- Bump http to 1.5.
+
 ## 0.0.4
 
 - Add getPeerInfo, getNetworkInfo, getBlockSubsidy and getDifficulty.
