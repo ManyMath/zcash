@@ -126,8 +126,12 @@ class ZebraClient {
   }
 
   Future<List<String>> getRawMempool() async {
-    final result = await _call('getrawmempool');
+    final result = await _call('getrawmempool', [false]);
     return (result as List).cast<String>();
+  }
+
+  Future<Map<String, dynamic>> getRawMempoolVerbose() async {
+    return await _call('getrawmempool', [true]) as Map<String, dynamic>;
   }
 
   Future<AddressBalance> getAddressBalance(List<String> addresses) async {
