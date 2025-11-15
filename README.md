@@ -1,6 +1,6 @@
 # zcash
 
-Dart client for the [Zebra](https://github.com/ZcashFoundation/zebra) 2.2 JSON-RPC API.
+Dart client for the [Zebra](https://github.com/ZcashFoundation/zebra) 3.0 JSON-RPC API.
 
 ```dart
 final zebra = ZebraClient(); // localhost:8232

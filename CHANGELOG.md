@@ -1,3 +1,10 @@
+## 0.0.6
+
+- Target Zebra 3.0, which activates NU6.1 on mainnet.
+- Add validateAddress, zValidateAddress, reconsiderBlock and
+  getRawMempoolVerbose.
+- Bump http to 1.6 and test to 1.27.
+
 ## 0.0.5
 
 - Add getBlockCount, getBlockHash, getMempoolInfo, invalidateBlock and addNode.
