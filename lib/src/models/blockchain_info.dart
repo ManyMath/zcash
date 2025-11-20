@@ -100,7 +100,12 @@ class BlockHeightAndHash {
   factory BlockHeightAndHash.fromJson(Map<String, dynamic> json) =>
       BlockHeightAndHash(
         height: (json['height'] as num).toInt(),
-        hash: json['hash'] as String,
+        hash: json['hash'] is List
+            ? (json['hash'] as List<dynamic>)
+                  .reversed
+                  .map((b) => (b as int).toRadixString(16).padLeft(2, '0'))
+                  .join()
+            : json['hash'] as String,
       );
 
   @override
