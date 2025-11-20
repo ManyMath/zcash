@@ -25,9 +25,14 @@ class BlockSubsidy {
   });
 
   factory BlockSubsidy.fromJson(Map<String, dynamic> json) => BlockSubsidy(
-        miner: (json['miner'] as num).toInt(),
-        lockbox:
-            json['lockbox'] != null ? (json['lockbox'] as num).toInt() : null,
+        miner: json['miner'] is int
+            ? json['miner'] as int
+            : ((json['miner'] as num) * 1e8).round(),
+        lockbox: json['lockbox'] != null
+            ? (json['lockbox'] is int
+                ? json['lockbox'] as int
+                : ((json['lockbox'] as num) * 1e8).round())
+            : null,
         fundingStreams: (json['fundingstreams'] as List? ?? [])
             .map((e) => FundingStream.fromJson(e as Map<String, dynamic>))
             .toList(),
