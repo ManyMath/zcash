@@ -54,12 +54,10 @@ void main() {
 
     test('getbestblockheightandhash returns height >= 0', () async {
       if (harness == null) return;
-      try {
-        final tip = await harness!.client.getBestBlockHeightAndHash();
-        expect(tip.height, greaterThanOrEqualTo(0));
-      } catch (_) {
-        // hash field format varies across versions
-      }
+      final tip = await harness!.client.getBestBlockHeightAndHash();
+      expect(tip.height, greaterThanOrEqualTo(0));
+      expect(tip.hash, hasLength(64));
+      expect(tip.hash, matches(RegExp(r'^[0-9a-f]+$')));
     });
 
     test('getblock at genesis height 0 returns block info', () async {
@@ -151,6 +149,7 @@ void main() {
       if (harness == null || !harness!.meetsMinVersion('2.3.0')) return;
       final sub = await harness!.client.getBlockSubsidy(height: 1);
       expect(sub.miner, greaterThanOrEqualTo(0));
+      expect(sub.miner == 0 || sub.miner >= 100000000, isTrue);
     });
 
     test('getdifficulty returns a positive number', () async {
