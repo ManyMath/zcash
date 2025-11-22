@@ -11,6 +11,7 @@ import 'models/block_header.dart';
 import 'models/subsidy.dart';
 import 'models/network.dart';
 import 'models/validation.dart';
+import 'models/mining.dart';
 
 class ZebraRpcException implements Exception {
   final int code;
@@ -236,5 +237,26 @@ class ZebraClient {
   Future<BlockInfoFull> getBlockFull(String hashOrHeight) async {
     final result = await _call('getblock', [hashOrHeight, 2]);
     return BlockInfoFull.fromJson(result as Map<String, dynamic>);
+  }
+
+  Future<BlockTemplate> getBlockTemplate(
+      {Map<String, dynamic>? request}) async {
+    final result = await _call('getblocktemplate', [request ?? {}]);
+    return BlockTemplate.fromJson(result as Map<String, dynamic>);
+  }
+
+  // Null on success, otherwise the rejection reason.
+  Future<String?> submitBlock(String blockHex) async {
+    final result = await _call('submitblock', [blockHex]);
+    return result as String?;
+  }
+
+  Future<List<AddressMempoolEntry>> getAddressMempool(
+      List<String> addresses) async {
+    final result =
+        await _call('getaddressmempool', [{'addresses': addresses}]);
+    return (result as List)
+        .map((e) => AddressMempoolEntry.fromJson(e as Map<String, dynamic>))
+        .toList();
   }
 }
