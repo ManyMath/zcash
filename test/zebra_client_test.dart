@@ -5,7 +5,7 @@ import 'package:http/testing.dart';
 import 'package:test/test.dart';
 import 'package:zcash/zcash.dart';
 
-http.Client mockClient(Object result) => MockClient((request) async {
+http.Client mockClient(Object? result) => MockClient((request) async {
       final body = jsonDecode(request.body) as Map<String, dynamic>;
       return http.Response(
         jsonEncode({'jsonrpc': '2.0', 'id': body['id'], 'result': result}),
@@ -325,6 +325,106 @@ void main() {
         expect(sub.miner, 312500000);
         expect(sub.fundingStreams, hasLength(1));
         expect(sub.fundingStreams.first.recipient, 'ECC');
+        client.close();
+      });
+    });
+
+    group('getBlockTemplate', () {
+      test('parses template fields', () async {
+        final client = ZebraClient(
+          client: mockClient({
+            'version': 4,
+            'previousblockhash': 'prevhash',
+            'transactions': [
+              {'data': 'deadbeef', 'hash': 'txhash'},
+            ],
+            'coinbasetxn': {'data': 'coinbasedata'},
+            'target':
+                '0000007fffff0000000000000000000000000000000000000000000000000000',
+            'mintime': 1740000000,
+            'bits': '1f07ffff',
+            'height': 3000000,
+          }),
+        );
+        final tmpl = await client.getBlockTemplate();
+        expect(tmpl.version, 4);
+        expect(tmpl.previousBlockHash, 'prevhash');
+        expect(tmpl.transactions, hasLength(1));
+        expect(tmpl.transactions.first['hash'], 'txhash');
+        expect(tmpl.coinbaseTxn, isNotNull);
+        expect(tmpl.coinbaseValue, isNull);
+        expect(tmpl.target,
+            '0000007fffff0000000000000000000000000000000000000000000000000000');
+        expect(tmpl.minTime, 1740000000);
+        expect(tmpl.bits, '1f07ffff');
+        expect(tmpl.height, 3000000);
+        client.close();
+      });
+
+      test('parses coinbasevalue when coinbasetxn absent', () async {
+        final client = ZebraClient(
+          client: mockClient({
+            'version': 4,
+            'previousblockhash': 'prevhash',
+            'transactions': <dynamic>[],
+            'coinbasevalue': 312500000,
+            'target':
+                '0000007fffff0000000000000000000000000000000000000000000000000000',
+            'mintime': 1740000000,
+            'bits': '1f07ffff',
+            'height': 3000001,
+          }),
+        );
+        final tmpl = await client.getBlockTemplate();
+        expect(tmpl.coinbaseTxn, isNull);
+        expect(tmpl.coinbaseValue, 312500000);
+        client.close();
+      });
+    });
+
+    group('submitBlock', () {
+      test('returns null on acceptance', () async {
+        final client = ZebraClient(client: mockClient(null));
+        final result = await client.submitBlock('deadbeef');
+        expect(result, isNull);
+        client.close();
+      });
+
+      test('returns rejection reason string on failure', () async {
+        final client = ZebraClient(client: mockClient('inconclusive'));
+        final result = await client.submitBlock('badhex');
+        expect(result, 'inconclusive');
+        client.close();
+      });
+    });
+
+    group('getAddressMempool', () {
+      test('parses mempool entries', () async {
+        final client = ZebraClient(
+          client: mockClient([
+            {
+              'txid': 'mempooltxid',
+              'index': 0,
+              'satoshis': 100000000,
+              'script': 'deadbeef',
+              'address': 't1addr',
+            },
+          ]),
+        );
+        final entries = await client.getAddressMempool(['t1addr']);
+        expect(entries, hasLength(1));
+        expect(entries.first.txid, 'mempooltxid');
+        expect(entries.first.index, 0);
+        expect(entries.first.satoshis, 100000000);
+        expect(entries.first.script, 'deadbeef');
+        expect(entries.first.address, 't1addr');
+        client.close();
+      });
+
+      test('returns empty list when mempool has no matching entries', () async {
+        final client = ZebraClient(client: mockClient(<dynamic>[]));
+        final entries = await client.getAddressMempool(['t1addr']);
+        expect(entries, isEmpty);
         client.close();
       });
     });
