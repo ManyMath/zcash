@@ -11,3 +11,4 @@ export 'src/models/subsidy.dart';
 export 'src/models/network.dart';
 export 'src/models/validation.dart';
 export 'src/models/mining.dart';
+export 'src/zip321.dart';
