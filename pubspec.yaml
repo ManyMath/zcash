@@ -1,6 +1,6 @@
 name: zcash
-description: Zcash Dart SDK, JSON-RPC client for Zebra full nodes.
-version: 0.0.6
+description: Zcash Dart SDK. JSON-RPC client for Zebra full nodes and gRPC client for lightwalletd.
+version: 0.0.7
 repository: https://github.com/ManyMath/zcashdart
 
 environment:
@@ -8,6 +8,9 @@ environment:
 
 dependencies:
   http: ^1.6.0
+  fixnum: ^1.1.0
+  grpc: ^5.1.0
+  protobuf: ^6.0.0
 
 dev_dependencies:
   lints: ^6.0.0
