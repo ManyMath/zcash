@@ -7,16 +7,16 @@ import 'grpc/compact_formats.pb.dart';
 
 export 'grpc/compact_formats.pb.dart';
 export 'grpc/compact_formats.pbenum.dart';
-// TreeState clashes with the JSON-RPC model of the same name.
-export 'grpc/service.pb.dart' hide TreeState;
+// These clash with the JSON-RPC TreeState and with dart:core's Duration.
+export 'grpc/service.pb.dart' hide TreeState, Duration;
 export 'grpc/service.pbenum.dart';
 
 class LightwalletdClient {
-  final ClientChannel _channel;
+  final ClientChannel? _channel;
   final CompactTxStreamerClient _stub;
 
   LightwalletdClient._({
-    required ClientChannel channel,
+    ClientChannel? channel,
     required CompactTxStreamerClient stub,
   })  : _channel = channel,
         _stub = stub;
@@ -41,6 +41,9 @@ class LightwalletdClient {
       stub: CompactTxStreamerClient(channel),
     );
   }
+
+  factory LightwalletdClient.fromStub(CompactTxStreamerClient stub) =>
+      LightwalletdClient._(stub: stub);
 
   Future<LightdInfo> getInfo() => _stub.getLightdInfo(Empty());
 
@@ -82,5 +85,5 @@ class LightwalletdClient {
   Stream<SubtreeRoot> getSubtreeRoots(GetSubtreeRootsArg arg) =>
       _stub.getSubtreeRoots(arg);
 
-  Future<void> close() => _channel.shutdown();
+  Future<void> close() async => _channel?.shutdown();
 }
