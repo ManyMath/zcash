@@ -11,6 +11,7 @@ dependencies:
   fixnum: ^1.1.0
   grpc: ^5.1.0
   protobuf: ^6.0.0
+  ffi: ^2.1.0
 
 dev_dependencies:
   lints: ^6.0.0
