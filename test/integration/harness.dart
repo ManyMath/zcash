@@ -7,6 +7,9 @@ import 'package:zcash/zcash.dart';
 const _kDefaultDockerImage = 'zfnd/zebra:latest';
 const _kReadinessTimeout = 60;
 
+// m/44'/1'/0'/0/0 of the test seed, hardcoded so startup needs no FFI.
+const _kRegtestMinerAddress = 'tmNuoMzZxTiBkEbHVNwUsr3a1iELSeNZkRA';
+
 class ZebraHarness {
   final Process _process;
   final ZebraClient client;
@@ -109,6 +112,9 @@ enable_cookie_auth = false
 
 [state]
 ephemeral = true
+
+[mining]
+miner_address = "$_kRegtestMinerAddress"
 ''';
     final f = File('$dir/zebrad.toml');
     await f.writeAsString(src);
