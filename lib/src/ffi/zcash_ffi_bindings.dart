@@ -49,6 +49,11 @@ class ZcashFfiBindings {
       Bool Function(Pointer<Utf8>),
       bool Function(Pointer<Utf8>)>('zcash_ffi_is_shielded_address');
 
+  late final _solveEquihash = _lib.lookupFunction<
+      Pointer<Utf8> Function(Pointer<Uint8>, IntPtr),
+      Pointer<Utf8> Function(
+          Pointer<Uint8>, int)>('zcash_ffi_solve_equihash');
+
   String version() {
     final ptr = _version();
     final s = ptr.toDartString();
@@ -137,6 +142,20 @@ class ZcashFfiBindings {
     final ptr = addr.toNativeUtf8();
     try {
       return _isShieldedAddress(ptr);
+    } finally {
+      calloc.free(ptr);
+    }
+  }
+
+  String solveEquihash(List<int> headerPrefix) {
+    final len = headerPrefix.length;
+    final ptr = calloc<Uint8>(len);
+    try {
+      ptr.asTypedList(len).setAll(0, headerPrefix);
+      final result = _solveEquihash(ptr, len);
+      final json = result.toDartString();
+      freeString(result);
+      return json;
     } finally {
       calloc.free(ptr);
     }

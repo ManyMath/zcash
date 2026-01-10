@@ -1,6 +1,7 @@
 library;
 
 export 'src/ffi/address_utils.dart';
+export 'src/ffi/mining_utils.dart';
 export 'src/ffi/zcash_ffi_bindings.dart';
 export 'src/zebra_client.dart';
 export 'src/lightwalletd_client.dart';

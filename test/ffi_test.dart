@@ -2,6 +2,7 @@
 library;
 
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:test/test.dart';
 import 'package:zcash/zcash.dart';
@@ -133,6 +134,15 @@ void main() {
     test('version is semver', () {
       final v = ZcashFfiBindings.instance.version();
       expect(v, matches(RegExp(r'^\d+\.\d+\.\d+')));
+    });
+  });
+
+  group('FFI Equihash solver', skip: _libAvailable ? false : 'ZCASH_FFI_LIB not set', () {
+    test('solveEquihash returns 32-byte nonce and 1344-byte solution', () {
+      final header = Uint8List.fromList(List<int>.generate(108, (i) => i));
+      final result = solveEquihash(header);
+      expect(result.nonce, hasLength(32));
+      expect(result.solution, hasLength(1344));
     });
   });
 }
