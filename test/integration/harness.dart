@@ -2,6 +2,8 @@ library;
 
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
+import 'package:crypto/crypto.dart';
 import 'package:zcash/zcash.dart';
 
 const _kDefaultDockerImage = 'zfnd/zebra:latest';
@@ -67,6 +69,77 @@ class ZebraHarness {
   }
 
   bool meetsMinVersion(String min) => _cmpVersion(zebraVersion, min) >= 0;
+
+  /// Zebra 4 returns null from submitblock before the chain advances.
+  Future<List<String>> mineBlocks(int count) async {
+    final hashes = <String>[];
+    for (var i = 0; i < count; i++) {
+      hashes.add(await _mineOne());
+    }
+    return hashes;
+  }
+
+  Future<String> _mineOne() async {
+    final tpl = await client.getBlockTemplate();
+    final coinbase = tpl.coinbaseTxn;
+    if (coinbase == null) {
+      throw StateError('block template missing coinbasetxn');
+    }
+    final coinbaseHex = coinbase['data'] as String;
+    final coinbaseHash = coinbase['hash'] as String;
+
+    final commitments = tpl.blockCommitmentsHash;
+    if (commitments == null) {
+      throw StateError('block template missing blockcommitmentshash');
+    }
+
+    final time = tpl.curTime ?? tpl.minTime;
+    final bitsInt = int.parse(tpl.bits, radix: 16);
+
+    // Zebra's default root only covers an empty template.
+    Uint8List merkleRoot;
+    if (tpl.transactions.isEmpty && tpl.defaultMerkleRoot != null) {
+      merkleRoot = BlockAssembler.reverseHash(_hex(tpl.defaultMerkleRoot!));
+    } else {
+      final ids = <String>[
+        coinbaseHash,
+        for (final t in tpl.transactions) t['hash'] as String,
+      ];
+      merkleRoot = BlockAssembler.computeMerkleRoot(ids);
+    }
+
+    final prefix = BlockAssembler.buildHeaderPrefix(
+      version: tpl.version,
+      prevBlockHash:
+          BlockAssembler.reverseHash(_hex(tpl.previousBlockHash)),
+      merkleRoot: merkleRoot,
+      blockCommitments: BlockAssembler.reverseHash(_hex(commitments)),
+      time: time,
+      bits: bitsInt,
+    );
+
+    final solved = solveEquihash(prefix);
+    final header = BlockAssembler.buildHeader(
+      headerPrefix: prefix,
+      nonce: solved.nonce,
+      solution: solved.solution,
+    );
+
+    final otherTxs = <String>[
+      for (final t in tpl.transactions) t['data'] as String,
+    ];
+    final blockHex = BlockAssembler.assembleBlockHex(
+      header: header,
+      coinbaseHex: coinbaseHex,
+      otherTxHex: otherTxs,
+    );
+
+    final rejection = await client.submitBlock(blockHex);
+    if (rejection != null && rejection.isNotEmpty) {
+      throw StateError('submitblock rejected: $rejection');
+    }
+    return _hashEncodeReversed(_sha256dStub(header));
+  }
 
   Future<void> shutdown() async {
     _process.kill(ProcessSignal.sigterm);
@@ -151,6 +224,29 @@ miner_address = "$_kRegtestMinerAddress"
     }
     return 0;
   }
+}
+
+Uint8List _hex(String s) {
+  final out = Uint8List(s.length ~/ 2);
+  for (var i = 0; i < out.length; i++) {
+    out[i] = int.parse(s.substring(i * 2, i * 2 + 2), radix: 16);
+  }
+  return out;
+}
+
+String _hashEncodeReversed(Uint8List internalHash) {
+  final reversed = BlockAssembler.reverseHash(internalHash);
+  final sb = StringBuffer();
+  for (final b in reversed) {
+    sb.write(b.toRadixString(16).padLeft(2, '0'));
+  }
+  return sb.toString();
+}
+
+Uint8List _sha256dStub(Uint8List data) {
+  final once = sha256.convert(data).bytes;
+  final twice = sha256.convert(once).bytes;
+  return Uint8List.fromList(twice);
 }
 
 Future<String> findOrInstallZebrad(String version) async {

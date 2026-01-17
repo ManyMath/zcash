@@ -6,8 +6,13 @@ class BlockTemplate {
   final int? coinbaseValue;
   final String target;
   final int minTime;
+  final int? curTime;
   final String bits;
   final int height;
+
+  final String? blockCommitmentsHash;
+
+  final String? defaultMerkleRoot;
 
   const BlockTemplate({
     required this.version,
@@ -17,24 +22,37 @@ class BlockTemplate {
     this.coinbaseValue,
     required this.target,
     required this.minTime,
+    this.curTime,
     required this.bits,
     required this.height,
+    this.blockCommitmentsHash,
+    this.defaultMerkleRoot,
   });
 
-  factory BlockTemplate.fromJson(Map<String, dynamic> json) => BlockTemplate(
-        version: (json['version'] as num).toInt(),
-        previousBlockHash: json['previousblockhash'] as String,
-        transactions: (json['transactions'] as List)
-            .cast<Map<String, dynamic>>(),
-        coinbaseTxn: json['coinbasetxn'] as Map<String, dynamic>?,
-        coinbaseValue: json['coinbasevalue'] != null
-            ? (json['coinbasevalue'] as num).toInt()
-            : null,
-        target: json['target'] as String,
-        minTime: (json['mintime'] as num).toInt(),
-        bits: json['bits'] as String,
-        height: (json['height'] as num).toInt(),
-      );
+  factory BlockTemplate.fromJson(Map<String, dynamic> json) {
+    final defaultRoots = json['defaultroots'] as Map<String, dynamic>?;
+    return BlockTemplate(
+      version: (json['version'] as num).toInt(),
+      previousBlockHash: json['previousblockhash'] as String,
+      transactions:
+          (json['transactions'] as List).cast<Map<String, dynamic>>(),
+      coinbaseTxn: json['coinbasetxn'] as Map<String, dynamic>?,
+      coinbaseValue: json['coinbasevalue'] != null
+          ? (json['coinbasevalue'] as num).toInt()
+          : null,
+      target: json['target'] as String,
+      minTime: (json['mintime'] as num).toInt(),
+      curTime: json['curtime'] != null
+          ? (json['curtime'] as num).toInt()
+          : null,
+      bits: json['bits'] as String,
+      height: (json['height'] as num).toInt(),
+      blockCommitmentsHash: (json['blockcommitmentshash'] ??
+              json['lightclientroothash'] ??
+              json['finalsaplingroothash']) as String?,
+      defaultMerkleRoot: defaultRoots?['merkleroot'] as String?,
+    );
+  }
 
   @override
   String toString() =>
