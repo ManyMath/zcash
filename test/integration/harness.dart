@@ -9,8 +9,9 @@ import 'package:zcash/zcash.dart';
 const _kDefaultDockerImage = 'zfnd/zebra:latest';
 const _kReadinessTimeout = 60;
 
-// m/44'/1'/0'/0/0 of the test seed, hardcoded so startup needs no FFI.
-const _kRegtestMinerAddress = 'tmNuoMzZxTiBkEbHVNwUsr3a1iELSeNZkRA';
+/// Receives every regtest coinbase. m/44'/1'/0'/0/0 of the test seed,
+/// hardcoded so startup needs no FFI.
+const kRegtestMinerAddress = 'tmNuoMzZxTiBkEbHVNwUsr3a1iELSeNZkRA';
 
 class ZebraHarness {
   final Process _process;
@@ -187,7 +188,7 @@ enable_cookie_auth = false
 ephemeral = true
 
 [mining]
-miner_address = "$_kRegtestMinerAddress"
+miner_address = "$kRegtestMinerAddress"
 ''';
     final f = File('$dir/zebrad.toml');
     await f.writeAsString(src);
