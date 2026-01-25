@@ -88,4 +88,25 @@ void main() {
       expect(subsidy.miner, greaterThan(0));
     });
   });
+
+  group('Reorg via invalidateblock/reconsiderblock', () {
+    test('invalidateblock at a mined height rolls the tip back', () async {
+      if (harness == null) return;
+      final hashes = await harness!.mineBlocks(3);
+      final tipBefore = await harness!.client.getBlockCount();
+      final tipHashBefore = await harness!.client.getBestBlockHash();
+      expect(tipHashBefore, equals(hashes.last));
+
+      await harness!.client.invalidateBlock(hashes[1]);
+      final rolledBack = await harness!.client.getBlockCount();
+      expect(rolledBack, equals(tipBefore - 2));
+      expect(await harness!.client.getBestBlockHash(), equals(hashes.first));
+
+      await harness!.client.reconsiderBlock(hashes[1]);
+      expect(await harness!.client.getBlockCount(), equals(tipBefore));
+      expect(await harness!.client.getBestBlockHash(),
+          equals(tipHashBefore));
+    });
+  });
+
 }
