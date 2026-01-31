@@ -109,4 +109,37 @@ void main() {
     });
   });
 
+  group('Coinbase address indexing', () {
+    test('miner balance grows by exactly the per-block subsidy each block',
+        () async {
+      if (harness == null) return;
+      final balBefore =
+          await harness!.client.getAddressBalance([kRegtestMinerAddress]);
+      final tipBefore = await harness!.client.getBlockCount();
+      await harness!.mineBlocks(2);
+
+      final subsidy = await harness!.client
+          .getBlockSubsidy(height: tipBefore + 1);
+      final balAfter =
+          await harness!.client.getAddressBalance([kRegtestMinerAddress]);
+      expect(balAfter.zatoshis - balBefore.zatoshis,
+          equals(subsidy.miner * 2));
+    });
+
+    test('each mined block adds one coinbase utxo and one txid for the miner',
+        () async {
+      if (harness == null) return;
+      final utxosBefore =
+          await harness!.client.getAddressUtxos([kRegtestMinerAddress]);
+      final txidsBefore = await harness!.client
+          .getAddressTxIds([kRegtestMinerAddress]);
+      await harness!.mineBlocks(2);
+      final utxosAfter =
+          await harness!.client.getAddressUtxos([kRegtestMinerAddress]);
+      final txidsAfter = await harness!.client
+          .getAddressTxIds([kRegtestMinerAddress]);
+      expect(utxosAfter.length - utxosBefore.length, equals(2));
+      expect(txidsAfter.length - txidsBefore.length, equals(2));
+    });
+  });
 }
