@@ -152,7 +152,9 @@ class ZebraHarness {
       },
     );
     client.close();
-    await _tmpDir.delete(recursive: true).catchError((_) {});
+    try {
+      await _tmpDir.delete(recursive: true);
+    } catch (_) {}
   }
 
   static Future<int> _freePort() async {
