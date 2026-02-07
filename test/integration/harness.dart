@@ -19,19 +19,23 @@ class ZebraHarness {
   final String zebraVersion;
   final Directory _tmpDir;
 
+  final int p2pPort;
+
   ZebraHarness._({
     required Process process,
     required this.client,
     required this.zebraVersion,
     required Directory tmpDir,
+    required this.p2pPort,
   })  : _process = process,
         _tmpDir = tmpDir;
 
-  static Future<ZebraHarness> start() async {
-    final port = await _freePort();
+  static Future<ZebraHarness> start({String? peerAddress}) async {
+    final rpcPort = await _freePort();
+    final p2pPort = await _freePort();
     final tmpDir = await Directory.systemTemp.createTemp('zebra-regtest-');
     await Process.run('chmod', ['755', tmpDir.path]);
-    await _writeConfig(tmpDir.path, port);
+    await _writeConfig(tmpDir.path, rpcPort, p2pPort, peerAddress);
 
     final bin = Platform.environment['ZEBRA_BIN'];
     final image =
@@ -55,7 +59,7 @@ class ZebraHarness {
     process.stdout.listen((_) {});
     process.stderr.listen((_) {});
 
-    final zebraClient = ZebraClient(port: port);
+    final zebraClient = ZebraClient(port: rpcPort);
     await _awaitReady(zebraClient);
 
     final info = await zebraClient.getInfo();
@@ -66,6 +70,7 @@ class ZebraHarness {
       client: zebraClient,
       zebraVersion: ver,
       tmpDir: tmpDir,
+      p2pPort: p2pPort,
     );
   }
 
@@ -164,14 +169,21 @@ class ZebraHarness {
     return port;
   }
 
-  static Future<void> _writeConfig(String dir, int port) async {
+  static Future<void> _writeConfig(
+    String dir,
+    int rpcPort,
+    int p2pPort,
+    String? peerAddress,
+  ) async {
+    final initialPeers = peerAddress == null ? '' : '"$peerAddress"';
+    final targetSize = peerAddress == null ? 0 : 1;
     final src = '''
 [network]
 network = "Regtest"
-listen_addr = "127.0.0.1:0"
-peerset_initial_target_size = 0
+listen_addr = "127.0.0.1:$p2pPort"
+peerset_initial_target_size = $targetSize
 initial_mainnet_peers = []
-initial_testnet_peers = []
+initial_testnet_peers = [$initialPeers]
 
 [network.testnet_parameters.activation_heights]
 Overwinter = 1
@@ -183,7 +195,7 @@ NU5 = 1
 NU6 = 1
 
 [rpc]
-listen_addr = "127.0.0.1:$port"
+listen_addr = "127.0.0.1:$rpcPort"
 enable_cookie_auth = false
 
 [state]
