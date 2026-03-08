@@ -1,0 +1,16 @@
+name: zcash_workspace
+
+packages:
+  - packages/*
+
+command:
+  bootstrap:
+    usePubspecOverrides: true
+
+scripts:
+  analyze:
+    run: dart run melos exec -- dart analyze .
+    description: Run static analysis in every Dart package.
+  test:
+    run: dart run melos exec --dir-exists=test -- dart test
+    description: Run tests for packages with a test directory.
