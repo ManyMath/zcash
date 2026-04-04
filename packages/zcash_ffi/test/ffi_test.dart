@@ -5,7 +5,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:test/test.dart';
-import 'package:zcash/zcash.dart';
+import 'package:zcash_ffi/zcash_ffi.dart';
 
 // Skipped unless ZCASH_FFI_LIB points at a built libzcash_ffi.
 

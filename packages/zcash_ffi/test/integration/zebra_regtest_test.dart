@@ -4,7 +4,7 @@ library;
 import 'dart:async';
 import 'dart:io';
 import 'package:test/test.dart';
-import 'package:zcash/zcash.dart';
+import 'package:zcash_ffi/zcash_ffi.dart';
 import 'harness.dart';
 
 void main() {
