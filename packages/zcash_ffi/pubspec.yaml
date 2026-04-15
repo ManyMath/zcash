@@ -1,7 +1,7 @@
 name: zcash_ffi
 description: dart:ffi bindings to the zcash-ffi native library.
 version: 0.0.7
-repository: https://github.com/ManyMath/zcashdart
+repository: https://git.manymath.com/sneurlax/zcash
 publish_to: none
 
 environment:
