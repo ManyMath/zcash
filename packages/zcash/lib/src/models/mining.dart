@@ -34,8 +34,7 @@ class BlockTemplate {
     return BlockTemplate(
       version: (json['version'] as num).toInt(),
       previousBlockHash: json['previousblockhash'] as String,
-      transactions:
-          (json['transactions'] as List).cast<Map<String, dynamic>>(),
+      transactions: (json['transactions'] as List).cast<Map<String, dynamic>>(),
       coinbaseTxn: json['coinbasetxn'] as Map<String, dynamic>?,
       coinbaseValue: json['coinbasevalue'] != null
           ? (json['coinbasevalue'] as num).toInt()
@@ -47,9 +46,11 @@ class BlockTemplate {
           : null,
       bits: json['bits'] as String,
       height: (json['height'] as num).toInt(),
-      blockCommitmentsHash: (json['blockcommitmentshash'] ??
-              json['lightclientroothash'] ??
-              json['finalsaplingroothash']) as String?,
+      blockCommitmentsHash:
+          (json['blockcommitmentshash'] ??
+                  json['lightclientroothash'] ??
+                  json['finalsaplingroothash'])
+              as String?,
       defaultMerkleRoot: defaultRoots?['merkleroot'] as String?,
     );
   }

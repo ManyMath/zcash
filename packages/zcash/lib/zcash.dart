@@ -5,6 +5,7 @@ export 'src/zebra_client.dart';
 export 'src/lightwalletd_client.dart';
 export 'src/models/blockchain_info.dart';
 export 'src/models/block.dart';
+export 'src/models/consensus.dart';
 export 'src/models/transaction.dart';
 export 'src/models/address.dart';
 export 'src/models/tree_state.dart';

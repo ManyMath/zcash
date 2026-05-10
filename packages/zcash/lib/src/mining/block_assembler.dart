@@ -3,8 +3,8 @@ import 'dart:typed_data';
 import 'package:crypto/crypto.dart';
 
 class BlockAssembler {
-  /// Hashes are in internal byte order. RPC responses use display order, so
-  /// pass those through [reverseHash] first.
+  /// Hashes are internal byte order; RPC gives displayed (reversed) order,
+  /// so pass those through [reverseHash] first.
   static Uint8List buildHeaderPrefix({
     required int version,
     required Uint8List prevBlockHash,
@@ -95,8 +95,6 @@ class BlockAssembler {
     return _hexEncode(buf.toBytes());
   }
 
-  /// Takes display-order txids, coinbase first, and returns the root in
-  /// internal order.
   static Uint8List computeMerkleRoot(List<String> txHashesDisplayOrder) {
     if (txHashesDisplayOrder.isEmpty) {
       throw ArgumentError('at least one txid (coinbase) is required');

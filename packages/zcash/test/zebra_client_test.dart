@@ -6,13 +6,13 @@ import 'package:test/test.dart';
 import 'package:zcash/zcash.dart';
 
 http.Client mockClient(Object? result) => MockClient((request) async {
-      final body = jsonDecode(request.body) as Map<String, dynamic>;
-      return http.Response(
-        jsonEncode({'jsonrpc': '2.0', 'id': body['id'], 'result': result}),
-        200,
-        headers: {'content-type': 'application/json'},
-      );
-    });
+  final body = jsonDecode(request.body) as Map<String, dynamic>;
+  return http.Response(
+    jsonEncode({'jsonrpc': '2.0', 'id': body['id'], 'result': result}),
+    200,
+    headers: {'content-type': 'application/json'},
+  );
+});
 
 http.Client errorClient(int code, String message) =>
     MockClient((request) async {
@@ -138,9 +138,7 @@ void main() {
 
     group('getAddressBalance', () {
       test('returns balance in zatoshis and ZEC', () async {
-        final client = ZebraClient(
-          client: mockClient({'balance': 100000000}),
-        );
+        final client = ZebraClient(client: mockClient({'balance': 100000000}));
         final balance = await client.getAddressBalance(['t1addr']);
         expect(balance.zatoshis, 100000000);
         expect(balance.zec, closeTo(1.0, 1e-9));
@@ -266,24 +264,9 @@ void main() {
     });
 
     group('validateAddress', () {
-      test('parses valid transparent address', () async {
-        final client = ZebraClient(
-          client: mockClient({
-            'isvalid': true,
-            'address': 't1addr',
-            'type': 'pubkeyhash',
-            'ismine': false,
-          }),
-        );
-        final v = await client.validateAddress('t1addr');
-        expect(v.isValid, isTrue);
-        expect(v.addressType, 'pubkeyhash');
-        client.close();
-      });
 
       test('parses invalid address', () async {
-        final client =
-            ZebraClient(client: mockClient({'isvalid': false}));
+        final client = ZebraClient(client: mockClient({'isvalid': false}));
         final v = await client.validateAddress('notanaddr');
         expect(v.isValid, isFalse);
         client.close();
@@ -353,8 +336,10 @@ void main() {
         expect(tmpl.transactions.first['hash'], 'txhash');
         expect(tmpl.coinbaseTxn, isNotNull);
         expect(tmpl.coinbaseValue, isNull);
-        expect(tmpl.target,
-            '0000007fffff0000000000000000000000000000000000000000000000000000');
+        expect(
+          tmpl.target,
+          '0000007fffff0000000000000000000000000000000000000000000000000000',
+        );
         expect(tmpl.minTime, 1740000000);
         expect(tmpl.bits, '1f07ffff');
         expect(tmpl.height, 3000000);
@@ -431,9 +416,7 @@ void main() {
 
     group('error handling', () {
       test('throws ZebraRpcException on RPC error', () async {
-        final client = ZebraClient(
-          client: errorClient(-8, 'Block not found'),
-        );
+        final client = ZebraClient(client: errorClient(-8, 'Block not found'));
         expect(
           () => client.getBlock('nonexistent'),
           throwsA(

@@ -37,11 +37,11 @@ class ZebraClient {
     String? password,
     this.timeout = const Duration(seconds: 30),
     http.Client? client,
-  })  : _endpoint = Uri.http('$host:$port', '/'),
-        _authHeader = (username != null && password != null)
-            ? 'Basic ${base64Encode(utf8.encode('$username:$password'))}'
-            : null,
-        _http = client ?? http.Client();
+  }) : _endpoint = Uri.http('$host:$port', '/'),
+       _authHeader = (username != null && password != null)
+           ? 'Basic ${base64Encode(utf8.encode('$username:$password'))}'
+           : null,
+       _http = client ?? http.Client();
 
   void close() => _http.close();
 
@@ -136,8 +136,9 @@ class ZebraClient {
   }
 
   Future<AddressBalance> getAddressBalance(List<String> addresses) async {
-    final result =
-        await _call('getaddressbalance', [{'addresses': addresses}]);
+    final result = await _call('getaddressbalance', [
+      {'addresses': addresses},
+    ]);
     return AddressBalance.fromJson(result as Map<String, dynamic>);
   }
 
@@ -154,8 +155,9 @@ class ZebraClient {
   }
 
   Future<List<AddressUtxo>> getAddressUtxos(List<String> addresses) async {
-    final result =
-        await _call('getaddressutxos', [{'addresses': addresses}]);
+    final result = await _call('getaddressutxos', [
+      {'addresses': addresses},
+    ]);
     return (result as List)
         .map((e) => AddressUtxo.fromJson(e as Map<String, dynamic>))
         .toList();
@@ -174,7 +176,7 @@ class ZebraClient {
     final result = await _call('z_getsubtreesbyindex', [
       pool,
       startIndex,
-      if (limit != null) limit,
+      ?limit,
     ]);
     return SubtreeList.fromJson(result as Map<String, dynamic>);
   }
@@ -183,7 +185,6 @@ class ZebraClient {
     await _call('invalidateblock', [hash]);
   }
 
-  // command: 'add' | 'remove' | 'onetry'.
   Future<void> addNode(String node, String command) async {
     await _call('addnode', [node, command]);
   }
@@ -202,7 +203,6 @@ class ZebraClient {
     await _call('reconsiderblock', [hash]);
   }
 
-  // Regtest only.
   Future<void> stop() async {
     await _call('stop');
   }
@@ -239,22 +239,24 @@ class ZebraClient {
     return BlockInfoFull.fromJson(result as Map<String, dynamic>);
   }
 
-  Future<BlockTemplate> getBlockTemplate(
-      {Map<String, dynamic>? request}) async {
+  Future<BlockTemplate> getBlockTemplate({
+    Map<String, dynamic>? request,
+  }) async {
     final result = await _call('getblocktemplate', [request ?? {}]);
     return BlockTemplate.fromJson(result as Map<String, dynamic>);
   }
 
-  // Null on success, otherwise the rejection reason.
   Future<String?> submitBlock(String blockHex) async {
     final result = await _call('submitblock', [blockHex]);
     return result as String?;
   }
 
   Future<List<AddressMempoolEntry>> getAddressMempool(
-      List<String> addresses) async {
-    final result =
-        await _call('getaddressmempool', [{'addresses': addresses}]);
+    List<String> addresses,
+  ) async {
+    final result = await _call('getaddressmempool', [
+      {'addresses': addresses},
+    ]);
     return (result as List)
         .map((e) => AddressMempoolEntry.fromJson(e as Map<String, dynamic>))
         .toList();

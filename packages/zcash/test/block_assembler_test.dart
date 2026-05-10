@@ -34,9 +34,11 @@ void main() {
       expect(_hexs(BlockAssembler.encodeVarint(0x10000)), 'fe00000100');
     });
 
+    // Display order; 029f11d8... is the regtest genesis.
     test('reverseHash is its own inverse', () {
       final h = _hex(
-          '029f11d80ef9765602235e1bc9727e3eb6ba20839319f761fee920d63401e327');
+        '029f11d80ef9765602235e1bc9727e3eb6ba20839319f761fee920d63401e327',
+      );
       expect(
         BlockAssembler.reverseHash(BlockAssembler.reverseHash(h)),
         equals(h),
@@ -45,11 +47,14 @@ void main() {
 
     test('buildHeaderPrefix is 108 bytes with correct field layout', () {
       final prev = _hex(
-          '029f11d80ef9765602235e1bc9727e3eb6ba20839319f761fee920d63401e327');
+        '029f11d80ef9765602235e1bc9727e3eb6ba20839319f761fee920d63401e327',
+      );
       final merkle = _hex(
-          '29b0a11f5984650e4f94cadb5fcef195038b66107456ba5be7667d02f6593ed0');
+        '29b0a11f5984650e4f94cadb5fcef195038b66107456ba5be7667d02f6593ed0',
+      );
       final commit = _hex(
-          'd895b50a5ceb6dff7da902ffb6ece3b6a448612e5985e1e9ee72d9006e0e84b0');
+        'd895b50a5ceb6dff7da902ffb6ece3b6a448612e5985e1e9ee72d9006e0e84b0',
+      );
 
       final prefix = BlockAssembler.buildHeaderPrefix(
         version: 4,
@@ -61,7 +66,6 @@ void main() {
       );
       expect(prefix.length, 108);
       expect(prefix.sublist(0, 4), [4, 0, 0, 0]);
-      // bits little-endian (0x200ca63f -> 3f a6 0c 20)
       expect(prefix.sublist(104, 108), [0x3f, 0xa6, 0x0c, 0x20]);
     });
 
@@ -69,10 +73,12 @@ void main() {
       final prefix = Uint8List(108);
       final nonce = Uint8List(32);
       final solution = Uint8List(1344);
-      final header =
-          BlockAssembler.buildHeader(headerPrefix: prefix, nonce: nonce, solution: solution);
+      final header = BlockAssembler.buildHeader(
+        headerPrefix: prefix,
+        nonce: nonce,
+        solution: solution,
+      );
       expect(header.length, 1487);
-      // Solution-size varint occupies bytes 140..143: 0xfd 0x40 0x05
       expect(header.sublist(140, 143), [0xfd, 0x40, 0x05]);
     });
 

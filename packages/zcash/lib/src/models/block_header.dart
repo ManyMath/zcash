@@ -24,19 +24,18 @@ class BlockHeader {
   });
 
   factory BlockHeader.fromJson(Map<String, dynamic> json) => BlockHeader(
-        hash: json['hash'] as String,
-        confirmations: (json['confirmations'] as num).toInt(),
-        height: (json['height'] as num).toInt(),
-        version: (json['version'] as num).toInt(),
-        merkleRoot: json['merkleroot'] as String,
-        time: (json['time'] as num).toInt(),
-        nonce: json['nonce'] as String,
-        bits: json['bits'] as String,
-        previousBlockHash: json['previousblockhash'] as String?,
-        nextBlockHash: json['nextblockhash'] as String?,
-      );
+    hash: json['hash'] as String,
+    confirmations: (json['confirmations'] as num).toInt(),
+    height: (json['height'] as num).toInt(),
+    version: (json['version'] as num).toInt(),
+    merkleRoot: json['merkleroot'] as String,
+    time: (json['time'] as num).toInt(),
+    nonce: json['nonce'] as String,
+    bits: json['bits'] as String,
+    previousBlockHash: json['previousblockhash'] as String?,
+    nextBlockHash: json['nextblockhash'] as String?,
+  );
 
   @override
-  String toString() =>
-      'BlockHeader(hash: $hash, height: $height, time: $time)';
+  String toString() => 'BlockHeader(hash: $hash, height: $height, time: $time)';
 }

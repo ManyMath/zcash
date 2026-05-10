@@ -16,17 +16,19 @@ class PeerInfo {
   });
 
   factory PeerInfo.fromJson(Map<String, dynamic> json) => PeerInfo(
-        addr: json['addr'] as String,
-        bytesSent:
-            json['bytessent'] != null ? (json['bytessent'] as num).toInt() : null,
-        bytesRecv:
-            json['bytesrecv'] != null ? (json['bytesrecv'] as num).toInt() : null,
-        connTime: json['conntime'] != null
-            ? (json['conntime'] as num).toInt()
-            : null,
-        inbound: json['inbound'] as bool?,
-        subver: json['subver'] as String?,
-      );
+    addr: json['addr'] as String,
+    bytesSent: json['bytessent'] != null
+        ? (json['bytessent'] as num).toInt()
+        : null,
+    bytesRecv: json['bytesrecv'] != null
+        ? (json['bytesrecv'] as num).toInt()
+        : null,
+    connTime: json['conntime'] != null
+        ? (json['conntime'] as num).toInt()
+        : null,
+    inbound: json['inbound'] as bool?,
+    subver: json['subver'] as String?,
+  );
 
   @override
   String toString() => 'PeerInfo(addr: $addr, inbound: $inbound)';
@@ -46,13 +48,13 @@ class NetworkInfo {
   });
 
   factory NetworkInfo.fromJson(Map<String, dynamic> json) => NetworkInfo(
-        version: (json['version'] as num).toInt(),
-        subversion: json['subversion'] as String,
-        protocolVersion: (json['protocolversion'] as num).toInt(),
-        localAddresses: (json['localaddresses'] as List? ?? [])
-            .map((e) => (e as Map<String, dynamic>)['address'] as String)
-            .toList(),
-      );
+    version: (json['version'] as num).toInt(),
+    subversion: json['subversion'] as String,
+    protocolVersion: (json['protocolversion'] as num).toInt(),
+    localAddresses: (json['localaddresses'] as List? ?? [])
+        .map((e) => (e as Map<String, dynamic>)['address'] as String)
+        .toList(),
+  );
 
   @override
   String toString() =>

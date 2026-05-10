@@ -14,15 +14,16 @@ class BlockInfo {
   });
 
   factory BlockInfo.fromJson(Map<String, dynamic> json) => BlockInfo(
-        hash: json['hash'] as String,
-        confirmations: (json['confirmations'] as num).toInt(),
-        height: json['height'] != null ? (json['height'] as num).toInt() : null,
-        time: json['time'] != null ? (json['time'] as num).toInt() : null,
-        transactions: (json['tx'] as List? ?? []).cast<String>(),
-      );
+    hash: json['hash'] as String,
+    confirmations: (json['confirmations'] as num).toInt(),
+    height: json['height'] != null ? (json['height'] as num).toInt() : null,
+    time: json['time'] != null ? (json['time'] as num).toInt() : null,
+    transactions: (json['tx'] as List? ?? []).cast<String>(),
+  );
 
   @override
-  String toString() => 'BlockInfo(hash: $hash, height: $height, '
+  String toString() =>
+      'BlockInfo(hash: $hash, height: $height, '
       'txCount: ${transactions.length})';
 }
 
@@ -42,15 +43,15 @@ class BlockInfoFull {
   });
 
   factory BlockInfoFull.fromJson(Map<String, dynamic> json) => BlockInfoFull(
-        hash: json['hash'] as String,
-        confirmations: (json['confirmations'] as num).toInt(),
-        height: json['height'] != null ? (json['height'] as num).toInt() : null,
-        time: json['time'] != null ? (json['time'] as num).toInt() : null,
-        transactions:
-            (json['tx'] as List? ?? []).cast<Map<String, dynamic>>(),
-      );
+    hash: json['hash'] as String,
+    confirmations: (json['confirmations'] as num).toInt(),
+    height: json['height'] != null ? (json['height'] as num).toInt() : null,
+    time: json['time'] != null ? (json['time'] as num).toInt() : null,
+    transactions: (json['tx'] as List? ?? []).cast<Map<String, dynamic>>(),
+  );
 
   @override
-  String toString() => 'BlockInfoFull(hash: $hash, height: $height, '
+  String toString() =>
+      'BlockInfoFull(hash: $hash, height: $height, '
       'txCount: ${transactions.length})';
 }
