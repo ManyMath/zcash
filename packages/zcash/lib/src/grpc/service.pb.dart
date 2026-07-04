@@ -1232,6 +1232,7 @@ class TreeState extends $pb.GeneratedMessage {
     $core.int? time,
     $core.String? saplingTree,
     $core.String? orchardTree,
+    $core.String? ironwoodTree,
   }) {
     final result = create();
     if (network != null) result.network = network;
@@ -1240,6 +1241,7 @@ class TreeState extends $pb.GeneratedMessage {
     if (time != null) result.time = time;
     if (saplingTree != null) result.saplingTree = saplingTree;
     if (orchardTree != null) result.orchardTree = orchardTree;
+    if (ironwoodTree != null) result.ironwoodTree = ironwoodTree;
     return result;
   }
 
@@ -1264,6 +1266,7 @@ class TreeState extends $pb.GeneratedMessage {
     ..aI(4, _omitFieldNames ? '' : 'time', fieldType: $pb.PbFieldType.OU3)
     ..aOS(5, _omitFieldNames ? '' : 'saplingTree', protoName: 'saplingTree')
     ..aOS(6, _omitFieldNames ? '' : 'orchardTree', protoName: 'orchardTree')
+    ..aOS(7, _omitFieldNames ? '' : 'ironwoodTree', protoName: 'ironwoodTree')
     ..hasRequiredFields = false;
 
   @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
@@ -1337,6 +1340,15 @@ class TreeState extends $pb.GeneratedMessage {
   $core.bool hasOrchardTree() => $_has(5);
   @$pb.TagNumber(6)
   void clearOrchardTree() => $_clearField(6);
+
+  @$pb.TagNumber(7)
+  $core.String get ironwoodTree => $_getSZ(6);
+  @$pb.TagNumber(7)
+  set ironwoodTree($core.String value) => $_setString(6, value);
+  @$pb.TagNumber(7)
+  $core.bool hasIronwoodTree() => $_has(6);
+  @$pb.TagNumber(7)
+  void clearIronwoodTree() => $_clearField(7);
 }
 
 class GetSubtreeRootsArg extends $pb.GeneratedMessage {

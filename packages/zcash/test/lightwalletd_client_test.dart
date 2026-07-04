@@ -5,15 +5,29 @@ import 'package:fixnum/fixnum.dart';
 import 'package:grpc/grpc.dart';
 import 'package:test/test.dart';
 import 'package:zcash/zcash.dart' hide TreeState;
-import 'package:zcash/src/grpc/service.pb.dart' as lwd
-    show TreeState, Duration;
-import 'package:zcash/src/grpc/service.pbgrpc.dart' show
-    CompactTxStreamerServiceBase, LightdInfo, BlockID, ChainSpec,
-    BlockRange, RawTransaction, TxFilter, SendResponse,
-    TransparentAddressBlockFilter, Balance, AddressList, Address,
-    GetMempoolTxRequest, Empty, SubtreeRoot, GetSubtreeRootsArg,
-    GetAddressUtxosReplyList, GetAddressUtxosArg, GetAddressUtxosReply,
-    PingResponse;
+import 'package:zcash/lightwalletd_protos.dart' as lwd show TreeState, Duration;
+import 'package:zcash/lightwalletd_protos.dart'
+    show
+        CompactTxStreamerServiceBase,
+        LightdInfo,
+        BlockID,
+        ChainSpec,
+        BlockRange,
+        RawTransaction,
+        TxFilter,
+        SendResponse,
+        TransparentAddressBlockFilter,
+        Balance,
+        AddressList,
+        Address,
+        GetMempoolTxRequest,
+        Empty,
+        SubtreeRoot,
+        GetSubtreeRootsArg,
+        GetAddressUtxosReplyList,
+        GetAddressUtxosArg,
+        GetAddressUtxosReply,
+        PingResponse;
 
 Server? _server;
 LightwalletdClient? _client;
@@ -35,14 +49,18 @@ Future<void> _stopServer() async {
 
 void main() {
   group('LightwalletdClient.getInfo', () {
-    setUp(() => _startServer(_FakeStreamer(
+    setUp(
+      () => _startServer(
+        _FakeStreamer(
           lightdInfo: LightdInfo()
             ..version = '0.4.1'
             ..vendor = 'ECC LightWalletD'
             ..chainName = 'main'
             ..blockHeight = Int64(2500000)
             ..saplingActivationHeight = Int64(419200),
-        )));
+        ),
+      ),
+    );
 
     tearDown(_stopServer);
 
@@ -53,6 +71,116 @@ void main() {
       expect(info.chainName, 'main');
       expect(info.blockHeight, Int64(2500000));
       expect(info.saplingActivationHeight, Int64(419200));
+    });
+  });
+
+  group('LightwalletdClient Ironwood (NU6.3) wire fields', () {
+    setUp(
+      () => _startServer(
+        _FakeStreamer(
+          treeState: lwd.TreeState()
+            ..height = Int64(3428143)
+            ..hash = 'ironwood-activation-hash'
+            ..saplingTree = 'sapling-tree'
+            ..orchardTree = 'orchard-tree'
+            ..ironwoodTree = 'ironwood-tree',
+        ),
+      ),
+    );
+
+    tearDown(_stopServer);
+
+    test('getTreeState carries the Ironwood tree over the wire', () async {
+      final state = await _client!.getTreeState(
+        BlockID()..height = Int64(3428143),
+      );
+      expect(state.ironwoodTree, 'ironwood-tree');
+      expect(state.hasIronwoodTree(), isTrue);
+      expect(state.orchardTree, 'orchard-tree');
+      expect(state.orchardTree, isNot(state.ironwoodTree));
+    });
+
+    test('a server that omits the Ironwood tree reports absence', () async {
+      await _stopServer();
+      await _startServer(
+        _FakeStreamer(
+          latestTreeState: lwd.TreeState()
+            ..height = Int64(3428142)
+            ..orchardTree = 'orchard-tree',
+        ),
+      );
+      // Empty is the proto3 default, not an empty-tree anchor.
+      final state = await _client!.getLatestTreeState();
+      expect(state.hasIronwoodTree(), isFalse);
+      expect(state.ironwoodTree, isEmpty);
+    });
+
+    test('compact blocks carry Ironwood actions in their own field', () async {
+      await _stopServer();
+      await _startServer(
+        _FakeStreamer(
+          blocks: [
+            CompactBlock()
+              ..height = Int64(3428144)
+              ..chainMetadata = (ChainMetadata()
+                ..orchardCommitmentTreeSize = 88
+                ..ironwoodCommitmentTreeSize = 5)
+              ..vtx.add(
+                CompactTx()
+                  ..actions.add(
+                    CompactOrchardAction()
+                      ..nullifier = [1]
+                      ..cmx = [2]
+                      ..ephemeralKey = [3]
+                      ..ciphertext = [4],
+                  )
+                  ..ironwoodActions.add(
+                    CompactOrchardAction()
+                      ..nullifier = [5]
+                      ..cmx = [6]
+                      ..ephemeralKey = [7]
+                      ..ciphertext = [8],
+                  ),
+              ),
+          ],
+        ),
+      );
+      final range = BlockRange()
+        ..start = (BlockID()..height = Int64(3428144))
+        ..end = (BlockID()..height = Int64(3428144));
+
+      final blocks = await _client!.getBlockRange(range).toList();
+      final tx = blocks.single.vtx.single;
+
+      expect(tx.actions, hasLength(1));
+      expect(tx.ironwoodActions, hasLength(1));
+      expect(tx.actions.single.nullifier, [1]);
+      expect(tx.ironwoodActions.single.nullifier, [5]);
+      expect(blocks.single.chainMetadata.orchardCommitmentTreeSize, 88);
+      expect(blocks.single.chainMetadata.ironwoodCommitmentTreeSize, 5);
+    });
+
+    test('subtree roots can be requested for the Ironwood pool', () async {
+      await _stopServer();
+      await _startServer(
+        _FakeStreamer(
+          subtreeRoots: [
+            SubtreeRoot()
+              ..rootHash = [1, 2, 3, 4]
+              ..completingBlockHeight = Int64(3428200),
+          ],
+        ),
+      );
+      final arg = GetSubtreeRootsArg()
+        ..shieldedProtocol = ShieldedProtocol.ironwood
+        ..startIndex = 0
+        ..maxEntries = 1;
+
+      final roots = await _client!.getSubtreeRoots(arg).toList();
+      expect(arg.shieldedProtocol, ShieldedProtocol.ironwood);
+      expect(ShieldedProtocol.ironwood.value, 2);
+      expect(PoolType.IRONWOOD.value, 4);
+      expect(roots, hasLength(1));
     });
   });
 
@@ -78,14 +206,69 @@ void main() {
       expect(blocks.first.height, Int64(100));
       expect(blocks.last.height, Int64(104));
     });
+
+    test('allows the inclusive genesis range 0..0', () async {
+      await _stopServer();
+      await _startServer(
+        _FakeStreamer(blocks: [CompactBlock()..height = Int64.ZERO]),
+      );
+      final range = BlockRange()
+        ..start = (BlockID()..height = Int64.ZERO)
+        ..end = (BlockID()..height = Int64.ZERO);
+
+      final blocks = await _client!.getBlockRange(range).toList();
+
+      expect(blocks, hasLength(1));
+      expect(blocks.single.height, Int64.ZERO);
+    });
+
+    test('rejects inverted height ranges with method and range context', () {
+      final range = BlockRange()
+        ..start = (BlockID()..height = Int64(7))
+        ..end = (BlockID()..height = Int64(3));
+
+      expect(
+        () => _client!.getBlockRange(range),
+        throwsA(
+          isA<LightwalletdClientException>()
+              .having((e) => e.method, 'method', 'GetBlockRange')
+              .having((e) => e.range, 'range', '7..3')
+              .having((e) => e.toString(), 'message', contains('7..3')),
+        ),
+      );
+    });
+
+    test('wraps stream failures with method and range context', () async {
+      await _stopServer();
+      await _startServer(
+        _FakeStreamer(rangeError: GrpcError.unavailable('backend offline')),
+      );
+      final range = BlockRange()
+        ..start = (BlockID()..height = Int64(2))
+        ..end = (BlockID()..height = Int64(4));
+
+      expect(
+        _client!.getBlockRange(range).toList(),
+        throwsA(
+          isA<LightwalletdClientException>()
+              .having((e) => e.method, 'method', 'GetBlockRange')
+              .having((e) => e.range, 'range', '2..4')
+              .having((e) => e.cause, 'cause', isA<GrpcError>()),
+        ),
+      );
+    });
   });
 
   group('LightwalletdClient.sendTransaction', () {
-    setUp(() => _startServer(_FakeStreamer(
+    setUp(
+      () => _startServer(
+        _FakeStreamer(
           sendResponse: SendResponse()
             ..errorCode = 0
             ..errorMessage = '',
-        )));
+        ),
+      ),
+    );
 
     tearDown(_stopServer);
 
@@ -98,11 +281,13 @@ void main() {
 
     test('returns non-zero error code on rejection', () async {
       await _stopServer();
-      await _startServer(_FakeStreamer(
-        sendResponse: SendResponse()
-          ..errorCode = -1
-          ..errorMessage = 'invalid transaction',
-      ));
+      await _startServer(
+        _FakeStreamer(
+          sendResponse: SendResponse()
+            ..errorCode = -1
+            ..errorMessage = 'invalid transaction',
+        ),
+      );
       final resp = await _client!.sendTransaction(Uint8List(0));
       expect(resp.errorCode, -1);
       expect(resp.errorMessage, 'invalid transaction');
@@ -114,8 +299,20 @@ class _FakeStreamer extends CompactTxStreamerServiceBase {
   final LightdInfo? lightdInfo;
   final List<CompactBlock>? blocks;
   final SendResponse? sendResponse;
+  final lwd.TreeState? treeState;
+  final lwd.TreeState? latestTreeState;
+  final List<SubtreeRoot>? subtreeRoots;
+  final Object? rangeError;
 
-  _FakeStreamer({this.lightdInfo, this.blocks, this.sendResponse});
+  _FakeStreamer({
+    this.lightdInfo,
+    this.blocks,
+    this.sendResponse,
+    this.treeState,
+    this.latestTreeState,
+    this.subtreeRoots,
+    this.rangeError,
+  });
 
   @override
   Future<LightdInfo> getLightdInfo(ServiceCall call, Empty request) async =>
@@ -131,52 +328,64 @@ class _FakeStreamer extends CompactTxStreamerServiceBase {
 
   @override
   Future<CompactBlock> getBlockNullifiers(
-          ServiceCall call, BlockID request) async =>
-      CompactBlock();
+    ServiceCall call,
+    BlockID request,
+  ) async => CompactBlock();
 
   @override
-  Stream<CompactBlock> getBlockRange(ServiceCall call, BlockRange request) =>
-      Stream.fromIterable(blocks ?? []);
+  Stream<CompactBlock> getBlockRange(ServiceCall call, BlockRange request) {
+    final error = rangeError;
+    if (error != null) return Stream<CompactBlock>.error(error);
+    return Stream.fromIterable(blocks ?? []);
+  }
 
   @override
   Stream<CompactBlock> getBlockRangeNullifiers(
-          ServiceCall call, BlockRange request) =>
-      const Stream.empty();
+    ServiceCall call,
+    BlockRange request,
+  ) => const Stream.empty();
 
   @override
   Future<RawTransaction> getTransaction(
-          ServiceCall call, TxFilter request) async =>
-      RawTransaction();
+    ServiceCall call,
+    TxFilter request,
+  ) async => RawTransaction();
 
   @override
   Future<SendResponse> sendTransaction(
-          ServiceCall call, RawTransaction request) async =>
-      sendResponse ?? SendResponse();
+    ServiceCall call,
+    RawTransaction request,
+  ) async => sendResponse ?? SendResponse();
 
   @override
   Stream<RawTransaction> getTaddressTxids(
-          ServiceCall call, TransparentAddressBlockFilter request) =>
-      const Stream.empty();
+    ServiceCall call,
+    TransparentAddressBlockFilter request,
+  ) => const Stream.empty();
 
   @override
   Stream<RawTransaction> getTaddressTransactions(
-          ServiceCall call, TransparentAddressBlockFilter request) =>
-      const Stream.empty();
+    ServiceCall call,
+    TransparentAddressBlockFilter request,
+  ) => const Stream.empty();
 
   @override
   Future<Balance> getTaddressBalance(
-          ServiceCall call, AddressList request) async =>
-      Balance();
+    ServiceCall call,
+    AddressList request,
+  ) async => Balance();
 
   @override
   Future<Balance> getTaddressBalanceStream(
-          ServiceCall call, Stream<Address> request) async =>
-      Balance();
+    ServiceCall call,
+    Stream<Address> request,
+  ) async => Balance();
 
   @override
   Stream<CompactTx> getMempoolTx(
-          ServiceCall call, GetMempoolTxRequest request) =>
-      const Stream.empty();
+    ServiceCall call,
+    GetMempoolTxRequest request,
+  ) => const Stream.empty();
 
   @override
   Stream<RawTransaction> getMempoolStream(ServiceCall call, Empty request) =>
@@ -184,27 +393,31 @@ class _FakeStreamer extends CompactTxStreamerServiceBase {
 
   @override
   Future<lwd.TreeState> getTreeState(ServiceCall call, BlockID request) async =>
-      lwd.TreeState();
+      treeState ?? lwd.TreeState();
 
   @override
   Future<lwd.TreeState> getLatestTreeState(
-          ServiceCall call, Empty request) async =>
-      lwd.TreeState();
+    ServiceCall call,
+    Empty request,
+  ) async => latestTreeState ?? treeState ?? lwd.TreeState();
 
   @override
   Stream<SubtreeRoot> getSubtreeRoots(
-          ServiceCall call, GetSubtreeRootsArg request) =>
-      const Stream.empty();
+    ServiceCall call,
+    GetSubtreeRootsArg request,
+  ) => Stream.fromIterable(subtreeRoots ?? const []);
 
   @override
   Future<GetAddressUtxosReplyList> getAddressUtxos(
-          ServiceCall call, GetAddressUtxosArg request) async =>
-      GetAddressUtxosReplyList();
+    ServiceCall call,
+    GetAddressUtxosArg request,
+  ) async => GetAddressUtxosReplyList();
 
   @override
   Stream<GetAddressUtxosReply> getAddressUtxosStream(
-          ServiceCall call, GetAddressUtxosArg request) =>
-      const Stream.empty();
+    ServiceCall call,
+    GetAddressUtxosArg request,
+  ) => const Stream.empty();
 
   @override
   Future<PingResponse> ping(ServiceCall call, lwd.Duration request) async =>
