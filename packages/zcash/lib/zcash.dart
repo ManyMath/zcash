@@ -2,6 +2,7 @@ library;
 
 export 'src/mining/block_assembler.dart';
 export 'src/zebra_client.dart';
+export 'src/zcashd_wallet_client.dart';
 export 'src/lightwalletd_client.dart';
 export 'src/models/blockchain_info.dart';
 export 'src/models/block.dart';
@@ -14,4 +15,5 @@ export 'src/models/subsidy.dart';
 export 'src/models/network.dart';
 export 'src/models/validation.dart';
 export 'src/models/mining.dart';
+export 'src/models/spend.dart';
 export 'src/zip321.dart';
