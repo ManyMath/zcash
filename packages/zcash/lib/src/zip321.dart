@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:typed_data';
+import 'models/proposal.dart';
 
 class ZcashPaymentTarget {
   final String address;
@@ -101,8 +102,7 @@ ZcashPaymentRequest? parseZcashUri(String uri) {
     ...labels.keys,
     ...messages.keys,
     ...others.keys,
-  }.toList()
-    ..sort();
+  }.toList()..sort();
 
   if (allIndexes.isEmpty) return null;
 
@@ -127,14 +127,16 @@ ZcashPaymentRequest? parseZcashUri(String uri) {
       if (memo.length > 512) return null;
     }
 
-    payments.add(ZcashPaymentTarget(
-      address: addr,
-      amountZatoshis: amount,
-      memo: memo,
-      label: labels[i],
-      message: messages[i],
-      other: others[i] ?? const <String, String>{},
-    ));
+    payments.add(
+      ZcashPaymentTarget(
+        address: addr,
+        amountZatoshis: amount,
+        memo: memo,
+        label: labels[i],
+        message: messages[i],
+        other: others[i] ?? const <String, String>{},
+      ),
+    );
   }
 
   return ZcashPaymentRequest(payments: payments);
@@ -150,7 +152,8 @@ String formatZcashUri(ZcashPaymentRequest request) {
     }
     if (p.memo != null && _isTransparent(p.address)) {
       throw ArgumentError(
-          'memo is not allowed for transparent address ${p.address}');
+        'memo is not allowed for transparent address ${p.address}',
+      );
     }
   }
 
@@ -188,8 +191,7 @@ List<String> _queryParts(ZcashPaymentTarget p, int? index) {
   return parts;
 }
 
-bool _isTransparent(String address) =>
-    address.startsWith('t') || address.startsWith('T');
+bool _isTransparent(String address) => zcashAddressIsTransparent(address);
 
 BigInt? _parseAmountZatoshis(String s) {
   if (!RegExp(r'^\d+(\.\d+)?$').hasMatch(s)) return null;
@@ -206,8 +208,10 @@ String _formatAmountZec(BigInt zatoshis) {
   final intPart = zatoshis ~/ BigInt.from(100000000);
   final decPart = zatoshis % BigInt.from(100000000);
   if (decPart == BigInt.zero) return intPart.toString();
-  final trimmed =
-      decPart.toString().padLeft(8, '0').replaceFirst(RegExp(r'0+$'), '');
+  final trimmed = decPart
+      .toString()
+      .padLeft(8, '0')
+      .replaceFirst(RegExp(r'0+$'), '');
   return '$intPart.$trimmed';
 }
 
