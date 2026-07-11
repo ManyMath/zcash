@@ -1,0 +1,35 @@
+[package]
+name = "zcash-ffi"
+version = "0.0.2"
+edition = "2021"
+rust-version = "1.88"
+description = "Zcash FFI utilities for use by Dart."
+repository = "https://git.manymath.com/sneurlax/zcash"
+license = "MIT"
+
+[lib]
+name = "zcash_ffi"
+path = "src/lib.rs"
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[dependencies]
+serde_json = "1"
+base64 = "0.22"
+prost = "0.14"
+hex = "0.4"
+bs58 = { version = "0.5", features = ["check"] }
+zcash_client_backend = { version = "0.23", features = ["orchard"] }
+zcash_keys = { version = "0.15", features = ["sapling", "orchard", "transparent-inputs"] }
+zcash_primitives = "0.29"
+zcash_address = "0.13"
+zcash_protocol = { version = "0.10.0", features = ["std", "local-consensus"] }
+zcash_script = "0.4.5"
+zcash_transparent = { version = "0.9", features = ["transparent-inputs"] }
+zip32 = "0.2.1"
+equihash = { version = "0.3", features = ["solver"] }
+# 0.13, not 0.14: shares sha2 0.10 with the Zcash crates (0.14.1+ duplicates it).
+bip0039 = { version = "0.13.4", default-features = false, features = ["std"] }
+
+
+[features]
+[dev-dependencies]
