@@ -1,18 +1,36 @@
 name: zcash_ffi
-description: dart:ffi bindings to the zcash-ffi native library.
-version: 0.0.7
+description: Zcash Dart native-assets bindings and CLI helpers backed by zcash-ffi.
+version: 0.0.8
 repository: https://git.manymath.com/sneurlax/zcash
 publish_to: none
 
+executables:
+  zcash_tool:
+
 environment:
-  sdk: '>=3.4.0 <4.0.0'
+  sdk: '>=3.10.0 <4.0.0'
 
 dependencies:
   zcash:
     path: ../zcash
   ffi: ^2.1.0
+  hooks: ^1.0.2
+  code_assets: ^1.0.0
+  path: ^1.9.0
+  build_tool:
+    git:
+      url: https://github.com/ManyMath/cargokit.git
+      ref: 7aaeefeefc5ac4a87f48f24230cbe59b1419c9f8
+      path: build_tool
+
+dependency_overrides:
+  http: ^1.6.0
+  path: ^1.9.0
 
 dev_dependencies:
   crypto: ^3.0.0
+  fixnum: ^1.1.0
+  grpc: ^5.1.0
+  http: ^1.6.0
   lints: ^6.0.0
   test: ^1.27.0
