@@ -264,6 +264,20 @@ void main() {
     });
 
     group('validateAddress', () {
+      test('parses valid transparent address', () async {
+        final client = ZebraClient(
+          client: mockClient({
+            'isvalid': true,
+            'address': 't1addr',
+            'type': 'pubkeyhash',
+            'ismine': false,
+          }),
+        );
+        final v = await client.validateAddress('t1addr');
+        expect(v.isValid, isTrue);
+        expect(v.addressType, 'pubkeyhash');
+        client.close();
+      });
 
       test('parses invalid address', () async {
         final client = ZebraClient(client: mockClient({'isvalid': false}));

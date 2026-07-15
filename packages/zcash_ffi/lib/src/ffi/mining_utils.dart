@@ -1,6 +1,6 @@
-import 'dart:convert';
 import 'dart:typed_data';
 
+import 'native_result.dart';
 import 'zcash_ffi_bindings.dart';
 
 class EquihashSolution {
@@ -11,15 +11,15 @@ class EquihashSolution {
   const EquihashSolution({required this.nonce, required this.solution});
 }
 
-/// [headerPrefix] is the 108 header bytes before the nonce.
 EquihashSolution solveEquihash(Uint8List headerPrefix) {
   final raw = ZcashFfiBindings.instance.solveEquihash(headerPrefix);
-  final json = jsonDecode(raw) as Map<String, dynamic>;
-  if (json.containsKey('error')) {
-    throw StateError('Equihash solver: ${json['error']}');
-  }
-  final nonce = _hexDecode(json['nonce'] as String);
-  final solution = _hexDecode(json['solution'] as String);
+  final json = parseNativeJsonObject(raw, context: 'solve_equihash');
+  final nonce = _hexDecode(
+    requiredNativeStringFromObject(json, 'nonce', context: 'solve_equihash'),
+  );
+  final solution = _hexDecode(
+    requiredNativeStringFromObject(json, 'solution', context: 'solve_equihash'),
+  );
   if (nonce.length != 32) {
     throw StateError('expected 32-byte nonce, got ${nonce.length}');
   }

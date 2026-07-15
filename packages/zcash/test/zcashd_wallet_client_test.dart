@@ -202,6 +202,33 @@ void main() {
     });
 
     test(
+      'sends mixed Unified Address receiver params in zcashd order',
+      () async {
+        final log = RpcRequestLog();
+        final client = ZcashdWalletClient(
+          client: walletMockClient({'address': 'uregtest1mixed'}, log: log),
+        );
+
+        final address = await client.zGetAddressForAccount(
+          7,
+          receiverTypes: ZcashdReceiverType.unifiedAddressReceivers,
+        );
+
+        expect(address, 'uregtest1mixed');
+        expect(log.requests.single['method'], 'z_getaddressforaccount');
+        expect(log.requests.single['params'], [
+          7,
+          [
+            ZcashdReceiverType.p2pkh,
+            ZcashdReceiverType.sapling,
+            ZcashdReceiverType.orchard,
+          ],
+        ]);
+        client.close();
+      },
+    );
+
+    test(
       'rejects unsupported z_getaddressforaccount receiver params before RPC',
       () async {
         final log = RpcRequestLog();

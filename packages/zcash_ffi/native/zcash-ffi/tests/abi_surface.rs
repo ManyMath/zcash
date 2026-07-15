@@ -1,9 +1,27 @@
 const LIB_RS: &str = include_str!("../src/lib.rs");
 
 const EXPECTED_SYMBOLS: &[&str] = &[
+    "zcash_ffi_address_type",
+    "zcash_ffi_classify_transparent_address",
+    "zcash_ffi_classify_transparent_script",
+    "zcash_ffi_decode_address",
+    "zcash_ffi_decode_transaction",
     "zcash_ffi_free_string",
     "zcash_ffi_hex_decode",
+    "zcash_ffi_is_shielded_address",
+    "zcash_ffi_is_transparent_address",
     "zcash_ffi_network_constants",
+    "zcash_ffi_seed_to_account_metadata",
+    "zcash_ffi_seed_to_account_ufvk",
+    "zcash_ffi_seed_to_sapling_spending_key",
+    "zcash_ffi_seed_to_transparent_xpub",
+    "zcash_ffi_seed_to_viewing_keys",
+    "zcash_ffi_solve_equihash",
+    "zcash_ffi_transaction_txid",
+    "zcash_ffi_transparent_address",
+    "zcash_ffi_ufvk_to_address",
+    "zcash_ffi_unified_address_receivers",
+    "zcash_ffi_validate_key",
     "zcash_ffi_version",
 ];
 

@@ -1,13 +1,21 @@
 import 'dart:async';
-import 'dart:convert';
 
+import 'package:zcash/zcash.dart';
+import 'native_result.dart';
 import 'zcash_ffi_bindings.dart';
 
 enum ZcashNetwork {
   mainnet,
-  testnet;
+  testnet,
+  regtest;
 
-  String get _ffiParam => this == ZcashNetwork.mainnet ? 'main' : 'test';
+  String get ffiLabel => switch (this) {
+    ZcashNetwork.mainnet => 'main',
+    ZcashNetwork.testnet => 'test',
+    ZcashNetwork.regtest => 'regtest',
+  };
+
+  String get _ffiParam => ffiLabel;
 }
 
 enum AddressType {
@@ -17,11 +25,11 @@ enum AddressType {
   unified;
 
   static AddressType fromInt(int v) => switch (v) {
-        1 => transparent,
-        2 => sapling,
-        3 => unified,
-        _ => unknown,
-      };
+    1 => transparent,
+    2 => sapling,
+    3 => unified,
+    _ => unknown,
+  };
 }
 
 class UnifiedAddressSet {
@@ -33,26 +41,31 @@ class UnifiedAddressSet {
 
   final String? transparentAddress;
 
+  final String? addressEncoding;
+
   const UnifiedAddressSet({
     required this.ua,
     this.saplingAddress,
     this.orchardAddress,
     this.transparentAddress,
+    this.addressEncoding,
   });
 
   @override
   String toString() =>
       'UnifiedAddressSet(ua: $ua, sapling: $saplingAddress, '
-      'orchard: $orchardAddress, transparent: $transparentAddress)';
+      'orchard: $orchardAddress, transparent: $transparentAddress, '
+      'encoding: $addressEncoding)';
 }
 
-/// [seedHex] is the 64-byte BIP 39 seed in hex, not the mnemonic.
+/// [seedHex] is the 64-byte BIP 39 seed in hex, not the phrase.
 Future<UnifiedAddressSet> deriveAddress({
   required String seedHex,
   required ZcashNetwork network,
   int accountIndex = 0,
   int diversifierIndex = 0,
 }) async {
+  _checkUint32Index(diversifierIndex, 'diversifierIndex');
   final ffi = ZcashFfiBindings.instance;
 
   final ufvkJson = ffi.seedToAccountUfvk(
@@ -60,24 +73,138 @@ Future<UnifiedAddressSet> deriveAddress({
     network._ffiParam,
     accountIndex,
   );
-  final ufvkMap = jsonDecode(ufvkJson) as Map<String, dynamic>;
-  if (ufvkMap.containsKey('error')) {
-    throw ArgumentError('UFVK derivation failed: ${ufvkMap['error']}');
-  }
-  final ufvk = ufvkMap['ufvk'] as String;
+  final ufvk = requiredNativeString(
+    ufvkJson,
+    'ufvk',
+    context: 'seed_to_account_ufvk/DynamicLibrary',
+    redactSensitive: [seedHex],
+  );
 
-  final addrJson =
-      ffi.ufvkToAddress(ufvk, network._ffiParam, diversifierIndex);
-  final addrMap = jsonDecode(addrJson) as Map<String, dynamic>;
-  if (addrMap.containsKey('error')) {
-    throw ArgumentError('Address derivation failed: ${addrMap['error']}');
-  }
+  final addrJson = ffi.ufvkToAddress(ufvk, network._ffiParam, diversifierIndex);
+  final addrMap = parseNativeJsonObject(
+    addrJson,
+    context: 'ufvk_to_address/DynamicLibrary',
+    redactSensitive: [ufvk],
+  );
+  final addressMap = addrMap['addresses'] is Map
+      ? (addrMap['addresses'] as Map).cast<String, dynamic>()
+      : addrMap;
 
   return UnifiedAddressSet(
-    ua: addrMap['ua'] as String,
-    saplingAddress: addrMap['sapling'] as String?,
-    orchardAddress: addrMap['orchard'] as String?,
-    transparentAddress: addrMap['transparent'] as String?,
+    ua: requiredNativeStringFromObject(
+      addressMap,
+      'ua',
+      context: 'ufvk_to_address/DynamicLibrary',
+    ),
+    saplingAddress: optionalNativeStringFromObject(
+      addressMap,
+      'sapling',
+      context: 'ufvk_to_address/DynamicLibrary',
+    ),
+    orchardAddress: optionalNativeStringFromObject(
+      addressMap,
+      'orchard',
+      context: 'ufvk_to_address/DynamicLibrary',
+    ),
+    transparentAddress: optionalNativeStringFromObject(
+      addressMap,
+      'transparent',
+      context: 'ufvk_to_address/DynamicLibrary',
+    ),
+    addressEncoding: optionalNativeStringFromObject(
+      addrMap,
+      'address_encoding',
+      context: 'ufvk_to_address/DynamicLibrary',
+    ),
+  );
+}
+
+ZcashDiversifierSearchResult deriveNativeDiversifierSearch({
+  required String ufvk,
+  required ZcashNetwork network,
+  int diversifierIndex = 0,
+  ZcashFfiBindings? bindings,
+}) {
+  _checkUint32Index(diversifierIndex, 'diversifierIndex');
+  final ffi = bindings ?? ZcashFfiBindings.instance;
+  final raw = ffi.ufvkToAddress(ufvk, network._ffiParam, diversifierIndex);
+  final json = parseNativeJsonObject(
+    raw,
+    context: 'ufvk_to_address/DynamicLibrary',
+    redactSensitive: [ufvk],
+  );
+  return ZcashDiversifierSearchResult.fromJson(json);
+}
+
+ZcashAccountMetadata deriveNativeAccountMetadata({
+  required String seedHex,
+  required ZcashNetwork network,
+  int accountIndex = 0,
+  ZcashFfiBindings? bindings,
+}) {
+  final ffi = bindings ?? ZcashFfiBindings.instance;
+  final raw = ffi.seedToAccountMetadata(
+    seedHex,
+    network._ffiParam,
+    accountIndex,
+  );
+  final json = parseNativeJsonObject(
+    raw,
+    context: 'seed_to_account_metadata/DynamicLibrary',
+    redactSensitive: [seedHex],
+  );
+  return ZcashAccountMetadata.fromJson(json);
+}
+
+ZcashViewingKeys deriveNativeViewingKeys({
+  required String seedHex,
+  required ZcashNetwork network,
+  int accountIndex = 0,
+  ZcashFfiBindings? bindings,
+}) {
+  final ffi = bindings ?? ZcashFfiBindings.instance;
+  final raw = ffi.seedToViewingKeys(seedHex, network._ffiParam, accountIndex);
+  final json = parseNativeJsonObject(
+    raw,
+    context: 'seed_to_viewing_keys/DynamicLibrary',
+    redactSensitive: [seedHex],
+  );
+  return ZcashViewingKeys.fromJson(json);
+}
+
+ZcashKeyValidation validateNativeKey({
+  required String key,
+  required ZcashKeyType keyType,
+  required ZcashNetwork network,
+  ZcashFfiBindings? bindings,
+}) {
+  final ffi = bindings ?? ZcashFfiBindings.instance;
+  final raw = ffi.validateKey(key, network._ffiParam, keyType.label);
+  final json = parseNativeJsonObject(
+    raw,
+    context: 'validate_key/DynamicLibrary',
+    redactSensitive: [key],
+  );
+  return ZcashKeyValidation.fromJson(json);
+}
+
+Future<String> deriveSaplingSpendingKey({
+  required String seedHex,
+  required ZcashNetwork network,
+  int accountIndex = 0,
+}) async {
+  final ffi = ZcashFfiBindings.instance;
+
+  final keyJson = ffi.seedToSaplingSpendingKey(
+    seedHex,
+    network._ffiParam,
+    accountIndex,
+  );
+  return requiredNativeString(
+    keyJson,
+    'sapling_spending_key',
+    context: 'seed_to_sapling_spending_key/DynamicLibrary',
+    redactSensitive: [seedHex],
   );
 }
 
@@ -94,41 +221,127 @@ Future<String> deriveTransparentAddress({
     network._ffiParam,
     accountIndex,
   );
-  final xpubMap = jsonDecode(xpubJson) as Map<String, dynamic>;
-  if (xpubMap.containsKey('error')) {
-    throw ArgumentError('xpub derivation failed: ${xpubMap['error']}');
-  }
-  final xpub = xpubMap['xpub'] as String;
+  final xpub = requiredNativeString(
+    xpubJson,
+    'xpub',
+    context: 'seed_to_transparent_xpub/DynamicLibrary',
+    redactSensitive: [seedHex],
+  );
 
-  final addrJson =
-      ffi.transparentAddress(xpub, network._ffiParam, childIndex);
-  final addrMap = jsonDecode(addrJson) as Map<String, dynamic>;
-  if (addrMap.containsKey('error')) {
-    throw ArgumentError('Address derivation failed: ${addrMap['error']}');
-  }
-
-  return addrMap['address'] as String;
+  final addrJson = ffi.transparentAddress(xpub, network._ffiParam, childIndex);
+  return requiredNativeString(
+    addrJson,
+    'address',
+    context: 'transparent_address/DynamicLibrary',
+    redactSensitive: [xpub],
+  );
 }
 
 bool isValidAddress(String addr, ZcashNetwork network) {
-  // The native check accepts either network, so the prefix decides.
-  final type = ZcashFfiBindings.instance.addressType(addr);
-  if (type == 0) return false;
-
-  switch (network) {
-    case ZcashNetwork.mainnet:
-      return addr.startsWith('t1') ||
-          addr.startsWith('t3') ||
-          addr.startsWith('zs1') ||
-          addr.startsWith('u1');
-    case ZcashNetwork.testnet:
-      return addr.startsWith('tm') ||
-          addr.startsWith('tn') ||
-          addr.startsWith('ztestsapling') ||
-          addr.startsWith('utest');
+  try {
+    decodeNativeAddress(address: addr, network: network);
+    return true;
+  } on StateError {
+    return false;
+  } on FormatException {
+    return false;
   }
 }
 
 AddressType classifyAddress(String addr) {
   return AddressType.fromInt(ZcashFfiBindings.instance.addressType(addr));
+}
+
+ZcashAddressMetadata decodeNativeAddress({
+  required String address,
+  required ZcashNetwork network,
+  ZcashFfiBindings? bindings,
+}) {
+  final ffi = bindings ?? ZcashFfiBindings.instance;
+  final raw = ffi.decodeAddress(address, network._ffiParam);
+  final json = parseNativeJsonObject(
+    raw,
+    context: 'decode_address/DynamicLibrary',
+    redactSensitive: [address],
+  );
+  return ZcashAddressMetadata.fromJson(json);
+}
+
+ZcashUnifiedAddressReceiverInventory inventoryUnifiedAddressReceivers({
+  required String address,
+  required ZcashNetwork network,
+  ZcashFfiBindings? bindings,
+}) {
+  final ffi = bindings ?? ZcashFfiBindings.instance;
+  final raw = ffi.unifiedAddressReceivers(address, network._ffiParam);
+  final json = parseNativeJsonObject(
+    raw,
+    context: 'unified_address_receivers/DynamicLibrary',
+    redactSensitive: [address],
+  );
+  return ZcashUnifiedAddressReceiverInventory.fromJson(json);
+}
+
+ZcashTransparentClassification classifyNativeTransparentAddress({
+  required String address,
+  required ZcashNetwork network,
+  ZcashFfiBindings? bindings,
+}) {
+  final ffi = bindings ?? ZcashFfiBindings.instance;
+  final raw = ffi.classifyTransparentAddress(address, network._ffiParam);
+  final json = parseNativeJsonObject(
+    raw,
+    context: 'classify_transparent_address/DynamicLibrary',
+    redactSensitive: [address],
+  );
+  return ZcashTransparentClassification.fromJson(json);
+}
+
+ZcashTransparentClassification classifyNativeTransparentScript({
+  required String scriptHex,
+  ZcashFfiBindings? bindings,
+}) {
+  final ffi = bindings ?? ZcashFfiBindings.instance;
+  final raw = ffi.classifyTransparentScript(scriptHex);
+  final json = parseNativeJsonObject(
+    raw,
+    context: 'classify_transparent_script/DynamicLibrary',
+    redactSensitive: [scriptHex],
+  );
+  return ZcashTransparentClassification.fromJson(json);
+}
+
+ZcashTransactionSummary decodeNativeTransaction({
+  required String txHex,
+  required ZcashNetwork network,
+  ZcashFfiBindings? bindings,
+}) {
+  final ffi = bindings ?? ZcashFfiBindings.instance;
+  final raw = ffi.decodeTransaction(txHex, network._ffiParam);
+  final json = parseNativeJsonObject(
+    raw,
+    context: 'decode_transaction/DynamicLibrary',
+    redactSensitive: [txHex],
+  );
+  return ZcashTransactionSummary.fromJson(json);
+}
+
+ZcashTransactionId transactionTxid({
+  required String txHex,
+  ZcashFfiBindings? bindings,
+}) {
+  final ffi = bindings ?? ZcashFfiBindings.instance;
+  final raw = ffi.transactionTxid(txHex);
+  final json = parseNativeJsonObject(
+    raw,
+    context: 'transaction_txid/DynamicLibrary',
+    redactSensitive: [txHex],
+  );
+  return ZcashTransactionId.fromJson(json);
+}
+
+void _checkUint32Index(int value, String name) {
+  if (value < 0 || value > 0xffffffff) {
+    throw RangeError.range(value, 0, 0xffffffff, name);
+  }
 }

@@ -3,62 +3,200 @@ import 'dart:io';
 
 import 'package:ffi/ffi.dart';
 
-/// Every string the library returns must be released with [freeString].
+import 'native_asset_symbols.dart';
+import 'native_string.dart';
+
 class ZcashFfiBindings {
-  final DynamicLibrary _lib;
+  final Pointer<T> Function<T extends NativeType>(String symbol) _symbol;
+  final String _libraryPath;
 
-  ZcashFfiBindings._(this._lib);
+  ZcashFfiBindings._(this._symbol, this._libraryPath);
 
-  late final _version = _lib.lookupFunction<
-      Pointer<Utf8> Function(),
-      Pointer<Utf8> Function()>('zcash_ffi_version');
+  factory ZcashFfiBindings.open(String path) =>
+      ZcashFfiBindings._(DynamicLibrary.open(path).lookup, path);
 
-  late final _freeString = _lib.lookupFunction<
-      Void Function(Pointer<Utf8>),
-      void Function(Pointer<Utf8>)>('zcash_ffi_free_string');
+  factory ZcashFfiBindings.nativeAssets() =>
+      ZcashFfiBindings._(nativeAssetSymbol, nativeAssetsLibraryLabel);
 
-  late final _seedToAccountUfvk = _lib.lookupFunction<
-      Pointer<Utf8> Function(Pointer<Utf8>, Pointer<Utf8>, Uint32),
-      Pointer<Utf8> Function(
-          Pointer<Utf8>, Pointer<Utf8>, int)>('zcash_ffi_seed_to_account_ufvk');
+  static const nativeAssetsLibraryLabel =
+      'the zcash_ffi code asset (package:zcash_ffi/src/ffi/'
+      'zcash_native_assets.dart)';
 
-  late final _seedToTransparentXpub = _lib.lookupFunction<
-      Pointer<Utf8> Function(Pointer<Utf8>, Pointer<Utf8>, Uint32),
-      Pointer<Utf8> Function(Pointer<Utf8>, Pointer<Utf8>,
-          int)>('zcash_ffi_seed_to_transparent_xpub');
+  late final _version = _symbol<NativeFunction<Pointer<Utf8> Function()>>(
+    'zcash_ffi_version',
+  ).asFunction<Pointer<Utf8> Function()>();
 
-  late final _ufvkToAddress = _lib.lookupFunction<
-      Pointer<Utf8> Function(Pointer<Utf8>, Pointer<Utf8>, Uint32),
-      Pointer<Utf8> Function(
-          Pointer<Utf8>, Pointer<Utf8>, int)>('zcash_ffi_ufvk_to_address');
+  late final _networkConstants =
+      _symbol<NativeFunction<Pointer<Utf8> Function(Pointer<Utf8>)>>(
+        'zcash_ffi_network_constants',
+      ).asFunction<Pointer<Utf8> Function(Pointer<Utf8>)>();
 
-  late final _transparentAddress = _lib.lookupFunction<
-      Pointer<Utf8> Function(Pointer<Utf8>, Pointer<Utf8>, Uint32),
-      Pointer<Utf8> Function(
-          Pointer<Utf8>, Pointer<Utf8>, int)>('zcash_ffi_transparent_address');
+  late final _freeString =
+      _symbol<NativeFunction<Void Function(Pointer<Utf8>)>>(
+        'zcash_ffi_free_string',
+      ).asFunction<void Function(Pointer<Utf8>)>();
 
-  late final _addressType = _lib.lookupFunction<
-      Int32 Function(Pointer<Utf8>),
-      int Function(Pointer<Utf8>)>('zcash_ffi_address_type');
+  late final _seedToAccountUfvk =
+      _symbol<
+            NativeFunction<
+              Pointer<Utf8> Function(Pointer<Utf8>, Pointer<Utf8>, Uint32)
+            >
+          >('zcash_ffi_seed_to_account_ufvk')
+          .asFunction<
+            Pointer<Utf8> Function(Pointer<Utf8>, Pointer<Utf8>, int)
+          >();
 
-  late final _isTransparentAddress = _lib.lookupFunction<
-      Bool Function(Pointer<Utf8>),
-      bool Function(Pointer<Utf8>)>('zcash_ffi_is_transparent_address');
+  late final _seedToAccountMetadata =
+      _symbol<
+            NativeFunction<
+              Pointer<Utf8> Function(Pointer<Utf8>, Pointer<Utf8>, Uint32)
+            >
+          >('zcash_ffi_seed_to_account_metadata')
+          .asFunction<
+            Pointer<Utf8> Function(Pointer<Utf8>, Pointer<Utf8>, int)
+          >();
 
-  late final _isShieldedAddress = _lib.lookupFunction<
-      Bool Function(Pointer<Utf8>),
-      bool Function(Pointer<Utf8>)>('zcash_ffi_is_shielded_address');
+  late final _seedToViewingKeys =
+      _symbol<
+            NativeFunction<
+              Pointer<Utf8> Function(Pointer<Utf8>, Pointer<Utf8>, Uint32)
+            >
+          >('zcash_ffi_seed_to_viewing_keys')
+          .asFunction<
+            Pointer<Utf8> Function(Pointer<Utf8>, Pointer<Utf8>, int)
+          >();
 
-  late final _solveEquihash = _lib.lookupFunction<
-      Pointer<Utf8> Function(Pointer<Uint8>, IntPtr),
-      Pointer<Utf8> Function(
-          Pointer<Uint8>, int)>('zcash_ffi_solve_equihash');
+  late final _validateKey =
+      _symbol<
+            NativeFunction<
+              Pointer<Utf8> Function(
+                Pointer<Utf8>,
+                Pointer<Utf8>,
+                Pointer<Utf8>,
+              )
+            >
+          >('zcash_ffi_validate_key')
+          .asFunction<
+            Pointer<Utf8> Function(Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>)
+          >();
+
+  late final _seedToSaplingSpendingKey = _lookupSeedToSaplingSpendingKey();
+
+  Pointer<Utf8> Function(Pointer<Utf8>, Pointer<Utf8>, int)
+  _lookupSeedToSaplingSpendingKey() {
+    const symbol = 'zcash_ffi_seed_to_sapling_spending_key';
+    try {
+      return _symbol<
+            NativeFunction<
+              Pointer<Utf8> Function(Pointer<Utf8>, Pointer<Utf8>, Uint32)
+            >
+          >(symbol)
+          .asFunction<
+            Pointer<Utf8> Function(Pointer<Utf8>, Pointer<Utf8>, int)
+          >();
+    } on ArgumentError catch (e) {
+      throw StateError(
+        'zcash-ffi missing native symbol $symbol in $_libraryPath: $e',
+      );
+    }
+  }
+
+  late final _seedToTransparentXpub =
+      _symbol<
+            NativeFunction<
+              Pointer<Utf8> Function(Pointer<Utf8>, Pointer<Utf8>, Uint32)
+            >
+          >('zcash_ffi_seed_to_transparent_xpub')
+          .asFunction<
+            Pointer<Utf8> Function(Pointer<Utf8>, Pointer<Utf8>, int)
+          >();
+
+  late final _ufvkToAddress =
+      _symbol<
+            NativeFunction<
+              Pointer<Utf8> Function(Pointer<Utf8>, Pointer<Utf8>, Uint32)
+            >
+          >('zcash_ffi_ufvk_to_address')
+          .asFunction<
+            Pointer<Utf8> Function(Pointer<Utf8>, Pointer<Utf8>, int)
+          >();
+
+  late final _transparentAddress =
+      _symbol<
+            NativeFunction<
+              Pointer<Utf8> Function(Pointer<Utf8>, Pointer<Utf8>, Uint32)
+            >
+          >('zcash_ffi_transparent_address')
+          .asFunction<
+            Pointer<Utf8> Function(Pointer<Utf8>, Pointer<Utf8>, int)
+          >();
+
+  late final _decodeAddress =
+      _symbol<
+            NativeFunction<Pointer<Utf8> Function(Pointer<Utf8>, Pointer<Utf8>)>
+          >('zcash_ffi_decode_address')
+          .asFunction<Pointer<Utf8> Function(Pointer<Utf8>, Pointer<Utf8>)>();
+
+  late final _unifiedAddressReceivers =
+      _symbol<
+            NativeFunction<Pointer<Utf8> Function(Pointer<Utf8>, Pointer<Utf8>)>
+          >('zcash_ffi_unified_address_receivers')
+          .asFunction<Pointer<Utf8> Function(Pointer<Utf8>, Pointer<Utf8>)>();
+
+  late final _decodeTransaction =
+      _symbol<
+            NativeFunction<Pointer<Utf8> Function(Pointer<Utf8>, Pointer<Utf8>)>
+          >('zcash_ffi_decode_transaction')
+          .asFunction<Pointer<Utf8> Function(Pointer<Utf8>, Pointer<Utf8>)>();
+
+  late final _transactionTxid =
+      _symbol<NativeFunction<Pointer<Utf8> Function(Pointer<Utf8>)>>(
+        'zcash_ffi_transaction_txid',
+      ).asFunction<Pointer<Utf8> Function(Pointer<Utf8>)>();
+
+  late final _classifyTransparentAddress =
+      _symbol<
+            NativeFunction<Pointer<Utf8> Function(Pointer<Utf8>, Pointer<Utf8>)>
+          >('zcash_ffi_classify_transparent_address')
+          .asFunction<Pointer<Utf8> Function(Pointer<Utf8>, Pointer<Utf8>)>();
+
+  late final _classifyTransparentScript =
+      _symbol<NativeFunction<Pointer<Utf8> Function(Pointer<Utf8>)>>(
+        'zcash_ffi_classify_transparent_script',
+      ).asFunction<Pointer<Utf8> Function(Pointer<Utf8>)>();
+
+  late final _addressType =
+      _symbol<NativeFunction<Int32 Function(Pointer<Utf8>)>>(
+        'zcash_ffi_address_type',
+      ).asFunction<int Function(Pointer<Utf8>)>();
+
+  late final _isTransparentAddress =
+      _symbol<NativeFunction<Bool Function(Pointer<Utf8>)>>(
+        'zcash_ffi_is_transparent_address',
+      ).asFunction<bool Function(Pointer<Utf8>)>();
+
+  late final _isShieldedAddress =
+      _symbol<NativeFunction<Bool Function(Pointer<Utf8>)>>(
+        'zcash_ffi_is_shielded_address',
+      ).asFunction<bool Function(Pointer<Utf8>)>();
+
+  late final _solveEquihash =
+      _symbol<NativeFunction<Pointer<Utf8> Function(Pointer<Uint8>, IntPtr)>>(
+        'zcash_ffi_solve_equihash',
+      ).asFunction<Pointer<Utf8> Function(Pointer<Uint8>, int)>();
 
   String version() {
     final ptr = _version();
-    final s = ptr.toDartString();
-    freeString(ptr);
-    return s;
+    return _takeString(ptr);
+  }
+
+  String networkConstantsRaw(String network) {
+    final netPtr = network.toNativeUtf8();
+    try {
+      return _takeString(_networkConstants(netPtr));
+    } finally {
+      calloc.free(netPtr);
+    }
   }
 
   void freeString(Pointer<Utf8> ptr) => _freeString(ptr);
@@ -67,10 +205,53 @@ class ZcashFfiBindings {
     final seedPtr = seedHex.toNativeUtf8();
     final netPtr = network.toNativeUtf8();
     try {
-      final result = _seedToAccountUfvk(seedPtr, netPtr, account);
-      final json = result.toDartString();
-      freeString(result);
-      return json;
+      return _takeString(_seedToAccountUfvk(seedPtr, netPtr, account));
+    } finally {
+      calloc.free(seedPtr);
+      calloc.free(netPtr);
+    }
+  }
+
+  String seedToAccountMetadata(String seedHex, String network, int account) {
+    final seedPtr = seedHex.toNativeUtf8();
+    final netPtr = network.toNativeUtf8();
+    try {
+      return _takeString(_seedToAccountMetadata(seedPtr, netPtr, account));
+    } finally {
+      calloc.free(seedPtr);
+      calloc.free(netPtr);
+    }
+  }
+
+  String seedToViewingKeys(String seedHex, String network, int account) {
+    final seedPtr = seedHex.toNativeUtf8();
+    final netPtr = network.toNativeUtf8();
+    try {
+      return _takeString(_seedToViewingKeys(seedPtr, netPtr, account));
+    } finally {
+      calloc.free(seedPtr);
+      calloc.free(netPtr);
+    }
+  }
+
+  String validateKey(String key, String network, String keyType) {
+    final keyPtr = key.toNativeUtf8();
+    final netPtr = network.toNativeUtf8();
+    final keyTypePtr = keyType.toNativeUtf8();
+    try {
+      return _takeString(_validateKey(keyPtr, netPtr, keyTypePtr));
+    } finally {
+      calloc.free(keyPtr);
+      calloc.free(netPtr);
+      calloc.free(keyTypePtr);
+    }
+  }
+
+  String seedToSaplingSpendingKey(String seedHex, String network, int account) {
+    final seedPtr = seedHex.toNativeUtf8();
+    final netPtr = network.toNativeUtf8();
+    try {
+      return _takeString(_seedToSaplingSpendingKey(seedPtr, netPtr, account));
     } finally {
       calloc.free(seedPtr);
       calloc.free(netPtr);
@@ -81,10 +262,7 @@ class ZcashFfiBindings {
     final seedPtr = seedHex.toNativeUtf8();
     final netPtr = network.toNativeUtf8();
     try {
-      final result = _seedToTransparentXpub(seedPtr, netPtr, account);
-      final json = result.toDartString();
-      freeString(result);
-      return json;
+      return _takeString(_seedToTransparentXpub(seedPtr, netPtr, account));
     } finally {
       calloc.free(seedPtr);
       calloc.free(netPtr);
@@ -95,10 +273,7 @@ class ZcashFfiBindings {
     final ufvkPtr = ufvk.toNativeUtf8();
     final netPtr = network.toNativeUtf8();
     try {
-      final result = _ufvkToAddress(ufvkPtr, netPtr, diversifierIndex);
-      final json = result.toDartString();
-      freeString(result);
-      return json;
+      return _takeString(_ufvkToAddress(ufvkPtr, netPtr, diversifierIndex));
     } finally {
       calloc.free(ufvkPtr);
       calloc.free(netPtr);
@@ -109,17 +284,75 @@ class ZcashFfiBindings {
     final xpubPtr = xpub.toNativeUtf8();
     final netPtr = network.toNativeUtf8();
     try {
-      final result = _transparentAddress(xpubPtr, netPtr, childIndex);
-      final json = result.toDartString();
-      freeString(result);
-      return json;
+      return _takeString(_transparentAddress(xpubPtr, netPtr, childIndex));
     } finally {
       calloc.free(xpubPtr);
       calloc.free(netPtr);
     }
   }
 
-  /// 0 unknown, 1 transparent, 2 Sapling, 3 unified.
+  String decodeAddress(String addr, String network) {
+    final addrPtr = addr.toNativeUtf8();
+    final netPtr = network.toNativeUtf8();
+    try {
+      return _takeString(_decodeAddress(addrPtr, netPtr));
+    } finally {
+      calloc.free(addrPtr);
+      calloc.free(netPtr);
+    }
+  }
+
+  String decodeTransaction(String txHex, String network) {
+    final txPtr = txHex.toNativeUtf8();
+    final netPtr = network.toNativeUtf8();
+    try {
+      return _takeString(_decodeTransaction(txPtr, netPtr));
+    } finally {
+      calloc.free(txPtr);
+      calloc.free(netPtr);
+    }
+  }
+
+  String transactionTxid(String txHex) {
+    final txPtr = txHex.toNativeUtf8();
+    try {
+      return _takeString(_transactionTxid(txPtr));
+    } finally {
+      calloc.free(txPtr);
+    }
+  }
+
+  String unifiedAddressReceivers(String addr, String network) {
+    final addrPtr = addr.toNativeUtf8();
+    final netPtr = network.toNativeUtf8();
+    try {
+      return _takeString(_unifiedAddressReceivers(addrPtr, netPtr));
+    } finally {
+      calloc.free(addrPtr);
+      calloc.free(netPtr);
+    }
+  }
+
+  String classifyTransparentAddress(String addr, String network) {
+    final addrPtr = addr.toNativeUtf8();
+    final netPtr = network.toNativeUtf8();
+    try {
+      return _takeString(_classifyTransparentAddress(addrPtr, netPtr));
+    } finally {
+      calloc.free(addrPtr);
+      calloc.free(netPtr);
+    }
+  }
+
+  String classifyTransparentScript(String scriptHex) {
+    final scriptPtr = scriptHex.toNativeUtf8();
+    try {
+      return _takeString(_classifyTransparentScript(scriptPtr));
+    } finally {
+      calloc.free(scriptPtr);
+    }
+  }
+
   int addressType(String addr) {
     final ptr = addr.toNativeUtf8();
     try {
@@ -152,32 +385,45 @@ class ZcashFfiBindings {
     final ptr = calloc<Uint8>(len);
     try {
       ptr.asTypedList(len).setAll(0, headerPrefix);
-      final result = _solveEquihash(ptr, len);
-      final json = result.toDartString();
-      freeString(result);
-      return json;
+      return _takeString(_solveEquihash(ptr, len));
     } finally {
       calloc.free(ptr);
     }
   }
 
-  static ZcashFfiBindings? _instance;
-
-  /// `ZCASH_FFI_LIB` overrides the library path.
-  static ZcashFfiBindings get instance {
-    return _instance ??= ZcashFfiBindings._(
-      DynamicLibrary.open(_defaultLibPath()),
+  String _takeString(Pointer<Utf8> ptr) {
+    return takeNativeString(
+      ptr,
+      free: freeString,
+      context: 'zcash-ffi/DynamicLibrary',
     );
   }
 
-  static String _defaultLibPath() {
-    final envPath = Platform.environment['ZCASH_FFI_LIB'];
-    if (envPath != null && envPath.isNotEmpty) return envPath;
+  static ZcashFfiBindings? _instance;
 
-    if (Platform.isLinux) return 'libzcash_ffi.so';
-    if (Platform.isMacOS) return 'libzcash_ffi.dylib';
-    if (Platform.isWindows) return 'zcash_ffi.dll';
-    throw UnsupportedError(
-        'Unsupported platform: ${Platform.operatingSystem}');
+  static ZcashFfiBindings get instance {
+    return _instance ??= resolve(Platform.environment);
+  }
+
+  static ZcashFfiBindings resolve(Map<String, String> environment) {
+    final envPath = environment['ZCASH_FFI_LIB'];
+    if (envPath != null && envPath.isNotEmpty) {
+      return ZcashFfiBindings.open(envPath);
+    }
+
+    try {
+      final bindings = ZcashFfiBindings.nativeAssets();
+      bindings.version();
+      return bindings;
+    } on ArgumentError {
+      // No search path to fall back on there; the asset load error is the
+      // only useful one.
+      if (Platform.isAndroid || Platform.isIOS) rethrow;
+    }
+
+    if (Platform.isLinux) return ZcashFfiBindings.open('libzcash_ffi.so');
+    if (Platform.isMacOS) return ZcashFfiBindings.open('libzcash_ffi.dylib');
+    if (Platform.isWindows) return ZcashFfiBindings.open('zcash_ffi.dll');
+    throw UnsupportedError('Unsupported platform: ${Platform.operatingSystem}');
   }
 }
