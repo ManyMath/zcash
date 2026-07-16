@@ -36,6 +36,17 @@ class ZcashFfiBindings {
         'zcash_ffi_free_string',
       ).asFunction<void Function(Pointer<Utf8>)>();
 
+  late final _mnemonicFromEntropy =
+      _symbol<NativeFunction<Pointer<Utf8> Function(Pointer<Utf8>)>>(
+        'zcash_ffi_mnemonic_from_entropy',
+      ).asFunction<Pointer<Utf8> Function(Pointer<Utf8>)>();
+
+  late final _mnemonicToSeed =
+      _symbol<
+            NativeFunction<Pointer<Utf8> Function(Pointer<Utf8>, Pointer<Utf8>)>
+          >('zcash_ffi_mnemonic_to_seed')
+          .asFunction<Pointer<Utf8> Function(Pointer<Utf8>, Pointer<Utf8>)>();
+
   late final _seedToAccountUfvk =
       _symbol<
             NativeFunction<
@@ -209,6 +220,26 @@ class ZcashFfiBindings {
     } finally {
       calloc.free(seedPtr);
       calloc.free(netPtr);
+    }
+  }
+
+  String mnemonicFromEntropyRaw(String entropyHex) {
+    final entropyPtr = entropyHex.toNativeUtf8();
+    try {
+      return _takeString(_mnemonicFromEntropy(entropyPtr));
+    } finally {
+      calloc.free(entropyPtr);
+    }
+  }
+
+  String mnemonicToSeedRaw(String phrase, String passphrase) {
+    final phrasePtr = phrase.toNativeUtf8();
+    final passphrasePtr = passphrase.toNativeUtf8();
+    try {
+      return _takeString(_mnemonicToSeed(phrasePtr, passphrasePtr));
+    } finally {
+      calloc.free(phrasePtr);
+      calloc.free(passphrasePtr);
     }
   }
 

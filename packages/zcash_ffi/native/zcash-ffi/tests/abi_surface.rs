@@ -10,6 +10,8 @@ const EXPECTED_SYMBOLS: &[&str] = &[
     "zcash_ffi_hex_decode",
     "zcash_ffi_is_shielded_address",
     "zcash_ffi_is_transparent_address",
+    "zcash_ffi_mnemonic_from_entropy",
+    "zcash_ffi_mnemonic_to_seed",
     "zcash_ffi_network_constants",
     "zcash_ffi_seed_to_account_metadata",
     "zcash_ffi_seed_to_account_ufvk",

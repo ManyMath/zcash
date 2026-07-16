@@ -900,6 +900,72 @@ pub extern "C" fn zcash_ffi_is_shielded_address(addr_ptr: *const c_char) -> bool
 }
 
 #[no_mangle]
+pub extern "C" fn zcash_ffi_mnemonic_from_entropy(entropy_ptr: *const c_char) -> *mut c_char {
+    let entropy_hex = match c_str_to_str(entropy_ptr) {
+        Ok(s) => s,
+        Err(FfiStringError::Null) => return json_err("null_pointer", "null entropy pointer"),
+        Err(FfiStringError::MalformedUtf8) => {
+            return json_err("malformed_utf8", "entropy is not valid UTF-8")
+        }
+    };
+    let entropy = match hex::decode(entropy_hex.trim()) {
+        Ok(b) => b,
+        Err(_) => return json_err("invalid_hex", "entropy is not valid hex"),
+    };
+    match bip0039::Mnemonic::<bip0039::English>::from_entropy(entropy) {
+        Ok(mnemonic) => json_success(json!({
+            "phrase": mnemonic.phrase(),
+            "word_count": mnemonic.phrase().split(' ').count(),
+        })),
+        Err(_) => json_err(
+            "invalid_entropy",
+            "entropy must be 16, 20, 24, 28 or 32 bytes",
+        ),
+    }
+}
+
+/// `passphrase` is the optional BIP 39 passphrase, empty for none.
+#[no_mangle]
+pub extern "C" fn zcash_ffi_mnemonic_to_seed(
+    phrase_ptr: *const c_char,
+    passphrase_ptr: *const c_char,
+) -> *mut c_char {
+    let phrase = match c_str_to_str(phrase_ptr) {
+        Ok(s) => s,
+        Err(FfiStringError::Null) => return json_err("null_pointer", "null phrase pointer"),
+        Err(FfiStringError::MalformedUtf8) => {
+            return json_err("malformed_utf8", "phrase is not valid UTF-8")
+        }
+    };
+    let passphrase = match c_str_to_str(passphrase_ptr) {
+        Ok(s) => s,
+        Err(FfiStringError::Null) => return json_err("null_pointer", "null passphrase pointer"),
+        Err(FfiStringError::MalformedUtf8) => {
+            return json_err("malformed_utf8", "passphrase is not valid UTF-8")
+        }
+    };
+    match bip0039::Mnemonic::<bip0039::English>::from_phrase(phrase) {
+        Ok(mnemonic) => json_success(json!({
+            "seed": hex::encode(mnemonic.to_seed(passphrase)),
+            "word_count": mnemonic.phrase().split(' ').count(),
+        })),
+        Err(bip0039::Error::BadWordCount(count)) => json_err(
+            "invalid_mnemonic_word_count",
+            &format!("a phrase has 12, 15, 18, 21 or 24 words, not {count}"),
+        ),
+        Err(bip0039::Error::UnknownWord(_)) => json_err(
+            "invalid_mnemonic_word",
+            "the phrase contains a word that is not in the BIP 39 English list",
+        ),
+        Err(bip0039::Error::InvalidChecksum) => json_err(
+            "invalid_mnemonic_checksum",
+            "the phrase's checksum does not match; a word is wrong or out of order",
+        ),
+        Err(_) => json_err("invalid_mnemonic", "the phrase is not a BIP 39 mnemonic"),
+    }
+}
+
+#[no_mangle]
 pub extern "C" fn zcash_ffi_seed_to_account_ufvk(
     seed_ptr: *const c_char,
     network_ptr: *const c_char,

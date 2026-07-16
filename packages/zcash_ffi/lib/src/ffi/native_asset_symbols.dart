@@ -53,6 +53,19 @@ external bool _zcashFfiIsTransparentAddress(Pointer<Utf8> p0);
 )
 external Pointer<Utf8> _zcashFfiNetworkConstants(Pointer<Utf8> p0);
 
+@Native<Pointer<Utf8> Function(Pointer<Utf8>)>(
+  symbol: 'zcash_ffi_mnemonic_from_entropy',
+)
+external Pointer<Utf8> _zcashFfiMnemonicFromEntropy(Pointer<Utf8> p0);
+
+@Native<Pointer<Utf8> Function(Pointer<Utf8>, Pointer<Utf8>)>(
+  symbol: 'zcash_ffi_mnemonic_to_seed',
+)
+external Pointer<Utf8> _zcashFfiMnemonicToSeed(
+  Pointer<Utf8> p0,
+  Pointer<Utf8> p1,
+);
+
 @Native<Pointer<Utf8> Function(Pointer<Utf8>, Pointer<Utf8>, Uint32)>(
   symbol: 'zcash_ffi_seed_to_account_metadata',
 )
@@ -186,6 +199,15 @@ final Map<String, Pointer<Void> Function()> _addresses = {
       Native.addressOf<NativeFunction<Pointer<Utf8> Function(Pointer<Utf8>)>>(
         _zcashFfiNetworkConstants,
       ).cast(),
+  'zcash_ffi_mnemonic_from_entropy': () =>
+      Native.addressOf<NativeFunction<Pointer<Utf8> Function(Pointer<Utf8>)>>(
+        _zcashFfiMnemonicFromEntropy,
+      ).cast(),
+  'zcash_ffi_mnemonic_to_seed': () =>
+      Native.addressOf<
+            NativeFunction<Pointer<Utf8> Function(Pointer<Utf8>, Pointer<Utf8>)>
+          >(_zcashFfiMnemonicToSeed)
+          .cast(),
   'zcash_ffi_seed_to_account_metadata': () =>
       Native.addressOf<
             NativeFunction<
