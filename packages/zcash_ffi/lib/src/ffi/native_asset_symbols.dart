@@ -66,6 +66,15 @@ external Pointer<Utf8> _zcashFfiMnemonicToSeed(
   Pointer<Utf8> p1,
 );
 
+@Native<Pointer<Utf8> Function(Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>)>(
+  symbol: 'zcash_ffi_scan_compact_blocks',
+)
+external Pointer<Utf8> _zcashFfiScanCompactBlocks(
+  Pointer<Utf8> p0,
+  Pointer<Utf8> p1,
+  Pointer<Utf8> p2,
+);
+
 @Native<Pointer<Utf8> Function(Pointer<Utf8>, Pointer<Utf8>, Uint32)>(
   symbol: 'zcash_ffi_seed_to_account_metadata',
 )
@@ -207,6 +216,17 @@ final Map<String, Pointer<Void> Function()> _addresses = {
       Native.addressOf<
             NativeFunction<Pointer<Utf8> Function(Pointer<Utf8>, Pointer<Utf8>)>
           >(_zcashFfiMnemonicToSeed)
+          .cast(),
+  'zcash_ffi_scan_compact_blocks': () =>
+      Native.addressOf<
+            NativeFunction<
+              Pointer<Utf8> Function(
+                Pointer<Utf8>,
+                Pointer<Utf8>,
+                Pointer<Utf8>,
+              )
+            >
+          >(_zcashFfiScanCompactBlocks)
           .cast(),
   'zcash_ffi_seed_to_account_metadata': () =>
       Native.addressOf<

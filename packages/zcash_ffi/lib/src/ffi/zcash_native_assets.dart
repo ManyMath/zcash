@@ -104,6 +104,15 @@ external Pointer<Utf8> _zcashFfiDecodeTransaction(
 )
 external Pointer<Utf8> _zcashFfiTransactionTxid(Pointer<Utf8> txHex);
 
+@Native<Pointer<Utf8> Function(Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>)>(
+  symbol: 'zcash_ffi_scan_compact_blocks',
+)
+external Pointer<Utf8> _zcashFfiScanCompactBlocks(
+  Pointer<Utf8> ufvk,
+  Pointer<Utf8> network,
+  Pointer<Utf8> blocksJson,
+);
+
 class ZcashNativeAddressSet {
   const ZcashNativeAddressSet({
     required this.ua,
@@ -381,6 +390,47 @@ ZcashTransactionId zcashNativeTransactionTxid({required String txHex}) {
   return ZcashTransactionId.fromJson(json);
 }
 
+ZcashScanResult zcashNativeScanCompactBlocks({
+  required String ufvk,
+  required String network,
+  required Iterable<CompactBlockScanInput> blocks,
+  CompactBlockScanRange? range,
+  bool allowExperimentalOrchardNotes = false,
+  bool includeSaplingWitnesses = false,
+  String? priorSaplingFrontier,
+  bool includeOrchardWitnesses = false,
+  String? priorOrchardFrontier,
+  String? priorIronwoodFrontier,
+  ZcashWatchedNullifiers? watchedNullifiers,
+}) {
+  final raw = _callScanCompactBlocks(
+    ufvk: ufvk,
+    network: network,
+    blocksJson: encodeVersionedCompactBlocksForScan(
+      blocks: blocks,
+      network: network,
+      range: range,
+      includeSaplingWitnesses: includeSaplingWitnesses,
+      priorSaplingFrontier: priorSaplingFrontier,
+      includeOrchardWitnesses: includeOrchardWitnesses,
+      priorOrchardFrontier: priorOrchardFrontier,
+      priorIronwoodFrontier: priorIronwoodFrontier,
+      watchedNullifiers: watchedNullifiers,
+    ),
+  );
+  final json = parseNativeJsonObject(
+    raw,
+    context: 'scan_compact_blocks/native-assets',
+    redactSensitive: [ufvk],
+  );
+  return ZcashScanResult.fromJson(
+    json,
+    context: 'scan_compact_blocks/native-assets',
+    redactSensitive: [ufvk],
+    allowExperimentalOrchardNotes: allowExperimentalOrchardNotes,
+  );
+}
+
 typedef _NativeStringNetworkIndex =
     Pointer<Utf8> Function(Pointer<Utf8>, Pointer<Utf8>, int);
 
@@ -427,6 +477,25 @@ String _callStringNetwork({
   } finally {
     calloc.free(valuePtr);
     calloc.free(networkPtr);
+  }
+}
+
+String _callScanCompactBlocks({
+  required String ufvk,
+  required String network,
+  required String blocksJson,
+}) {
+  final ufvkPtr = ufvk.toNativeUtf8();
+  final networkPtr = network.toNativeUtf8();
+  final blocksPtr = blocksJson.toNativeUtf8();
+  try {
+    return _takeString(
+      _zcashFfiScanCompactBlocks(ufvkPtr, networkPtr, blocksPtr),
+    );
+  } finally {
+    calloc.free(ufvkPtr);
+    calloc.free(networkPtr);
+    calloc.free(blocksPtr);
   }
 }
 

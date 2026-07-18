@@ -37,3 +37,7 @@ bip0039 = { version = "0.13.4", default-features = false, features = ["std"] }
 
 [features]
 [dev-dependencies]
+sapling = { package = "sapling-crypto", version = "0.7" }
+zcash_client_backend = { version = "0.23", features = ["orchard", "test-dependencies"] }
+zcash_note_encryption = "0.4"
+rand = "0.8"

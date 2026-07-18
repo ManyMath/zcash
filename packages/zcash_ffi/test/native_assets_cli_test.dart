@@ -15,6 +15,23 @@ void main() {
       expect(zcashNativeVersion(), matches(RegExp(r'^\d+\.\d+\.\d+')));
     });
 
+    test('scanner returns zero-note summary through native assets', () {
+      final ufvk = zcashNativeSeedToAccountUfvk(
+        seedHex: _seed,
+        network: 'regtest',
+      );
+
+      final result = zcashNativeScanCompactBlocks(
+        ufvk: ufvk,
+        network: 'regtest',
+        blocks: const [],
+      );
+
+      expect(result.scannedBlocks, 0);
+      expect(result.discoveredNotes, 0);
+      expect(result.notes, isEmpty);
+    });
+
     test('throws explicit Dart errors for malformed seed and network', () {
       expect(
         () => zcashNativeSeedToAccountUfvk(

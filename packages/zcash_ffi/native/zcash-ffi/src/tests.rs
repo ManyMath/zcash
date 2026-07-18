@@ -876,6 +876,68 @@ fn validate_key_rejects_malformed_and_bad_arguments() {
     assert!(!bad_network_json.contains("devnet-user-input"));
 }
 
+fn scan_with_payload(network: &CString, payload: &str) -> Value {
+    let ufvk = account_ufvk(network);
+    let ufvk_c = cptr(&ufvk);
+    let payload_c = cptr(payload);
+    result_value(zcash_ffi_scan_compact_blocks(
+        ufvk_c.as_ptr(),
+        network.as_ptr(),
+        payload_c.as_ptr(),
+    ))
+}
+
+#[test]
+fn scan_accepts_versioned_envelope_and_legacy_input() {
+    let test = cptr("test");
+
+    let legacy = scan_with_payload(&test, r#"{"blocks":[]}"#);
+    assert_eq!(legacy[FFI_RESULT_STATUS_KEY], FFI_RESULT_OK_STATUS);
+    assert_eq!(legacy["scanned_blocks"], 0);
+
+    let versioned = scan_with_payload(
+        &test,
+        r#"{"scan_input_version":1,"network":"test","range":{"start":0,"end":100},"blocks":[]}"#,
+    );
+    assert_eq!(versioned[FFI_RESULT_STATUS_KEY], FFI_RESULT_OK_STATUS);
+    assert_eq!(versioned["scanned_blocks"], 0);
+
+    let regtest_label = scan_with_payload(
+        &test,
+        r#"{"scan_input_version":1,"network":"regtest","blocks":[]}"#,
+    );
+    assert_eq!(regtest_label[FFI_RESULT_STATUS_KEY], FFI_RESULT_OK_STATUS);
+}
+
+#[test]
+fn scan_rejects_invalid_versioned_envelopes() {
+    let test = cptr("test");
+
+    let bad_version = scan_with_payload(&test, r#"{"scan_input_version":2,"blocks":[]}"#);
+    assert_eq!(bad_version[FFI_RESULT_STATUS_KEY], FFI_RESULT_ERROR_STATUS);
+    assert_eq!(bad_version["category"], "unsupported_scan_input_version");
+
+    let network_mismatch = scan_with_payload(
+        &test,
+        r#"{"scan_input_version":1,"network":"main","blocks":[]}"#,
+    );
+    assert_eq!(network_mismatch["category"], "network_mismatch");
+
+    let bad_range = scan_with_payload(
+        &test,
+        r#"{"scan_input_version":1,"range":{"start":10,"end":5},"blocks":[]}"#,
+    );
+    assert_eq!(bad_range["category"], "invalid_range");
+
+    let out_of_range = scan_with_payload(
+        &test,
+        r#"{"scan_input_version":1,"range":{"start":0,"end":10},"blocks":[{"height":99,"data":"AA=="}]}"#,
+    );
+    assert_eq!(out_of_range["category"], "height_out_of_range");
+    assert_eq!(out_of_range["block_index"], 0);
+    assert_eq!(out_of_range["height"], 99);
+}
+
 #[test]
 fn seed_to_ufvk_mainnet() {
     let seed = cptr(TEST_SEED_HEX);

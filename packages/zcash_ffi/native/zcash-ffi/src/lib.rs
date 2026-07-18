@@ -1,9 +1,18 @@
+use std::collections::{HashMap, HashSet};
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
+
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
+use prost::Message;
 use serde_json::{json, Map, Value};
 use zcash_address::{
     unified::{self, Container},
     ConversionError, ToAddress, TryFromAddress, ZcashAddress,
+};
+use zcash_client_backend::{
+    data_api::BlockMetadata,
+    proto::compact_formats::CompactBlock,
+    scanning::{scan_block, Nullifiers, ScanningKeys},
 };
 use zcash_keys::{
     address::{Address, UnifiedAddress},
@@ -29,6 +38,7 @@ use zip32::{AccountId, DiversifierIndex};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const FFI_RESULT_VERSION: u64 = 1;
+const SCAN_INPUT_VERSION: u64 = 1;
 const FFI_RESULT_VERSION_KEY: &str = "ffi_result_version";
 const FFI_RESULT_STATUS_KEY: &str = "status";
 const FFI_RESULT_ERROR_STATUS: &str = "error";
@@ -99,6 +109,26 @@ fn json_err(category: &str, msg: &str) -> *mut c_char {
     json_value_ptr(ffi_error_value(category, msg))
 }
 
+fn scanner_json_err(category: &str, msg: &str) -> *mut c_char {
+    scanner_json_err_context(category, msg, None, None)
+}
+
+fn scanner_json_err_context(
+    category: &str,
+    msg: &str,
+    block_index: Option<usize>,
+    height: Option<u64>,
+) -> *mut c_char {
+    let mut v = ffi_error_value(category, msg);
+    if let Some(block_index) = block_index {
+        v["block_index"] = json!(block_index);
+    }
+    if let Some(height) = height {
+        v["height"] = json!(height);
+    }
+    json_value_ptr(v)
+}
+
 fn json_value_ptr(value: Value) -> *mut c_char {
     CString::new(value.to_string().replace('\0', ""))
         .unwrap()
@@ -163,6 +193,741 @@ pub unsafe extern "C" fn zcash_ffi_hex_decode(
     let n = bytes.len().min(out_len);
     std::ptr::copy_nonoverlapping(bytes.as_ptr(), out, n);
     n as i64
+}
+
+#[no_mangle]
+pub extern "C" fn zcash_ffi_scan_compact_blocks(
+    ufvk_ptr: *const c_char,
+    network_ptr: *const c_char,
+    blocks_json_ptr: *const c_char,
+) -> *mut c_char {
+    let ufvk_str = match c_str_to_str(ufvk_ptr) {
+        Ok(s) => normalize_ufvk(s),
+        Err(FfiStringError::Null) => return scanner_json_err("null_pointer", "null ufvk pointer"),
+        Err(FfiStringError::MalformedUtf8) => {
+            return scanner_json_err("malformed_utf8", "ufvk is not valid UTF-8")
+        }
+    };
+    let blocks_json = match c_str_to_str(blocks_json_ptr) {
+        Ok(s) => s,
+        Err(FfiStringError::Null) => {
+            return scanner_json_err("null_pointer", "null blocks JSON pointer")
+        }
+        Err(FfiStringError::MalformedUtf8) => {
+            return scanner_json_err("malformed_utf8", "blocks JSON is not valid UTF-8")
+        }
+    };
+    let parsed_json = match serde_json::from_str::<Value>(blocks_json) {
+        Ok(v) => v,
+        Err(_) => return scanner_json_err("invalid_json", "invalid JSON payload"),
+    };
+    let network_label = match c_str_to_str(network_ptr) {
+        Ok(s) => s,
+        Err(FfiStringError::Null) => {
+            return scanner_json_err("null_pointer", "null network pointer")
+        }
+        Err(FfiStringError::MalformedUtf8) => {
+            return scanner_json_err("malformed_utf8", "network is not valid UTF-8")
+        }
+    };
+    let net = match parse_network_label(network_label) {
+        Some(n) => n,
+        None => {
+            return scanner_json_err(
+                "unsupported_network",
+                "network must be 'main', 'test', or 'regtest'",
+            )
+        }
+    };
+    let net_type = match parse_network_type_label(network_label) {
+        Some(t) => t,
+        None => {
+            return scanner_json_err(
+                "unsupported_network",
+                "network must be 'main', 'test', or 'regtest'",
+            )
+        }
+    };
+    let ufvk = match net {
+        Network::MainNetwork => UnifiedFullViewingKey::decode(&MainNetwork, &ufvk_str),
+        Network::TestNetwork => UnifiedFullViewingKey::decode(&TestNetwork, &ufvk_str),
+    };
+    let ufvk = match ufvk {
+        Ok(ufvk) => ufvk,
+        Err(_) => return scanner_json_err("invalid_ufvk", "invalid UFVK for network"),
+    };
+
+    match scan_compact_blocks_json(&net, net_type, ufvk, parsed_json) {
+        Ok(v) => json_success(v),
+        Err(e) => scanner_json_err_context(&e.category, &e.message, e.block_index, e.height),
+    }
+}
+
+fn normalize_ufvk(raw: &str) -> String {
+    let trimmed = raw.trim();
+    match trimmed.find('|') {
+        Some(idx) => trimmed[..idx].to_string(),
+        None => trimmed.to_string(),
+    }
+}
+
+struct ScannerError {
+    category: String,
+    message: String,
+    block_index: Option<usize>,
+    height: Option<u64>,
+}
+
+impl ScannerError {
+    fn new(category: &str, message: &str) -> Self {
+        Self {
+            category: category.to_string(),
+            message: message.to_string(),
+            block_index: None,
+            height: None,
+        }
+    }
+
+    fn at_block(mut self, block_index: usize, height: Option<u64>) -> Self {
+        self.block_index = Some(block_index);
+        self.height = height;
+        self
+    }
+}
+
+fn validate_scan_envelope(
+    payload: &Value,
+    net: &Network,
+) -> Result<Option<(u64, u64)>, ScannerError> {
+    let version = match payload.get("scan_input_version") {
+        None | Some(Value::Null) => return Ok(None),
+        Some(v) => v,
+    };
+    if version.as_u64() != Some(SCAN_INPUT_VERSION) {
+        return Err(ScannerError::new(
+            "unsupported_scan_input_version",
+            "scan_input_version must be 1",
+        ));
+    }
+    if let Some(network_value) = payload.get("network") {
+        if !network_value.is_null() {
+            let label = network_value.as_str().ok_or_else(|| {
+                ScannerError::new("invalid_network", "envelope network must be a string")
+            })?;
+            match parse_network_label(label) {
+                Some(envelope_net)
+                    if std::mem::discriminant(&envelope_net) == std::mem::discriminant(net) => {}
+                Some(_) => {
+                    return Err(ScannerError::new(
+                        "network_mismatch",
+                        "envelope network does not match the scan network",
+                    ))
+                }
+                None => {
+                    return Err(ScannerError::new(
+                        "unsupported_network",
+                        "envelope network must be 'main', 'test', or 'regtest'",
+                    ))
+                }
+            }
+        }
+    }
+    match payload.get("range") {
+        None | Some(Value::Null) => Ok(None),
+        Some(range_value) => {
+            let obj = range_value
+                .as_object()
+                .ok_or_else(|| ScannerError::new("invalid_range", "range must be an object"))?;
+            let start = obj.get("start").and_then(Value::as_u64).ok_or_else(|| {
+                ScannerError::new(
+                    "invalid_range",
+                    "range.start must be a non-negative integer",
+                )
+            })?;
+            let end = obj.get("end").and_then(Value::as_u64).ok_or_else(|| {
+                ScannerError::new("invalid_range", "range.end must be a non-negative integer")
+            })?;
+            if start > end {
+                return Err(ScannerError::new(
+                    "invalid_range",
+                    "range.start must be less than or equal to range.end",
+                ));
+            }
+            Ok(Some((start, end)))
+        }
+    }
+}
+
+/// A spend is matched by `(pool, nullifier)`, never by nullifier alone.
+const SPEND_POOLS: [&str; 3] = ["sapling", "orchard", "ironwood"];
+const POOL_SAPLING: usize = 0;
+const POOL_ORCHARD: usize = 1;
+const POOL_IRONWOOD: usize = 2;
+
+type WatchedNullifiers = [HashSet<[u8; 32]>; 3];
+
+fn parse_watched_nullifiers(payload: &Value) -> Result<WatchedNullifiers, ScannerError> {
+    fn invalid(message: &str) -> ScannerError {
+        ScannerError::new("invalid_watched_nullifiers", message)
+    }
+
+    let mut watched: WatchedNullifiers = Default::default();
+    let value = match payload.get("watched_nullifiers") {
+        None | Some(Value::Null) => return Ok(watched),
+        Some(value) => value,
+    };
+    let entries = value
+        .as_object()
+        .ok_or_else(|| invalid("watched_nullifiers must be an object keyed by pool"))?;
+    for (pool, nullifiers) in entries {
+        let index = SPEND_POOLS
+            .iter()
+            .position(|candidate| candidate == pool)
+            .ok_or_else(|| {
+                invalid("watched_nullifiers keys must be 'sapling', 'orchard', or 'ironwood'")
+            })?;
+        let list = nullifiers
+            .as_array()
+            .ok_or_else(|| invalid("each watched_nullifiers pool must be an array"))?;
+        for entry in list {
+            let hex_str = entry
+                .as_str()
+                .ok_or_else(|| invalid("each watched nullifier must be a hex string"))?;
+            let bytes = hex::decode(hex_str)
+                .map_err(|_| invalid("each watched nullifier must be valid hex"))?;
+            let nullifier = <[u8; 32]>::try_from(bytes.as_slice())
+                .map_err(|_| invalid("each watched nullifier must be 32 bytes"))?;
+            watched[index].insert(nullifier);
+        }
+    }
+    Ok(watched)
+}
+
+fn scan_compact_blocks_json(
+    net: &Network,
+    net_type: NetworkType,
+    ufvk: UnifiedFullViewingKey,
+    payload: Value,
+) -> Result<Value, ScannerError> {
+    #[cfg(not(feature = "sapling-spend-build"))]
+    let _ = net_type;
+    let declared_range = validate_scan_envelope(&payload, net)?;
+    let include_sapling_witnesses = payload
+        .get("include_sapling_witnesses")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    #[cfg(not(feature = "sapling-spend-build"))]
+    if include_sapling_witnesses {
+        return Err(ScannerError::new(
+            "witness_export_unavailable",
+            "sapling witness export requires the sapling-spend-build build feature",
+        ));
+    }
+    let include_orchard_witnesses = payload
+        .get("include_orchard_witnesses")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    #[cfg(not(any(
+        feature = "orchard-note-discovery",
+        feature = "ironwood-note-discovery"
+    )))]
+    if include_orchard_witnesses {
+        return Err(ScannerError::new(
+            "witness_export_unavailable",
+            "Orchard-family witness export requires the orchard-note-discovery or \
+             ironwood-note-discovery build feature",
+        ));
+    }
+    let blocks = payload
+        .get("blocks")
+        .and_then(Value::as_array)
+        .ok_or_else(|| ScannerError::new("invalid_json", "payload must contain a blocks array"))?;
+
+    let mut watched = parse_watched_nullifiers(&payload)?;
+    let mut discovered_nullifiers: [HashMap<[u8; 32], usize>; 3] = Default::default();
+    let mut spends = Vec::new();
+
+    type AccountId = u32;
+    let scanning_keys: ScanningKeys<AccountId, (AccountId, zip32::Scope)> =
+        ScanningKeys::from_account_ufvks(std::iter::once((0u32, ufvk)));
+    let nullifiers = Nullifiers::<AccountId>::empty();
+    let mut prior_meta: Option<BlockMetadata> = None;
+    let mut notes = Vec::new();
+    let mut total_value: u64 = 0;
+    let mut diagnostics = Vec::with_capacity(blocks.len());
+    let mut min_height: Option<u64> = None;
+    let mut max_height: Option<u64> = None;
+    let mut ordered_blocks: u64 = 0;
+    let mut prev_height: Option<u64> = None;
+    let mut total_orchard_actions: u64 = 0;
+    let mut total_ironwood_actions: u64 = 0;
+    #[cfg(feature = "sapling-spend-build")]
+    let mut sapling_cmu_stream: Vec<[u8; 32]> = Vec::new();
+    #[cfg(feature = "sapling-spend-build")]
+    let mut discovered_sapling: Vec<([u8; 32], usize)> = Vec::new();
+    #[cfg(any(
+        feature = "orchard-note-discovery",
+        feature = "ironwood-note-discovery"
+    ))]
+    #[allow(unused_mut)]
+    let (mut orchard_cmx_stream, mut discovered_orchard): PoolWitnessCollectors =
+        (Vec::new(), Vec::new());
+    #[cfg(any(
+        feature = "orchard-note-discovery",
+        feature = "ironwood-note-discovery"
+    ))]
+    #[allow(unused_mut)]
+    let (mut ironwood_cmx_stream, mut discovered_ironwood): PoolWitnessCollectors =
+        (Vec::new(), Vec::new());
+
+    for (block_index, block_value) in blocks.iter().enumerate() {
+        let declared_height = block_value.get("height").and_then(Value::as_u64);
+        if let (Some((start, end)), Some(height)) = (declared_range, declared_height) {
+            if height < start || height > end {
+                return Err(ScannerError::new(
+                    "height_out_of_range",
+                    "block height is outside the declared scan range",
+                )
+                .at_block(block_index, Some(height)));
+            }
+        }
+        let encoded = compact_block_base64(block_value).ok_or_else(|| {
+            ScannerError::new(
+                "invalid_json",
+                "block entry must be a base64 string or object with data",
+            )
+            .at_block(block_index, declared_height)
+        })?;
+        let bytes = BASE64_STANDARD.decode(encoded.as_bytes()).map_err(|_| {
+            ScannerError::new("invalid_base64", "invalid compact block base64")
+                .at_block(block_index, declared_height)
+        })?;
+        let block = CompactBlock::decode(bytes.as_slice()).map_err(|_| {
+            ScannerError::new("invalid_protobuf", "invalid compact block protobuf")
+                .at_block(block_index, declared_height)
+        })?;
+        let block_orchard_actions: u64 = block.vtx.iter().map(|tx| tx.actions.len() as u64).sum();
+        let block_orchard_tree_size = block
+            .chain_metadata
+            .as_ref()
+            .map(|meta| meta.orchard_commitment_tree_size);
+        let block_ironwood_actions: u64 = block
+            .vtx
+            .iter()
+            .map(|tx| tx.ironwood_actions.len() as u64)
+            .sum();
+        let block_ironwood_tree_size = block
+            .chain_metadata
+            .as_ref()
+            .map(|meta| meta.ironwood_commitment_tree_size);
+        #[cfg(feature = "sapling-spend-build")]
+        if include_sapling_witnesses {
+            for tx in &block.vtx {
+                for out in &tx.outputs {
+                    let mut cmu = [0u8; 32];
+                    if out.cmu.len() != 32 {
+                        return Err(ScannerError::new(
+                            "invalid_protobuf",
+                            "compact block has a malformed Sapling output commitment",
+                        )
+                        .at_block(block_index, declared_height));
+                    }
+                    cmu.copy_from_slice(&out.cmu);
+                    sapling_cmu_stream.push(cmu);
+                }
+            }
+        }
+        #[cfg(any(
+            feature = "orchard-note-discovery",
+            feature = "ironwood-note-discovery"
+        ))]
+        if include_orchard_witnesses {
+            for tx in &block.vtx {
+                for (actions, stream) in [
+                    (&tx.actions, &mut orchard_cmx_stream),
+                    (&tx.ironwood_actions, &mut ironwood_cmx_stream),
+                ] {
+                    for action in actions.iter() {
+                        if action.cmx.len() != 32 {
+                            return Err(ScannerError::new(
+                                "invalid_protobuf",
+                                "compact block has a malformed action commitment",
+                            )
+                            .at_block(block_index, declared_height));
+                        }
+                        let mut cmx = [0u8; 32];
+                        cmx.copy_from_slice(&action.cmx);
+                        stream.push(cmx);
+                    }
+                }
+            }
+        }
+        let mut block_spends: Vec<(String, usize, usize, [u8; 32])> = Vec::new();
+        if watched.iter().any(|pool| !pool.is_empty()) {
+            for tx in &block.vtx {
+                // Protocol byte order, the reverse of the txid an RPC or explorer displays.
+                let txid = hex::encode(&tx.txid);
+                for (pool, pool_nullifiers) in [
+                    (
+                        POOL_SAPLING,
+                        tx.spends
+                            .iter()
+                            .map(|s| s.nf.as_slice())
+                            .collect::<Vec<_>>(),
+                    ),
+                    (
+                        POOL_ORCHARD,
+                        tx.actions
+                            .iter()
+                            .map(|a| a.nullifier.as_slice())
+                            .collect::<Vec<_>>(),
+                    ),
+                    (
+                        POOL_IRONWOOD,
+                        tx.ironwood_actions
+                            .iter()
+                            .map(|a| a.nullifier.as_slice())
+                            .collect::<Vec<_>>(),
+                    ),
+                ] {
+                    if watched[pool].is_empty() {
+                        continue;
+                    }
+                    for (index, nullifier) in pool_nullifiers.into_iter().enumerate() {
+                        let Ok(nullifier) = <[u8; 32]>::try_from(nullifier) else {
+                            continue;
+                        };
+                        if watched[pool].contains(&nullifier) {
+                            block_spends.push((txid.clone(), pool, index, nullifier));
+                        }
+                    }
+                }
+            }
+        }
+        let scanned = match net_type {
+            NetworkType::Regtest => scan_block(
+                &staged_regtest::params(None),
+                block,
+                &scanning_keys,
+                &nullifiers,
+                prior_meta.as_ref(),
+            ),
+            _ => scan_block(net, block, &scanning_keys, &nullifiers, prior_meta.as_ref()),
+        }
+        .map_err(|e| {
+            let at_height = u64::from(u32::from(e.at_height()));
+            if e.is_continuity_error() {
+                ScannerError::new(
+                    "chain_discontinuity",
+                    "compact blocks are not a continuous ascending chain",
+                )
+                .at_block(block_index, Some(at_height))
+            } else {
+                ScannerError::new("scan_error", "compact block could not be scanned")
+                    .at_block(block_index, Some(at_height))
+            }
+        })?;
+        let height = u64::from(u32::from(scanned.height()));
+
+        let mut block_notes: u64 = 0;
+        let mut block_discovered: Vec<(usize, [u8; 32], usize)> = Vec::new();
+        for tx in scanned.transactions() {
+            let txid = hex::encode(tx.txid().as_ref());
+            for output in tx.sapling_outputs() {
+                let value = output.note().value().inner();
+                total_value = total_value.saturating_add(value);
+                block_notes += 1;
+                let nullifier_bytes = output.nf().map(|nf| nf.0);
+                let nullifier = nullifier_bytes.map(hex::encode);
+                let commitment_position = u64::from(output.note_commitment_tree_position());
+                let note_idx = notes.len();
+                if let Some(bytes) = nullifier_bytes {
+                    block_discovered.push((POOL_SAPLING, bytes, note_idx));
+                }
+                notes.push(json!({
+                    "height": height,
+                    "tx": txid,
+                    "output": output.index(),
+                    "value": value,
+                    "pool": "sapling",
+                    "nullifier": nullifier,
+                    "commitment_position": commitment_position,
+                    "is_change": output.is_change(),
+                }));
+                #[cfg(feature = "sapling-spend-build")]
+                if include_sapling_witnesses {
+                    discovered_sapling.push((output.note().cmu().to_bytes(), note_idx));
+                    let recipient = encode_payment_address(
+                        net_type.hrp_sapling_payment_address(),
+                        &output.note().recipient(),
+                    );
+                    let rseed = match output.note().rseed() {
+                        sapling::Rseed::AfterZip212(bytes) => Some(hex::encode(bytes)),
+                        sapling::Rseed::BeforeZip212(_) => None,
+                    };
+                    if let Some(obj) = notes[note_idx].as_object_mut() {
+                        obj.insert("recipient".to_string(), json!(recipient));
+                        obj.insert("rseed".to_string(), json!(rseed));
+                    }
+                }
+                #[cfg(not(feature = "sapling-spend-build"))]
+                let _ = note_idx;
+            }
+            #[cfg(feature = "orchard-note-discovery")]
+            for output in tx.orchard_outputs() {
+                let (note, value_pool) = output.note();
+                let value = note.value().inner();
+                total_value = total_value.saturating_add(value);
+                block_notes += 1;
+                let nullifier_bytes = output.nf().map(|nf| (*nf).to_bytes());
+                let nullifier = nullifier_bytes.map(hex::encode);
+                let commitment_position = u64::from(output.note_commitment_tree_position());
+                let note_idx = notes.len();
+                let pool_label = orchard_value_pool_label(*value_pool);
+                if let Some(bytes) = nullifier_bytes {
+                    block_discovered.push((spend_pool_index(pool_label), bytes, note_idx));
+                }
+                notes.push(json!({
+                    "height": height,
+                    "tx": txid,
+                    "output": output.index(),
+                    "value": value,
+                    "pool": pool_label,
+                    "nullifier": nullifier,
+                    "commitment_position": commitment_position,
+                    "is_change": output.is_change(),
+                }));
+                if include_orchard_witnesses {
+                    discovered_orchard.push((
+                        orchard::note::ExtractedNoteCommitment::from(note.commitment()).to_bytes(),
+                        note_idx,
+                    ));
+                    if let Some(obj) = notes[note_idx].as_object_mut() {
+                        obj.insert(
+                            "recipient".to_string(),
+                            json!(encode_orchard_receiver_ua(net_type, &note.recipient())),
+                        );
+                        obj.insert(
+                            "rseed".to_string(),
+                            json!(hex::encode(note.rseed().as_bytes())),
+                        );
+                        obj.insert("rho".to_string(), json!(hex::encode(note.rho().to_bytes())));
+                        obj.insert(
+                            "note_version".to_string(),
+                            json!(match note.version() {
+                                orchard::note::NoteVersion::V2 => "v2",
+                                orchard::note::NoteVersion::V3 => "v3",
+                            }),
+                        );
+                    }
+                }
+            }
+            #[cfg(feature = "ironwood-note-discovery")]
+            for output in tx.ironwood_outputs() {
+                let (note, value_pool) = output.note();
+                let value = note.value().inner();
+                total_value = total_value.saturating_add(value);
+                block_notes += 1;
+                let nullifier_bytes = output.nf().map(|nf| (*nf).to_bytes());
+                let nullifier = nullifier_bytes.map(hex::encode);
+                let commitment_position = u64::from(output.note_commitment_tree_position());
+                let note_idx = notes.len();
+                let pool_label = orchard_value_pool_label(*value_pool);
+                if let Some(bytes) = nullifier_bytes {
+                    block_discovered.push((spend_pool_index(pool_label), bytes, note_idx));
+                }
+                notes.push(json!({
+                    "height": height,
+                    "tx": txid,
+                    "output": output.index(),
+                    "value": value,
+                    "pool": pool_label,
+                    "nullifier": nullifier,
+                    "commitment_position": commitment_position,
+                    "is_change": output.is_change(),
+                }));
+                if include_orchard_witnesses {
+                    discovered_ironwood.push((
+                        orchard::note::ExtractedNoteCommitment::from(note.commitment()).to_bytes(),
+                        note_idx,
+                    ));
+                    if let Some(obj) = notes[note_idx].as_object_mut() {
+                        obj.insert(
+                            "recipient".to_string(),
+                            json!(encode_orchard_receiver_ua(net_type, &note.recipient())),
+                        );
+                        obj.insert(
+                            "rseed".to_string(),
+                            json!(hex::encode(note.rseed().as_bytes())),
+                        );
+                        obj.insert("rho".to_string(), json!(hex::encode(note.rho().to_bytes())));
+                        obj.insert(
+                            "note_version".to_string(),
+                            json!(match note.version() {
+                                orchard::note::NoteVersion::V2 => "v2",
+                                orchard::note::NoteVersion::V3 => "v3",
+                            }),
+                        );
+                    }
+                }
+            }
+        }
+
+        for (txid, pool, index, nullifier) in block_spends {
+            spends.push(json!({
+                "height": height,
+                "tx": txid,
+                "pool": SPEND_POOLS[pool],
+                "nullifier": hex::encode(nullifier),
+                "index": index,
+                "note_index": discovered_nullifiers[pool].get(&nullifier),
+            }));
+        }
+        for (pool, nullifier, note_idx) in block_discovered {
+            watched[pool].insert(nullifier);
+            discovered_nullifiers[pool].insert(nullifier, note_idx);
+        }
+
+        match prev_height {
+            None => ordered_blocks += 1,
+            Some(prev) if height > prev => ordered_blocks += 1,
+            Some(_) => {}
+        }
+        prev_height = Some(height);
+        min_height = Some(min_height.map_or(height, |m| m.min(height)));
+        max_height = Some(max_height.map_or(height, |m| m.max(height)));
+        total_orchard_actions = total_orchard_actions.saturating_add(block_orchard_actions);
+        total_ironwood_actions = total_ironwood_actions.saturating_add(block_ironwood_actions);
+
+        diagnostics.push(json!({
+            "block_index": block_index,
+            "height": height,
+            "category": if block_notes > 0 { "notes_found" } else { "empty" },
+            "notes": block_notes,
+            "orchard_actions": block_orchard_actions,
+            "orchard_commitment_tree_size": block_orchard_tree_size,
+            "ironwood_actions": block_ironwood_actions,
+            "ironwood_commitment_tree_size": block_ironwood_tree_size,
+        }));
+
+        prior_meta = Some(scanned.to_block_metadata());
+    }
+
+    let scanned_height_range = match (min_height, max_height) {
+        (Some(start), Some(end)) => json!({ "start": start, "end": end }),
+        _ => Value::Null,
+    };
+
+    #[cfg(feature = "sapling-spend-build")]
+    let sapling_anchor = if include_sapling_witnesses {
+        use sapling::CommitmentTree;
+        use zcash_primitives::merkle_tree::read_commitment_tree;
+        let initial_tree = match payload
+            .get("prior_sapling_frontier")
+            .and_then(Value::as_str)
+        {
+            Some(hex_str) => {
+                let bytes = hex::decode(hex_str.trim()).map_err(|_| {
+                    ScannerError::new(
+                        "invalid_prior_frontier",
+                        "prior_sapling_frontier is not valid hex",
+                    )
+                })?;
+                let tree: CommitmentTree = read_commitment_tree(&bytes[..]).map_err(|_| {
+                    ScannerError::new(
+                        "invalid_prior_frontier",
+                        "prior_sapling_frontier is not a valid Sapling commitment tree",
+                    )
+                })?;
+                tree
+            }
+            None => CommitmentTree::empty(),
+        };
+        let (witnesses, anchor) =
+            build_sapling_witnesses(initial_tree, &sapling_cmu_stream, &discovered_sapling)?;
+        for (idx, witness_hex) in witnesses {
+            if let Some(obj) = notes[idx].as_object_mut() {
+                obj.insert("witness".to_string(), json!(witness_hex));
+            }
+        }
+        anchor.map_or(Value::Null, Value::from)
+    } else {
+        Value::Null
+    };
+    #[cfg(not(feature = "sapling-spend-build"))]
+    let sapling_anchor = Value::Null;
+
+    #[cfg(any(
+        feature = "orchard-note-discovery",
+        feature = "ironwood-note-discovery"
+    ))]
+    let (orchard_anchor, ironwood_anchor) = if include_orchard_witnesses {
+        let mut anchors = Vec::with_capacity(2);
+        for (frontier_field, stream, discovered) in [
+            (
+                "prior_orchard_frontier",
+                &orchard_cmx_stream,
+                &discovered_orchard,
+            ),
+            (
+                "prior_ironwood_frontier",
+                &ironwood_cmx_stream,
+                &discovered_ironwood,
+            ),
+        ] {
+            let prior = payload.get(frontier_field).and_then(Value::as_str);
+            let (witnesses, anchor) =
+                build_orchard_family_witnesses(prior, frontier_field, stream, discovered)?;
+            for (idx, witness_hex) in witnesses {
+                if let Some(obj) = notes[idx].as_object_mut() {
+                    obj.insert("witness".to_string(), json!(witness_hex));
+                }
+            }
+            anchors.push(anchor.map_or(Value::Null, Value::from));
+        }
+        let ironwood = anchors.pop().expect("two anchors");
+        let orchard = anchors.pop().expect("two anchors");
+        (orchard, ironwood)
+    } else {
+        (Value::Null, Value::Null)
+    };
+    #[cfg(not(any(
+        feature = "orchard-note-discovery",
+        feature = "ironwood-note-discovery"
+    )))]
+    let (orchard_anchor, ironwood_anchor) = (Value::Null, Value::Null);
+
+    Ok(json!({
+        "scanned_blocks": blocks.len(),
+        "discovered_notes": notes.len(),
+        "total_value": total_value,
+        "notes": notes,
+        "spends": spends,
+        "scanned_height_range": scanned_height_range,
+        "ordered_blocks": ordered_blocks,
+        "diagnostics": diagnostics,
+        "orchard_actions": total_orchard_actions,
+        "ironwood_actions": total_ironwood_actions,
+        "sapling_anchor": sapling_anchor,
+        "orchard_anchor": orchard_anchor,
+        "ironwood_anchor": ironwood_anchor,
+    }))
+}
+
+fn compact_block_base64(block_value: &Value) -> Option<&str> {
+    block_value.as_str().or_else(|| {
+        block_value
+            .get("data")
+            .or_else(|| block_value.get("block"))
+            .or_else(|| block_value.get("compactBlock"))
+            .and_then(Value::as_str)
+    })
+}
+
+/// A placeholder.
+#[no_mangle]
+pub extern "C" fn zcash_ffi_estimate_scan_work(tx_count: u32) -> u32 {
+    tx_count.saturating_mul(2)
 }
 
 /// # Safety
@@ -1932,6 +2697,9 @@ pub extern "C" fn zcash_ffi_transaction_txid(tx_hex_ptr: *const c_char) -> *mut 
         Err(()) => json_err("invalid_transaction", "could not decode transaction"),
     }
 }
+
+/// Regtest with a movable NU6.3 height, so pre-activation Orchard notes can exist (ZIP 258).
+mod staged_regtest;
 
 fn read_full_transaction(bytes: &[u8]) -> Result<Transaction, ()> {
     let mut cursor = std::io::Cursor::new(bytes);

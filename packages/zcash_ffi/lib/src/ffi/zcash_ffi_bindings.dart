@@ -2,8 +2,10 @@ import 'dart:ffi';
 import 'dart:io';
 
 import 'package:ffi/ffi.dart';
+import 'package:zcash/zcash.dart';
 
 import 'native_asset_symbols.dart';
+import 'native_result.dart';
 import 'native_string.dart';
 
 class ZcashFfiBindings {
@@ -195,6 +197,31 @@ class ZcashFfiBindings {
       _symbol<NativeFunction<Pointer<Utf8> Function(Pointer<Uint8>, IntPtr)>>(
         'zcash_ffi_solve_equihash',
       ).asFunction<Pointer<Utf8> Function(Pointer<Uint8>, int)>();
+
+  late final _scanCompactBlocks = _lookupScanCompactBlocks();
+
+  Pointer<Utf8> Function(Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>)
+  _lookupScanCompactBlocks() {
+    const symbol = 'zcash_ffi_scan_compact_blocks';
+    try {
+      return _symbol<
+            NativeFunction<
+              Pointer<Utf8> Function(
+                Pointer<Utf8>,
+                Pointer<Utf8>,
+                Pointer<Utf8>,
+              )
+            >
+          >(symbol)
+          .asFunction<
+            Pointer<Utf8> Function(Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>)
+          >();
+    } on ArgumentError catch (e) {
+      throw StateError(
+        'zcash-ffi missing native symbol $symbol in $_libraryPath: $e',
+      );
+    }
+  }
 
   String version() {
     final ptr = _version();
@@ -422,6 +449,19 @@ class ZcashFfiBindings {
     }
   }
 
+  String scanCompactBlocksRaw(String ufvk, String network, String blocksJson) {
+    final ufvkPtr = ufvk.toNativeUtf8();
+    final netPtr = network.toNativeUtf8();
+    final blocksPtr = blocksJson.toNativeUtf8();
+    try {
+      return _takeString(_scanCompactBlocks(ufvkPtr, netPtr, blocksPtr));
+    } finally {
+      calloc.free(ufvkPtr);
+      calloc.free(netPtr);
+      calloc.free(blocksPtr);
+    }
+  }
+
   String _takeString(Pointer<Utf8> ptr) {
     return takeNativeString(
       ptr,
@@ -457,4 +497,47 @@ class ZcashFfiBindings {
     if (Platform.isWindows) return ZcashFfiBindings.open('zcash_ffi.dll');
     throw UnsupportedError('Unsupported platform: ${Platform.operatingSystem}');
   }
+}
+
+ZcashScanResult scanCompactBlocks({
+  required String ufvk,
+  required String network,
+  required Iterable<CompactBlockScanInput> blocks,
+  CompactBlockScanRange? range,
+  ZcashFfiBindings? bindings,
+  bool allowExperimentalOrchardNotes = false,
+  bool includeSaplingWitnesses = false,
+  String? priorSaplingFrontier,
+  bool includeOrchardWitnesses = false,
+  String? priorOrchardFrontier,
+  String? priorIronwoodFrontier,
+  ZcashWatchedNullifiers? watchedNullifiers,
+}) {
+  final ffi = bindings ?? ZcashFfiBindings.instance;
+  final raw = ffi.scanCompactBlocksRaw(
+    ufvk,
+    network,
+    encodeVersionedCompactBlocksForScan(
+      blocks: blocks,
+      network: network,
+      range: range,
+      includeSaplingWitnesses: includeSaplingWitnesses,
+      priorSaplingFrontier: priorSaplingFrontier,
+      includeOrchardWitnesses: includeOrchardWitnesses,
+      priorOrchardFrontier: priorOrchardFrontier,
+      priorIronwoodFrontier: priorIronwoodFrontier,
+      watchedNullifiers: watchedNullifiers,
+    ),
+  );
+  final json = parseNativeJsonObject(
+    raw,
+    context: 'scan_compact_blocks/DynamicLibrary',
+    redactSensitive: [ufvk],
+  );
+  return ZcashScanResult.fromJson(
+    json,
+    context: 'scan_compact_blocks/DynamicLibrary',
+    redactSensitive: [ufvk],
+    allowExperimentalOrchardNotes: allowExperimentalOrchardNotes,
+  );
 }
