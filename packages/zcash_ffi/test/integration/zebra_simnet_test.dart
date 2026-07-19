@@ -34,10 +34,8 @@ void main() {
       if (peersA >= 1 && peersB >= 1) break;
       await Future<void>.delayed(const Duration(milliseconds: 250));
     }
-    expect(peersA, greaterThanOrEqualTo(1),
-        reason: 'A should see B as a peer');
-    expect(peersB, greaterThanOrEqualTo(1),
-        reason: 'B should see A as a peer');
+    expect(peersA, greaterThanOrEqualTo(1), reason: 'A should see B as a peer');
+    expect(peersB, greaterThanOrEqualTo(1), reason: 'B should see A as a peer');
   });
 
   test('blocks mined on A propagate to B over P2P', () async {
@@ -45,8 +43,11 @@ void main() {
 
     final aBefore = await a!.client.getBlockCount();
     final bBefore = await b!.client.getBlockCount();
-    expect(aBefore, equals(bBefore),
-        reason: 'both nodes should start at the same height');
+    expect(
+      aBefore,
+      equals(bBefore),
+      reason: 'both nodes should start at the same height',
+    );
 
     final hashes = await a!.mineBlocks(3);
     final aAfter = await a!.client.getBlockCount();
@@ -59,10 +60,12 @@ void main() {
       if (bAfter >= aAfter) break;
       await Future<void>.delayed(const Duration(milliseconds: 250));
     }
-    expect(bAfter, equals(aAfter),
-        reason: 'B should sync to A\'s tip via P2P');
+    expect(bAfter, equals(aAfter), reason: 'B should sync to A\'s tip via P2P');
     final bTip = await b!.client.getBestBlockHash();
-    expect(bTip, equals(hashes.last),
-        reason: 'B\'s tip hash should match A\'s last mined block');
+    expect(
+      bTip,
+      equals(hashes.last),
+      reason: 'B\'s tip hash should match A\'s last mined block',
+    );
   });
 }

@@ -169,9 +169,9 @@ void main() {
             .timeout(const Duration(seconds: 10));
         await harness!.client.reconsiderBlock(hash);
       } on TimeoutException {
-        // Some versions time out invalidating genesis.
+        // Invalidating genesis can time out on some versions.
       } on ZebraRpcException {
-        // Some versions refuse to invalidate genesis.
+        // Invalidating genesis may be refused.
       }
       final info = await harness!.client.getBlockchainInfo();
       expect(info.blocks, greaterThanOrEqualTo(0));
@@ -185,7 +185,7 @@ void main() {
         ]);
         expect(bal.zatoshis, isA<int>());
       } on ZebraRpcException {
-        // A fresh node may not have indexed the address.
+        // A fresh node may not index the address.
       }
     });
   });
@@ -229,5 +229,4 @@ void main() {
       expect(verbose, isA<Map>());
     });
   });
-
 }

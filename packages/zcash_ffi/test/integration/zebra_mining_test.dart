@@ -5,8 +5,6 @@ import 'dart:io';
 import 'package:test/test.dart';
 import 'harness.dart';
 
-// Kept apart from zebra_regtest_test.dart, whose invalidateblock test on
-// genesis can leave zebrad unusable.
 void main() {
   ZebraHarness? harness;
 
@@ -37,8 +35,11 @@ void main() {
     final before = await harness!.client.getBlockCount();
     final hashes = await harness!.mineBlocks(5);
     expect(hashes, hasLength(5));
-    expect(hashes.toSet().length, equals(5),
-        reason: 'every mined block hash should be unique');
+    expect(
+      hashes.toSet().length,
+      equals(5),
+      reason: 'every mined block hash should be unique',
+    );
     for (final h in hashes) {
       expect(h, hasLength(64));
       expect(h, matches(RegExp(r'^[0-9a-f]+$')));
