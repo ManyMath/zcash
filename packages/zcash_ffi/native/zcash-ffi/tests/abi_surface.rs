@@ -2,6 +2,7 @@ const LIB_RS: &str = include_str!("../src/lib.rs");
 
 const EXPECTED_SYMBOLS: &[&str] = &[
     "zcash_ffi_address_type",
+    "zcash_ffi_build_transparent_transaction",
     "zcash_ffi_classify_transparent_address",
     "zcash_ffi_classify_transparent_script",
     "zcash_ffi_decode_address",

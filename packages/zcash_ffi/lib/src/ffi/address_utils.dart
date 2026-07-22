@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:zcash/zcash.dart';
 import 'native_result.dart';
+import 'transparent_build_request.dart';
 import 'zcash_ffi_bindings.dart';
 
 enum ZcashNetwork {
@@ -338,6 +339,39 @@ ZcashTransactionId transactionTxid({
     redactSensitive: [txHex],
   );
   return ZcashTransactionId.fromJson(json);
+}
+
+TransparentBuildResult buildNativeTransparentTransaction({
+  required ZcashNetwork network,
+  required int targetHeight,
+  required int feeZatoshis,
+  required Iterable<TransparentBuildInput> inputs,
+  required Iterable<TransparentBuildOutput> outputs,
+  bool allowExperimentalTransparentBuild = false,
+  ZcashFfiBindings? bindings,
+}) {
+  if (!allowExperimentalTransparentBuild) {
+    throw StateError(
+      'buildNativeTransparentTransaction is experimental and native-backed; '
+      'set allowExperimentalTransparentBuild: true to opt in. It requires a '
+      'native library built with the off-by-default transparent-tx-build feature.',
+    );
+  }
+  final ffi = bindings ?? ZcashFfiBindings.instance;
+  final requestJson = encodeTransparentBuildRequest(
+    network: network._ffiParam,
+    targetHeight: targetHeight,
+    feeZatoshis: feeZatoshis,
+    inputs: inputs,
+    outputs: outputs,
+  );
+  final raw = ffi.buildTransparentTransaction(requestJson);
+  final json = parseNativeJsonObject(
+    raw,
+    context: 'build_transparent_transaction/DynamicLibrary',
+    redactSensitive: [for (final input in inputs) input.secretKeyHex],
+  );
+  return TransparentBuildResult.fromJson(json);
 }
 
 void _checkUint32Index(int value, String name) {

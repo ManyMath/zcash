@@ -4,6 +4,7 @@ import 'package:ffi/ffi.dart';
 import 'package:zcash/zcash.dart';
 import 'native_result.dart';
 import 'native_string.dart';
+import 'transparent_build_request.dart';
 
 @Native<Pointer<Utf8> Function()>(symbol: 'zcash_ffi_version')
 external Pointer<Utf8> _zcashFfiVersion();
@@ -103,6 +104,13 @@ external Pointer<Utf8> _zcashFfiDecodeTransaction(
   symbol: 'zcash_ffi_transaction_txid',
 )
 external Pointer<Utf8> _zcashFfiTransactionTxid(Pointer<Utf8> txHex);
+
+@Native<Pointer<Utf8> Function(Pointer<Utf8>)>(
+  symbol: 'zcash_ffi_build_transparent_transaction',
+)
+external Pointer<Utf8> _zcashFfiBuildTransparentTransaction(
+  Pointer<Utf8> requestJson,
+);
 
 @Native<Pointer<Utf8> Function(Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>)>(
   symbol: 'zcash_ffi_scan_compact_blocks',
@@ -388,6 +396,43 @@ ZcashTransactionId zcashNativeTransactionTxid({required String txHex}) {
     redactSensitive: [txHex],
   );
   return ZcashTransactionId.fromJson(json);
+}
+
+TransparentBuildResult zcashNativeBuildTransparentTransaction({
+  required String network,
+  required int targetHeight,
+  required int feeZatoshis,
+  required Iterable<TransparentBuildInput> inputs,
+  required Iterable<TransparentBuildOutput> outputs,
+  bool allowExperimentalTransparentBuild = false,
+}) {
+  if (!allowExperimentalTransparentBuild) {
+    throw StateError(
+      'zcashNativeBuildTransparentTransaction is experimental and native-backed; '
+      'set allowExperimentalTransparentBuild: true to opt in. It requires a '
+      'native library built with the off-by-default transparent-tx-build feature.',
+    );
+  }
+  final requestJson = encodeTransparentBuildRequest(
+    network: network,
+    targetHeight: targetHeight,
+    feeZatoshis: feeZatoshis,
+    inputs: inputs,
+    outputs: outputs,
+  );
+  final requestPtr = requestJson.toNativeUtf8();
+  final String raw;
+  try {
+    raw = _takeString(_zcashFfiBuildTransparentTransaction(requestPtr));
+  } finally {
+    calloc.free(requestPtr);
+  }
+  final json = parseNativeJsonObject(
+    raw,
+    context: 'build_transparent_transaction/native-assets',
+    redactSensitive: [for (final input in inputs) input.secretKeyHex],
+  );
+  return TransparentBuildResult.fromJson(json);
 }
 
 ZcashScanResult zcashNativeScanCompactBlocks({

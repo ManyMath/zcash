@@ -34,8 +34,25 @@ equihash = { version = "0.3", features = ["solver"] }
 # 0.13, not 0.14: shares sha2 0.10 with the Zcash crates (0.14.1+ duplicates it).
 bip0039 = { version = "0.13.4", default-features = false, features = ["std"] }
 
+secp256k1 = { version = "0.29", optional = true }
+sapling = { package = "sapling-crypto", version = "0.7", optional = true }
+jubjub = { version = "0.10", optional = true }
+bls12_381 = { version = "0.8", optional = true }
+rand_core = { version = "0.6", features = ["getrandom"], optional = true }
+
 
 [features]
+transparent-tx-build = [
+    "dep:secp256k1",
+    "dep:sapling",
+    "dep:jubjub",
+    "dep:bls12_381",
+    "dep:rand_core",
+    "zcash_primitives/transparent-inputs",
+    "zcash_primitives/non-standard-fees",
+    "zcash_protocol/local-consensus",
+]
+
 [dev-dependencies]
 sapling = { package = "sapling-crypto", version = "0.7" }
 zcash_client_backend = { version = "0.23", features = ["orchard", "test-dependencies"] }

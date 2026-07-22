@@ -8,6 +8,11 @@ import 'package:ffi/ffi.dart';
 @Native<Int32 Function(Pointer<Utf8>)>(symbol: 'zcash_ffi_address_type')
 external int _zcashFfiAddressType(Pointer<Utf8> p0);
 
+@Native<Pointer<Utf8> Function(Pointer<Utf8>)>(
+  symbol: 'zcash_ffi_build_transparent_transaction',
+)
+external Pointer<Utf8> _zcashFfiBuildTransparentTransaction(Pointer<Utf8> p0);
+
 @Native<Pointer<Utf8> Function(Pointer<Utf8>, Pointer<Utf8>)>(
   symbol: 'zcash_ffi_classify_transparent_address',
 )
@@ -172,6 +177,10 @@ final Map<String, Pointer<Void> Function()> _addresses = {
   'zcash_ffi_address_type': () =>
       Native.addressOf<NativeFunction<Int32 Function(Pointer<Utf8>)>>(
         _zcashFfiAddressType,
+      ).cast(),
+  'zcash_ffi_build_transparent_transaction': () =>
+      Native.addressOf<NativeFunction<Pointer<Utf8> Function(Pointer<Utf8>)>>(
+        _zcashFfiBuildTransparentTransaction,
       ).cast(),
   'zcash_ffi_classify_transparent_address': () =>
       Native.addressOf<

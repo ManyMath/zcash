@@ -1443,3 +1443,237 @@ fn transaction_txid_rejects_null_pointer() {
     assert_eq!(v["status"], "error");
     assert_eq!(v["category"], "null_pointer");
 }
+
+// The keys, txids, seeds, rseeds and anchors below are arbitrary.
+const BUILD_TEST_SECRET_KEY: &str =
+    "1111111111111111111111111111111111111111111111111111111111111111";
+
+fn build_transparent_value(request: &str) -> Value {
+    let req = cptr(request);
+    result_value(zcash_ffi_build_transparent_transaction(req.as_ptr()))
+}
+
+#[test]
+#[cfg(not(feature = "transparent-tx-build"))]
+fn build_transparent_transaction_disabled_in_default_build() {
+    let request = format!(
+        r#"{{"transparent_build_version":1,"network":"regtest","target_height":10,
+                 "fee_zatoshis":10000,
+                 "inputs":[{{"txid":"{txid}","vout":0,"value_zatoshis":100000,"secret_key":"{sk}"}}],
+                 "outputs":[{{"address":"tmEgiuT","value_zatoshis":90000}}]}}"#,
+        txid = "22".repeat(32),
+        sk = BUILD_TEST_SECRET_KEY,
+    );
+    let v = build_transparent_value(&request);
+    assert_eq!(v["status"], "error");
+    assert_eq!(v["category"], "experimental_feature_disabled");
+    assert!(
+        !v.to_string().contains(BUILD_TEST_SECRET_KEY),
+        "disabled build must not echo the supplied secret key"
+    );
+}
+
+#[test]
+#[cfg(not(feature = "transparent-tx-build"))]
+fn build_transparent_transaction_disabled_rejects_null_pointer() {
+    let v = result_value(zcash_ffi_build_transparent_transaction(std::ptr::null()));
+    assert_eq!(v["status"], "error");
+    assert_eq!(v["category"], "null_pointer");
+}
+
+#[cfg(feature = "transparent-tx-build")]
+fn regtest_transparent_address() -> String {
+    use secp256k1::{PublicKey, Secp256k1, SecretKey};
+    let sk = SecretKey::from_slice(&[0x11u8; 32]).unwrap();
+    let secp = Secp256k1::new();
+    let pk = PublicKey::from_secret_key(&secp, &sk);
+    let addr = TransparentAddress::from_pubkey(&pk);
+    Address::Transparent(addr).encode(&transparent_build::regtest_params())
+}
+
+#[test]
+#[cfg(feature = "transparent-tx-build")]
+fn build_transparent_transaction_builds_signed_regtest_vector() {
+    let to = regtest_transparent_address();
+    let request = format!(
+        r#"{{"transparent_build_version":1,"network":"regtest","target_height":10,
+                 "fee_zatoshis":10000,
+                 "inputs":[{{"txid":"{txid}","vout":0,"value_zatoshis":100000,"secret_key":"{sk}"}}],
+                 "outputs":[{{"address":"{to}","value_zatoshis":90000}}]}}"#,
+        txid = "22".repeat(32),
+        sk = BUILD_TEST_SECRET_KEY,
+        to = to,
+    );
+    let v = build_transparent_value(&request);
+    assert_eq!(v["status"], "ok", "build should succeed: {v}");
+    assert_eq!(v["network"], "regtest");
+    assert_eq!(v["version"], "v5");
+    assert_eq!(v["fee_zatoshis"], 10000);
+    assert_eq!(v["total_input_zatoshis"], 100000);
+    assert_eq!(v["total_output_zatoshis"], 90000);
+    assert_eq!(v["transparent"]["vin"], 1);
+    assert_eq!(v["transparent"]["vout"], 1);
+
+    let tx_hex = v["transaction"].as_str().expect("transaction hex");
+    let net = cptr("regtest");
+    let decoded = result_value(zcash_ffi_decode_transaction(
+        cptr(tx_hex).as_ptr(),
+        net.as_ptr(),
+    ));
+    assert_eq!(decoded["status"], "ok");
+    assert_eq!(decoded["version"], "v5");
+    assert_eq!(decoded["txid"], v["txid"]);
+    assert_eq!(decoded["transparent"]["vin"], 1);
+    assert_eq!(decoded["transparent"]["vout"], 1);
+    assert_eq!(decoded["sapling"]["present"], false);
+    assert_eq!(decoded["orchard"]["present"], false);
+
+    assert!(
+        !v.to_string().contains(BUILD_TEST_SECRET_KEY),
+        "build output must not echo the signing key"
+    );
+}
+
+/// ZIP 229 keeps `nConsensusBranchId` in v6's common fields.
+#[test]
+#[cfg(feature = "transparent-tx-build")]
+fn decode_reads_v6_transaction_despite_fixed_branch_id_in_reader() {
+    let params = transparent_build::regtest_nu63_params();
+    let to = Address::Transparent(TransparentAddress::from_pubkey(&{
+        use secp256k1::{PublicKey, Secp256k1, SecretKey};
+        let sk = SecretKey::from_slice(&[0x11u8; 32]).unwrap();
+        PublicKey::from_secret_key(&Secp256k1::new(), &sk)
+    }))
+    .encode(&params);
+
+    let inputs = vec![json!({
+        "txid": "22".repeat(32),
+        "vout": 0,
+        "value_zatoshis": 100000u64,
+        "secret_key": BUILD_TEST_SECRET_KEY,
+    })];
+    let outputs = vec![json!({ "address": to, "value_zatoshis": 90000u64 })];
+
+    let built = transparent_build::build_generic(
+        params,
+        NetworkType::Regtest,
+        10,
+        10000,
+        &inputs,
+        &outputs,
+    )
+    .expect("v6 transparent build should succeed");
+
+    assert_eq!(built["version"], "v6", "expected a v6 build: {built}");
+
+    let tx_hex = built["transaction"].as_str().expect("transaction hex");
+    let net = cptr("regtest");
+    let decoded = result_value(zcash_ffi_decode_transaction(
+        cptr(tx_hex).as_ptr(),
+        net.as_ptr(),
+    ));
+
+    assert_eq!(decoded["status"], "ok", "v6 decode must succeed: {decoded}");
+    assert_eq!(decoded["version"], "v6");
+    assert_eq!(decoded["txid"], built["txid"]);
+    assert_eq!(decoded["consensus_branch_id"], "nu6.3");
+    assert_eq!(decoded["consensus_branch_id_hex"], "37a5165b");
+    assert_eq!(decoded["transparent"]["vin"], 1);
+    assert_eq!(decoded["transparent"]["vout"], 1);
+}
+
+#[test]
+#[cfg(feature = "transparent-tx-build")]
+fn build_transparent_transaction_is_deterministic() {
+    let to = regtest_transparent_address();
+    let request = format!(
+        r#"{{"transparent_build_version":1,"network":"regtest","target_height":10,
+                 "fee_zatoshis":10000,
+                 "inputs":[{{"txid":"{txid}","vout":0,"value_zatoshis":100000,"secret_key":"{sk}"}}],
+                 "outputs":[{{"address":"{to}","value_zatoshis":90000}}]}}"#,
+        txid = "22".repeat(32),
+        sk = BUILD_TEST_SECRET_KEY,
+        to = to,
+    );
+    let first = build_transparent_value(&request);
+    let second = build_transparent_value(&request);
+    assert_eq!(first["status"], "ok");
+    assert_eq!(
+        first["transaction"], second["transaction"],
+        "identical requests must yield identical signed transactions"
+    );
+}
+
+#[test]
+#[cfg(feature = "transparent-tx-build")]
+fn build_transparent_transaction_rejects_shielded_output_without_echo() {
+    let sapling = "zs1zt3mq96vp65l8ch54r78nc50ml68qsyg3pkteq8pn8sfgzakhgw4vqn6px5w08hrf2uzuam5kmj";
+    let request = format!(
+        r#"{{"transparent_build_version":1,"network":"main","target_height":2500000,
+                 "fee_zatoshis":10000,
+                 "inputs":[{{"txid":"{txid}","vout":0,"value_zatoshis":100000,"secret_key":"{sk}"}}],
+                 "outputs":[{{"address":"{to}","value_zatoshis":90000}}]}}"#,
+        txid = "22".repeat(32),
+        sk = BUILD_TEST_SECRET_KEY,
+        to = sapling,
+    );
+    let v = build_transparent_value(&request);
+    assert_eq!(v["status"], "error");
+    assert_eq!(v["category"], "unsupported_shielded_output");
+    assert!(
+        !v.to_string().contains(BUILD_TEST_SECRET_KEY),
+        "shielded rejection must not echo the signing key"
+    );
+}
+
+#[test]
+#[cfg(feature = "transparent-tx-build")]
+fn build_transparent_transaction_rejects_unbalanced_inputs() {
+    let to = regtest_transparent_address();
+    let request = format!(
+        r#"{{"transparent_build_version":1,"network":"regtest","target_height":10,
+                 "fee_zatoshis":10000,
+                 "inputs":[{{"txid":"{txid}","vout":0,"value_zatoshis":100000,"secret_key":"{sk}"}}],
+                 "outputs":[{{"address":"{to}","value_zatoshis":95000}}]}}"#,
+        txid = "22".repeat(32),
+        sk = BUILD_TEST_SECRET_KEY,
+        to = to,
+    );
+    let v = build_transparent_value(&request);
+    assert_eq!(v["status"], "error");
+    assert_eq!(v["category"], "insufficient_funds");
+}
+
+#[test]
+#[cfg(feature = "transparent-tx-build")]
+fn build_transparent_transaction_rejects_malformed_secret_key_without_echo() {
+    let to = regtest_transparent_address();
+    let bad_key = "00".repeat(32);
+    let request = format!(
+        r#"{{"transparent_build_version":1,"network":"regtest","target_height":10,
+                 "fee_zatoshis":10000,
+                 "inputs":[{{"txid":"{txid}","vout":0,"value_zatoshis":100000,"secret_key":"{sk}"}}],
+                 "outputs":[{{"address":"{to}","value_zatoshis":90000}}]}}"#,
+        txid = "22".repeat(32),
+        sk = bad_key,
+        to = to,
+    );
+    let v = build_transparent_value(&request);
+    assert_eq!(v["status"], "error");
+    assert_eq!(v["category"], "invalid_secret_key");
+    assert!(!v.to_string().contains(&bad_key));
+}
+
+#[test]
+#[cfg(feature = "transparent-tx-build")]
+fn build_transparent_transaction_rejects_unsupported_version_and_bad_json() {
+    let v = build_transparent_value(r#"{"transparent_build_version":2}"#);
+    assert_eq!(v["category"], "unsupported_transparent_build_version");
+
+    let v = build_transparent_value("not json");
+    assert_eq!(v["category"], "invalid_json");
+
+    let v = build_transparent_value(r#"{"network":"regtest"}"#);
+    assert_eq!(v["status"], "error");
+    assert_eq!(v["category"], "invalid_request");
+}

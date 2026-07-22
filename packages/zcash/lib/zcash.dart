@@ -21,4 +21,5 @@ export 'src/models/mining.dart';
 export 'src/models/scan.dart';
 export 'src/models/spend.dart';
 export 'src/models/proposal.dart';
+export 'src/models/transparent_build.dart';
 export 'src/zip321.dart';

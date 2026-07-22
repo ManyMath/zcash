@@ -451,6 +451,74 @@ void main() {
     },
   );
 
+  group(
+    'FFI transparent transaction build (experimental gate)',
+    skip: _libAvailable ? false : 'ZCASH_FFI_LIB not set',
+    () {
+      const secretKey =
+          '1111111111111111111111111111111111111111111111111111111111111111';
+      final inputs = [
+        TransparentBuildInput(
+          txid: '22' * 32,
+          vout: 0,
+          valueZatoshis: 100000,
+          secretKeyHex: secretKey,
+        ),
+      ];
+      const outputs = [
+        TransparentBuildOutput(
+          address: 'tmEgiuT9b9XHFTGqMHQ7gK6yY6JhsKqYZ9q',
+          valueZatoshis: 90000,
+        ),
+      ];
+
+      test('throws without explicit experimental opt-in', () {
+        expect(
+          () => buildNativeTransparentTransaction(
+            network: ZcashNetwork.testnet,
+            targetHeight: 10,
+            feeZatoshis: 10000,
+            inputs: inputs,
+            outputs: outputs,
+          ),
+          throwsA(
+            isA<StateError>().having(
+              (error) => error.message,
+              'message',
+              contains('experimental'),
+            ),
+          ),
+        );
+      });
+
+      test(
+        'default build reports feature disabled without echoing the key',
+        () {
+          expect(
+            () => buildNativeTransparentTransaction(
+              network: ZcashNetwork.testnet,
+              targetHeight: 10,
+              feeZatoshis: 10000,
+              inputs: inputs,
+              outputs: outputs,
+              allowExperimentalTransparentBuild: true,
+            ),
+            throwsA(
+              isA<StateError>().having(
+                (error) => error.message,
+                'message',
+                allOf(
+                  contains('experimental_feature_disabled'),
+                  isNot(contains(secretKey)),
+                ),
+              ),
+            ),
+          );
+        },
+      );
+    },
+  );
+
   group('ZcashNetwork', () {
     test('maps each network to the label the native exports take', () {
       expect(ZcashNetwork.mainnet.ffiLabel, 'main');
