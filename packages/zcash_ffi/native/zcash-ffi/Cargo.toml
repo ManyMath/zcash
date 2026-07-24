@@ -40,8 +40,15 @@ jubjub = { version = "0.10", optional = true }
 bls12_381 = { version = "0.8", optional = true }
 rand_core = { version = "0.6", features = ["getrandom"], optional = true }
 
+rand_chacha = { version = "0.3", optional = true }
+
+zcash_proofs = { version = "0.29", optional = true }
 
 [features]
+
+# Test-only: allows `rng_seed`; without it builds refuse it (`rng_seed_not_permitted`).
+deterministic-build-rng = []
+
 transparent-tx-build = [
     "dep:secp256k1",
     "dep:sapling",
@@ -49,6 +56,19 @@ transparent-tx-build = [
     "dep:bls12_381",
     "dep:rand_core",
     "zcash_primitives/transparent-inputs",
+    "zcash_primitives/non-standard-fees",
+    "zcash_protocol/local-consensus",
+]
+
+sapling-spend-build = [
+    "dep:sapling",
+    "dep:rand_chacha",
+    "dep:rand_core",
+    "dep:secp256k1",
+    "zcash_primitives/transparent-inputs",
+    "dep:zcash_proofs",
+    # Mock prover fallback (placeholder proofs) when no Sapling parameters are supplied.
+    "sapling/test-dependencies",
     "zcash_primitives/non-standard-fees",
     "zcash_protocol/local-consensus",
 ]

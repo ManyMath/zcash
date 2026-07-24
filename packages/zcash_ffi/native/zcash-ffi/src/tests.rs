@@ -1677,3 +1677,882 @@ fn build_transparent_transaction_rejects_unsupported_version_and_bad_json() {
     assert_eq!(v["status"], "error");
     assert_eq!(v["category"], "invalid_request");
 }
+
+fn build_sapling_value(request: &str) -> Value {
+    let req = cptr(request);
+    result_value(zcash_ffi_build_sapling_transaction(req.as_ptr()))
+}
+
+#[test]
+#[cfg(not(feature = "sapling-spend-build"))]
+fn build_sapling_transaction_disabled_in_default_build() {
+    let request = format!(
+        r#"{{"sapling_build_version":1,"network":"regtest","target_height":10,
+                 "fee_zatoshis":10000,"seed":"{seed}","account":0,
+                 "spend_notes":[{{"value_zatoshis":100000}}],
+                 "outputs":[{{"address":"zregtest","value_zatoshis":90000}}]}}"#,
+        seed = TEST_SEED_HEX,
+    );
+    let v = build_sapling_value(&request);
+    assert_eq!(v["status"], "error");
+    assert_eq!(v["category"], "experimental_feature_disabled");
+    assert!(
+        !v.to_string().contains(TEST_SEED_HEX),
+        "disabled build must not echo the supplied seed"
+    );
+}
+
+#[test]
+#[cfg(not(feature = "sapling-spend-build"))]
+fn build_sapling_transaction_disabled_rejects_null_pointer() {
+    let v = result_value(zcash_ffi_build_sapling_transaction(std::ptr::null()));
+    assert_eq!(v["status"], "error");
+    assert_eq!(v["category"], "null_pointer");
+}
+
+#[cfg(feature = "sapling-spend-build")]
+fn regtest_sapling_address() -> String {
+    let regtest = cptr("regtest");
+    viewing_keys_value(TEST_SEED_HEX, &regtest, 0)["sapling"]["default_address"]
+        .as_str()
+        .expect("regtest sapling default address")
+        .to_owned()
+}
+
+#[test]
+#[cfg(feature = "sapling-spend-build")]
+fn build_sapling_transaction_builds_spend_regtest_vector() {
+    let to = regtest_sapling_address();
+    let request = format!(
+        r#"{{"sapling_build_version":1,"network":"regtest","target_height":10,
+                 "fee_zatoshis":10000,"seed":"{seed}","account":0,
+                 "spend_notes":[{{"value_zatoshis":100000}}],
+                 "outputs":[{{"address":"{to}","value_zatoshis":90000}}]}}"#,
+        seed = TEST_SEED_HEX,
+        to = to,
+    );
+    let v = build_sapling_value(&request);
+    assert_eq!(v["status"], "ok", "build should succeed: {v}");
+    assert_eq!(v["network"], "regtest");
+    assert_eq!(v["version"], "v5");
+    assert_eq!(
+        v["consensus_branch_id"], "nu6.2",
+        "a regtest chain this repo starts runs to NU6.2 at height 1, and \
+             this transaction has to be signed for the branch it will be mined \
+             under: {v}"
+    );
+    assert_eq!(v["fee_zatoshis"], 10000);
+    assert_eq!(v["total_spent_zatoshis"], 100000);
+    assert_eq!(v["total_output_zatoshis"], 90000);
+    assert_eq!(v["sapling"]["spends"], 1);
+    assert!(
+        v["sapling"]["outputs"].as_u64().unwrap() >= 1,
+        "expected at least the requested Sapling output"
+    );
+    assert_eq!(v["transparent"]["vin"], 0);
+    assert_eq!(v["transparent"]["vout"], 0);
+    assert_eq!(v["proof_validity"], "placeholder");
+
+    let tx_hex = v["transaction"].as_str().expect("transaction hex");
+    let net = cptr("regtest");
+    let decoded = result_value(zcash_ffi_decode_transaction(
+        cptr(tx_hex).as_ptr(),
+        net.as_ptr(),
+    ));
+    assert_eq!(decoded["status"], "ok");
+    assert_eq!(decoded["version"], "v5");
+    assert_eq!(decoded["txid"], v["txid"]);
+    assert_eq!(decoded["sapling"]["present"], true);
+    assert_eq!(decoded["sapling"]["spends"], v["sapling"]["spends"]);
+    assert_eq!(decoded["sapling"]["outputs"], v["sapling"]["outputs"]);
+    assert_eq!(decoded["orchard"]["present"], false);
+
+    assert!(
+        !v.to_string().contains(TEST_SEED_HEX),
+        "build output must not echo the seed"
+    );
+}
+
+#[test]
+#[cfg(feature = "sapling-spend-build")]
+fn build_sapling_transaction_follows_the_staged_regtest_branch() {
+    let to = regtest_sapling_address();
+    let build_at = |height: u32| {
+        let request = format!(
+            r#"{{"sapling_build_version":1,"network":"regtest","target_height":{height},
+                     "regtest_nu63_activation_height":130,
+                     "fee_zatoshis":10000,"seed":"{seed}","account":0,
+                     "spend_notes":[{{"value_zatoshis":100000}}],
+                     "outputs":[{{"address":"{to}","value_zatoshis":90000}}]}}"#,
+            height = height,
+            seed = TEST_SEED_HEX,
+            to = to,
+        );
+        build_sapling_value(&request)
+    };
+
+    let below = build_at(129);
+    assert_eq!(below["status"], "ok", "{below}");
+    assert_eq!(below["consensus_branch_id"], "nu6.2");
+    assert_eq!(below["version"], "v5");
+
+    let above = build_at(130);
+    assert_eq!(above["status"], "ok", "{above}");
+    assert_eq!(
+        above["consensus_branch_id"], "nu6.3",
+        "at and above the declared activation height the chain is on \
+             NU6.3, and a Sapling spend is still an ordinary payment there: {above}"
+    );
+    assert_eq!(
+        above["version"], "v6",
+        "NU6.3 selects the v6 transaction format for every pool, Sapling \
+             included: {above}"
+    );
+    assert_eq!(above["sapling"]["spends"], 1);
+    assert_ne!(
+        above["txid"], below["txid"],
+        "the same spend signed for two branches is two transactions"
+    );
+
+    let net = cptr("regtest");
+    let decoded = result_value(zcash_ffi_decode_transaction(
+        cptr(above["transaction"].as_str().expect("transaction hex")).as_ptr(),
+        net.as_ptr(),
+    ));
+    assert_eq!(decoded["status"], "ok");
+    assert_eq!(decoded["version"], "v6");
+    assert_eq!(decoded["consensus_branch_id"], "nu6.3");
+    assert_eq!(decoded["sapling"]["present"], true);
+    assert_eq!(decoded["sapling"]["spends"], above["sapling"]["spends"]);
+    assert!(
+        !above.to_string().contains(TEST_SEED_HEX),
+        "build output must not echo the seed"
+    );
+}
+
+#[test]
+#[cfg(feature = "sapling-spend-build")]
+fn build_sapling_transaction_shields_a_transparent_input_into_the_pool() {
+    let to = regtest_sapling_address();
+    let request = format!(
+        r#"{{"sapling_build_version":1,"network":"regtest","target_height":140,
+                 "regtest_nu63_activation_height":130,
+                 "fee_zatoshis":15000,"seed":"{seed}","account":0,
+                 "inputs":[{{"txid":"{txid}","vout":0,"value_zatoshis":100000,
+                   "secret_key":"{sk}"}}],
+                 "outputs":[{{"address":"{to}","value_zatoshis":85000}}]}}"#,
+        seed = TEST_SEED_HEX,
+        txid = "33".repeat(32),
+        sk = BUILD_TEST_SECRET_KEY,
+        to = to,
+    );
+    let v = build_sapling_value(&request);
+    assert_eq!(v["status"], "ok", "shielding build should succeed: {v}");
+    assert_eq!(v["consensus_branch_id"], "nu6.3");
+    assert_eq!(v["version"], "v6");
+    assert_eq!(v["transparent"]["vin"], 1);
+    assert_eq!(v["transparent"]["vout"], 0);
+    assert_eq!(
+        v["transparent"]["input_zatoshis"], 100000,
+        "the value has to be reported somewhere: no Sapling note was spent, \
+             so `total_spent_zatoshis` is legitimately zero here: {v}"
+    );
+    assert_eq!(v["total_spent_zatoshis"], 0);
+    assert_eq!(v["total_output_zatoshis"], 85000);
+    assert_eq!(
+        v["sapling"]["spends"], 0,
+        "a shielding transaction spends no note, which is what makes the \
+             bundle's anchor unserialized and therefore harmless: {v}"
+    );
+    assert!(v["sapling"]["outputs"].as_u64().unwrap() >= 1);
+
+    let net = cptr("regtest");
+    let decoded = result_value(zcash_ffi_decode_transaction(
+        cptr(v["transaction"].as_str().expect("transaction hex")).as_ptr(),
+        net.as_ptr(),
+    ));
+    assert_eq!(decoded["status"], "ok");
+    assert_eq!(decoded["version"], "v6");
+    assert_eq!(decoded["sapling"]["present"], true);
+    assert_eq!(
+        decoded["sapling"]["spends"], 0,
+        "the decoded bundle carries no spend, so the v5/v6 serialization \
+             wrote no anchor: the `empty_tree()` value the build passed is not \
+             in the transaction and constrains nothing: {decoded}"
+    );
+    assert_eq!(decoded["transparent"]["vin"], 1);
+    assert_eq!(decoded["txid"], v["txid"]);
+
+    assert!(
+        !v.to_string().contains(BUILD_TEST_SECRET_KEY),
+        "a build must never echo an input signing key"
+    );
+    assert!(
+        !v.to_string().contains(TEST_SEED_HEX),
+        "build output must not echo the seed"
+    );
+}
+
+#[test]
+#[cfg(feature = "sapling-spend-build")]
+fn build_sapling_transaction_tops_a_spend_up_with_a_transparent_input() {
+    let rseed = [43u8; 32];
+    let (recipient, rseed_hex, witness_hex, anchor_hex) =
+        super::sapling_build::real_note_fixture(&test_seed_bytes(), 0, 100000, rseed);
+    let request = format!(
+        r#"{{"sapling_build_version":1,"network":"regtest","target_height":10,
+                 "fee_zatoshis":10000,"seed":"{seed}","account":0,
+                 "inputs":[{{"txid":"{txid}","vout":0,"value_zatoshis":50000,
+                   "secret_key":"{sk}"}}],
+                 "spend_notes":[{{"value_zatoshis":100000,"recipient":"{recipient}",
+                   "rseed":"{rseed}","witness":"{witness}","anchor":"{anchor}"}}],
+                 "outputs":[{{"address":"{recipient}","value_zatoshis":140000}}]}}"#,
+        seed = TEST_SEED_HEX,
+        txid = "34".repeat(32),
+        sk = BUILD_TEST_SECRET_KEY,
+        recipient = recipient,
+        rseed = rseed_hex,
+        witness = witness_hex,
+        anchor = anchor_hex,
+    );
+    let v = build_sapling_value(&request);
+    assert_eq!(v["status"], "ok", "{v}");
+    assert_eq!(v["sapling"]["spends"], 1);
+    assert_eq!(v["transparent"]["vin"], 1);
+    assert_eq!(v["transparent"]["input_zatoshis"], 50000);
+    assert_eq!(v["total_spent_zatoshis"], 100000);
+    assert_eq!(v["total_output_zatoshis"], 140000);
+}
+
+#[test]
+#[cfg(feature = "sapling-spend-build")]
+fn build_sapling_transaction_refuses_a_build_that_spends_nothing() {
+    let to = regtest_sapling_address();
+    let request = format!(
+        r#"{{"sapling_build_version":1,"network":"regtest","target_height":10,
+                 "fee_zatoshis":10000,"seed":"{seed}","account":0,
+                 "outputs":[{{"address":"{to}","value_zatoshis":90000}}]}}"#,
+        seed = TEST_SEED_HEX,
+        to = to,
+    );
+    let v = build_sapling_value(&request);
+    assert_eq!(v["status"], "error");
+    assert_eq!(v["category"], "invalid_request");
+    assert!(
+        !v.to_string().contains(TEST_SEED_HEX),
+        "refusal must not echo the seed"
+    );
+}
+
+#[test]
+#[cfg(feature = "sapling-spend-build")]
+fn build_sapling_transaction_rejects_a_malformed_input_without_echo() {
+    let to = regtest_sapling_address();
+    let request = format!(
+        r#"{{"sapling_build_version":1,"network":"regtest","target_height":10,
+                 "fee_zatoshis":10000,"seed":"{seed}","account":0,
+                 "inputs":[{{"txid":"{txid}","vout":0,"value_zatoshis":100000,
+                   "secret_key":"{sk}"}}],
+                 "outputs":[{{"address":"{to}","value_zatoshis":90000}}]}}"#,
+        seed = TEST_SEED_HEX,
+        txid = "35".repeat(32),
+        sk = "ff".repeat(32),
+        to = to,
+    );
+    let v = build_sapling_value(&request);
+    assert_eq!(v["status"], "error");
+    assert_eq!(v["category"], "invalid_secret_key");
+    assert!(
+        !v.to_string().contains(&"ff".repeat(32)),
+        "a rejected key must not be echoed back"
+    );
+}
+
+#[test]
+#[cfg(feature = "sapling-spend-build")]
+fn sapling_fee_quote_equals_the_fee_the_build_charges() {
+    let to = regtest_sapling_address();
+    let request = |quote: bool| {
+        format!(
+            r#"{{"sapling_build_version":1,"network":"regtest","target_height":140,
+                     "regtest_nu63_activation_height":130,
+                     "quote_only":{quote},
+                     "seed":"{seed}","account":0,
+                     "inputs":[{{"txid":"{txid}","vout":0,"value_zatoshis":100000,
+                       "secret_key":"{sk}"}}],
+                     "outputs":[{{"address":"{to}"}}]}}"#,
+            quote = quote,
+            seed = TEST_SEED_HEX,
+            txid = "36".repeat(32),
+            sk = BUILD_TEST_SECRET_KEY,
+            to = to,
+        )
+    };
+
+    let quoted = build_sapling_value(&request(true));
+    assert_eq!(quoted["status"], "ok", "{quoted}");
+    assert_eq!(quoted["quote_only"], true);
+    assert_eq!(quoted["fee_rule"], "zip317");
+    assert_eq!(quoted["consensus_branch_id"], "nu6.3");
+    assert_eq!(quoted["total_input_zatoshis"], 100000);
+    assert_eq!(quoted["stated_output_zatoshis"], 0);
+    assert!(quoted["transaction"].is_null(), "a quote is not a build");
+    let fee = quoted["fee_zatoshis"].as_u64().expect("fee");
+    let max_output = quoted["max_output_zatoshis"].as_u64().expect("max output");
+    assert_eq!(max_output, 100000 - fee);
+
+    let built = build_sapling_value(&request(false));
+    assert_eq!(built["status"], "ok", "{built}");
+    assert_eq!(
+        built["fee_zatoshis"], quoted["fee_zatoshis"],
+        "the quote must be the fee the build charges: {built}"
+    );
+    assert_eq!(
+        built["total_output_zatoshis"], max_output,
+        "the remainder output takes exactly what the quote said was payable"
+    );
+    assert_eq!(built["fee_rule"], "zip317");
+}
+
+#[test]
+#[cfg(feature = "sapling-spend-build")]
+fn sapling_fee_quote_tracks_the_shape_and_not_the_values() {
+    let to = regtest_sapling_address();
+    let quote = |outputs: &str| {
+        let request = format!(
+            r#"{{"sapling_build_version":1,"network":"regtest","target_height":140,
+                     "regtest_nu63_activation_height":130,"quote_only":true,
+                     "seed":"{seed}","account":0,
+                     "inputs":[{{"txid":"{txid}","vout":0,"value_zatoshis":1000000,
+                       "secret_key":"{sk}"}}],
+                     "outputs":{outputs}}}"#,
+            seed = TEST_SEED_HEX,
+            txid = "37".repeat(32),
+            sk = BUILD_TEST_SECRET_KEY,
+            outputs = outputs,
+        );
+        let v = build_sapling_value(&request);
+        assert_eq!(v["status"], "ok", "{v}");
+        v["fee_zatoshis"].as_u64().expect("fee")
+    };
+
+    let one = quote(&format!(r#"[{{"address":"{to}"}}]"#));
+    let one_again = quote(&format!(
+        r#"[{{"address":"{to}","value_zatoshis":900000}}]"#
+    ));
+    let two = quote(&format!(
+        r#"[{{"address":"{to}","value_zatoshis":400000}},{{"address":"{to}"}}]"#
+    ));
+    let three = quote(&format!(
+        r#"[{{"address":"{to}","value_zatoshis":100000}},
+                {{"address":"{to}","value_zatoshis":200000}},
+                {{"address":"{to}"}}]"#
+    ));
+
+    assert_eq!(one, one_again, "the fee is a function of the shape");
+    assert_eq!(
+        one, two,
+        "one output is padded to two, so it already pays for two: {one} vs {two}"
+    );
+    assert!(
+        three > two,
+        "the third output is past the padding and must cost more: {three} vs {two}"
+    );
+}
+
+#[test]
+#[cfg(feature = "sapling-spend-build")]
+fn build_sapling_transaction_refuses_two_remainder_outputs() {
+    let to = regtest_sapling_address();
+    let request = format!(
+        r#"{{"sapling_build_version":1,"network":"regtest","target_height":140,
+                 "regtest_nu63_activation_height":130,
+                 "seed":"{seed}","account":0,
+                 "inputs":[{{"txid":"{txid}","vout":0,"value_zatoshis":100000,
+                   "secret_key":"{sk}"}}],
+                 "outputs":[{{"address":"{to}"}},{{"address":"{to}"}}]}}"#,
+        seed = TEST_SEED_HEX,
+        txid = "38".repeat(32),
+        sk = BUILD_TEST_SECRET_KEY,
+        to = to,
+    );
+    let v = build_sapling_value(&request);
+    assert_eq!(v["status"], "error");
+    assert_eq!(v["category"], "invalid_request");
+}
+
+#[test]
+#[cfg(feature = "sapling-spend-build")]
+fn sapling_fee_quote_reports_a_shortfall_as_a_null_rather_than_an_error() {
+    let to = regtest_sapling_address();
+    let request = format!(
+        r#"{{"sapling_build_version":1,"network":"regtest","target_height":140,
+                 "regtest_nu63_activation_height":130,"quote_only":true,
+                 "seed":"{seed}","account":0,
+                 "inputs":[{{"txid":"{txid}","vout":0,"value_zatoshis":1000,
+                   "secret_key":"{sk}"}}],
+                 "outputs":[{{"address":"{to}"}}]}}"#,
+        seed = TEST_SEED_HEX,
+        txid = "39".repeat(32),
+        sk = BUILD_TEST_SECRET_KEY,
+        to = to,
+    );
+    let v = build_sapling_value(&request);
+    assert_eq!(v["status"], "ok", "a shortfall is an answer: {v}");
+    assert!(
+        v["fee_zatoshis"].as_u64().expect("fee") > 1000,
+        "this selection cannot even cover the fee, which is the point"
+    );
+    assert!(v["max_output_zatoshis"].is_null());
+}
+
+#[test]
+#[cfg(feature = "sapling-spend-build")]
+fn build_sapling_transaction_refuses_an_activation_override_off_regtest() {
+    let request = format!(
+        r#"{{"sapling_build_version":1,"network":"main","target_height":10,
+                 "regtest_nu63_activation_height":130,
+                 "fee_zatoshis":10000,"seed":"{seed}","account":0,
+                 "spend_notes":[{{"value_zatoshis":100000}}],
+                 "outputs":[{{"address":"zs1invalid","value_zatoshis":90000}}]}}"#,
+        seed = TEST_SEED_HEX,
+    );
+    let v = build_sapling_value(&request);
+    assert_eq!(v["status"], "error");
+    assert_eq!(v["category"], "unsupported_activation_override");
+    assert!(
+        !v.to_string().contains(TEST_SEED_HEX),
+        "refusal must not echo the seed"
+    );
+}
+
+#[test]
+#[cfg(feature = "sapling-spend-build")]
+fn build_sapling_transaction_real_proving_with_supplied_params() {
+    let spend_path = match std::env::var("ZCASH_SAPLING_SPEND_PARAMS") {
+        Ok(p) if !p.is_empty() => p,
+        _ => {
+            eprintln!(
+                "skipping real Sapling proving test: set \
+                     ZCASH_SAPLING_SPEND_PARAMS and ZCASH_SAPLING_OUTPUT_PARAMS \
+                     to the real Sapling parameter files to run it"
+            );
+            return;
+        }
+    };
+    let output_path = match std::env::var("ZCASH_SAPLING_OUTPUT_PARAMS") {
+        Ok(p) if !p.is_empty() => p,
+        _ => {
+            eprintln!(
+                "skipping real Sapling proving test: \
+                     ZCASH_SAPLING_OUTPUT_PARAMS is not set"
+            );
+            return;
+        }
+    };
+
+    let to = regtest_sapling_address();
+    let base = format!(
+        r#""sapling_build_version":1,"network":"regtest","target_height":10,
+               "fee_zatoshis":10000,"seed":"{seed}","account":0,
+               "spend_notes":[{{"value_zatoshis":100000}}],
+               "outputs":[{{"address":"{to}","value_zatoshis":90000}}]"#,
+        seed = TEST_SEED_HEX,
+        to = to,
+    );
+    let real_request = format!(
+        r#"{{{base},"spend_params_path":{spend:?},"output_params_path":{output:?}}}"#,
+        base = base,
+        spend = spend_path,
+        output = output_path,
+    );
+    let real = build_sapling_value(&real_request);
+    assert_eq!(real["status"], "ok", "real build should succeed: {real}");
+    assert_eq!(
+        real["proof_validity"], "real",
+        "caller-supplied parameters must yield real proofs"
+    );
+    assert_eq!(real["version"], "v5");
+    assert_eq!(real["sapling"]["spends"], 1);
+
+    let tx_hex = real["transaction"].as_str().expect("transaction hex");
+    let net = cptr("regtest");
+    let decoded = result_value(zcash_ffi_decode_transaction(
+        cptr(tx_hex).as_ptr(),
+        net.as_ptr(),
+    ));
+    assert_eq!(decoded["status"], "ok");
+    assert_eq!(decoded["sapling"]["present"], true);
+    assert_eq!(decoded["txid"], real["txid"]);
+
+    let placeholder_request = format!("{{{base}}}", base = base);
+    let placeholder = build_sapling_value(&placeholder_request);
+    assert_eq!(placeholder["proof_validity"], "placeholder");
+    assert_ne!(
+        real["transaction"], placeholder["transaction"],
+        "real proofs must differ from the all-zero placeholder proofs"
+    );
+
+    let out = real.to_string();
+    assert!(!out.contains(TEST_SEED_HEX), "must not echo the seed");
+    assert!(!out.contains(&spend_path), "must not echo the spend path");
+    assert!(!out.contains(&output_path), "must not echo the output path");
+}
+
+#[test]
+#[cfg(feature = "sapling-spend-build")]
+fn build_sapling_transaction_rejects_missing_params_without_echo() {
+    let to = regtest_sapling_address();
+    let missing = "/nonexistent/zcash/sapling-spend.params";
+    let request = format!(
+        r#"{{"sapling_build_version":1,"network":"regtest","target_height":10,
+                 "fee_zatoshis":10000,"seed":"{seed}","account":0,
+                 "spend_notes":[{{"value_zatoshis":100000}}],
+                 "outputs":[{{"address":"{to}","value_zatoshis":90000}}],
+                 "spend_params_path":"{missing}","output_params_path":"{missing}"}}"#,
+        seed = TEST_SEED_HEX,
+        to = to,
+        missing = missing,
+    );
+    let v = build_sapling_value(&request);
+    assert_eq!(v["status"], "error");
+    assert_eq!(v["category"], "params_not_found");
+    assert!(
+        !v.to_string().contains(missing),
+        "error must not echo the supplied parameter path"
+    );
+}
+
+#[test]
+#[cfg(feature = "sapling-spend-build")]
+fn build_sapling_transaction_rejects_half_specified_params() {
+    let to = regtest_sapling_address();
+    let request = format!(
+        r#"{{"sapling_build_version":1,"network":"regtest","target_height":10,
+                 "fee_zatoshis":10000,"seed":"{seed}","account":0,
+                 "spend_notes":[{{"value_zatoshis":100000}}],
+                 "outputs":[{{"address":"{to}","value_zatoshis":90000}}],
+                 "spend_params_path":"/some/path"}}"#,
+        seed = TEST_SEED_HEX,
+        to = to,
+    );
+    let v = build_sapling_value(&request);
+    assert_eq!(v["status"], "error");
+    assert_eq!(v["category"], "invalid_request");
+}
+
+#[test]
+#[cfg(feature = "sapling-spend-build")]
+fn build_sapling_transaction_randomness_repeats_only_when_asked() {
+    let to = regtest_sapling_address();
+    let request = |seeded: &str| {
+        format!(
+            r#"{{"sapling_build_version":1,"network":"regtest","target_height":10,
+                     {seeded}"fee_zatoshis":10000,"seed":"{seed}","account":0,
+                     "spend_notes":[{{"value_zatoshis":100000}}],
+                     "outputs":[{{"address":"{to}","value_zatoshis":90000}}]}}"#,
+            seeded = seeded,
+            seed = TEST_SEED_HEX,
+            to = to,
+        )
+    };
+
+    let first = build_sapling_value(&request(""));
+    let second = build_sapling_value(&request(""));
+    assert_eq!(first["status"], "ok", "{first}");
+    assert_eq!(first["rng"], "os");
+    assert_ne!(
+        first["transaction"], second["transaction"],
+        "two identical requests must not produce the same transaction"
+    );
+    assert_ne!(first["txid"], second["txid"]);
+
+    let seeded = format!(r#""rng_seed":"{}","#, "0c".repeat(32));
+    let a = build_sapling_value(&request(&seeded));
+    let b = build_sapling_value(&request(&seeded));
+    assert_eq!(a["status"], "ok", "{a}");
+    assert_eq!(a["rng"], "deterministic");
+    assert_eq!(
+        a["transaction"], b["transaction"],
+        "one stated seed, one artifact"
+    );
+    assert_ne!(a["transaction"], first["transaction"]);
+}
+
+#[test]
+#[cfg(feature = "sapling-spend-build")]
+fn build_sapling_transaction_supports_transparent_output() {
+    let regtest = cptr("regtest");
+    let t_addr = viewing_keys_value(TEST_SEED_HEX, &regtest, 0)["transparent"]
+        ["default_external_address"]
+        .as_str()
+        .expect("regtest transparent default address")
+        .to_owned();
+    let request = format!(
+        r#"{{"sapling_build_version":1,"network":"regtest","target_height":10,
+                 "fee_zatoshis":10000,"seed":"{seed}","account":0,
+                 "spend_notes":[{{"value_zatoshis":100000}}],
+                 "outputs":[{{"address":"{to}","value_zatoshis":90000}}]}}"#,
+        seed = TEST_SEED_HEX,
+        to = t_addr,
+    );
+    let v = build_sapling_value(&request);
+    assert_eq!(v["status"], "ok", "build should succeed: {v}");
+    assert_eq!(v["sapling"]["spends"], 1);
+    assert_eq!(v["transparent"]["vout"], 1);
+}
+
+#[test]
+#[cfg(feature = "sapling-spend-build")]
+fn build_sapling_transaction_rejects_unified_output_without_echo() {
+    let main = cptr("main");
+    let ufvk = account_ufvk(&main);
+    let ua = ufvk_to_address_value(&ufvk, &main, 0)["ua"]
+        .as_str()
+        .expect("mainnet ua")
+        .to_owned();
+    let request = format!(
+        r#"{{"sapling_build_version":1,"network":"main","target_height":2500000,
+                 "fee_zatoshis":10000,"seed":"{seed}","account":0,
+                 "spend_notes":[{{"value_zatoshis":100000}}],
+                 "outputs":[{{"address":"{to}","value_zatoshis":90000}}]}}"#,
+        seed = TEST_SEED_HEX,
+        to = ua,
+    );
+    let v = build_sapling_value(&request);
+    assert_eq!(v["status"], "error");
+    assert_eq!(v["category"], "unsupported_shielded_output");
+    assert!(
+        !v.to_string().contains(TEST_SEED_HEX),
+        "shielded rejection must not echo the seed"
+    );
+}
+
+#[test]
+#[cfg(feature = "sapling-spend-build")]
+fn build_sapling_transaction_rejects_unbalanced_inputs() {
+    let to = regtest_sapling_address();
+    let request = format!(
+        r#"{{"sapling_build_version":1,"network":"regtest","target_height":10,
+                 "fee_zatoshis":10000,"seed":"{seed}","account":0,
+                 "spend_notes":[{{"value_zatoshis":100000}}],
+                 "outputs":[{{"address":"{to}","value_zatoshis":95000}}]}}"#,
+        seed = TEST_SEED_HEX,
+        to = to,
+    );
+    let v = build_sapling_value(&request);
+    assert_eq!(v["status"], "error");
+    assert_eq!(v["category"], "insufficient_funds");
+}
+
+#[test]
+#[cfg(feature = "sapling-spend-build")]
+fn build_sapling_transaction_rejects_short_seed_without_echo() {
+    let to = regtest_sapling_address();
+    let short_seed = "00".repeat(16);
+    let request = format!(
+        r#"{{"sapling_build_version":1,"network":"regtest","target_height":10,
+                 "fee_zatoshis":10000,"seed":"{seed}","account":0,
+                 "spend_notes":[{{"value_zatoshis":100000}}],
+                 "outputs":[{{"address":"{to}","value_zatoshis":90000}}]}}"#,
+        seed = short_seed,
+        to = to,
+    );
+    let v = build_sapling_value(&request);
+    assert_eq!(v["status"], "error");
+    assert_eq!(v["category"], "invalid_seed");
+    assert!(!v.to_string().contains(&short_seed));
+}
+
+#[test]
+#[cfg(feature = "sapling-spend-build")]
+fn build_sapling_transaction_rejects_unsupported_version_and_bad_json() {
+    let v = build_sapling_value(r#"{"sapling_build_version":2}"#);
+    assert_eq!(v["category"], "unsupported_sapling_build_version");
+
+    let v = build_sapling_value("not json");
+    assert_eq!(v["category"], "invalid_json");
+
+    let v = build_sapling_value(r#"{"network":"regtest"}"#);
+    assert_eq!(v["status"], "error");
+    assert_eq!(v["category"], "invalid_request");
+}
+
+#[cfg(feature = "sapling-spend-build")]
+fn test_seed_bytes() -> Vec<u8> {
+    hex::decode(TEST_SEED_HEX).expect("seed hex")
+}
+
+#[test]
+#[cfg(feature = "sapling-spend-build")]
+fn build_sapling_transaction_builds_with_caller_supplied_real_note() {
+    let rseed = [42u8; 32];
+    let (recipient, rseed_hex, witness_hex, anchor_hex) =
+        super::sapling_build::real_note_fixture(&test_seed_bytes(), 0, 100000, rseed);
+    let request = format!(
+        r#"{{"sapling_build_version":1,"network":"regtest","target_height":10,
+                 "fee_zatoshis":10000,"seed":"{seed}","account":0,
+                 "spend_notes":[{{"value_zatoshis":100000,"recipient":"{recipient}",
+                   "rseed":"{rseed}","witness":"{witness}","anchor":"{anchor}"}}],
+                 "outputs":[{{"address":"{recipient}","value_zatoshis":90000}}]}}"#,
+        seed = TEST_SEED_HEX,
+        recipient = recipient,
+        rseed = rseed_hex,
+        witness = witness_hex,
+        anchor = anchor_hex,
+    );
+    let v = build_sapling_value(&request);
+    assert_eq!(v["status"], "ok", "real-note build should succeed: {v}");
+    assert_eq!(v["version"], "v5");
+    assert_eq!(v["sapling"]["spends"], 1);
+    assert_eq!(v["total_spent_zatoshis"], 100000);
+    assert_eq!(v["total_output_zatoshis"], 90000);
+    assert_eq!(v["proof_validity"], "placeholder");
+
+    let tx_hex = v["transaction"].as_str().expect("transaction hex");
+    let net = cptr("regtest");
+    let decoded = result_value(zcash_ffi_decode_transaction(
+        cptr(tx_hex).as_ptr(),
+        net.as_ptr(),
+    ));
+    assert_eq!(decoded["status"], "ok");
+    assert_eq!(decoded["sapling"]["present"], true);
+    assert_eq!(decoded["sapling"]["spends"], v["sapling"]["spends"]);
+    assert_eq!(decoded["txid"], v["txid"]);
+
+    assert!(
+        !v.to_string().contains(TEST_SEED_HEX),
+        "real-note build must not echo the seed"
+    );
+}
+
+#[test]
+#[cfg(feature = "sapling-spend-build")]
+fn build_sapling_real_note_rejects_anchor_mismatch_without_echo() {
+    let rseed = [7u8; 32];
+    let (recipient, rseed_hex, witness_hex, anchor_hex) =
+        super::sapling_build::real_note_fixture(&test_seed_bytes(), 0, 100000, rseed);
+    let mut bad = hex::decode(&anchor_hex).unwrap();
+    bad[0] ^= 0xff;
+    let bad_anchor = hex::encode(&bad);
+    let request = format!(
+        r#"{{"sapling_build_version":1,"network":"regtest","target_height":10,
+                 "fee_zatoshis":10000,"seed":"{seed}","account":0,
+                 "spend_notes":[{{"value_zatoshis":100000,"recipient":"{recipient}",
+                   "rseed":"{rseed}","witness":"{witness}","anchor":"{anchor}"}}],
+                 "outputs":[{{"address":"{recipient}","value_zatoshis":90000}}]}}"#,
+        seed = TEST_SEED_HEX,
+        recipient = recipient,
+        rseed = rseed_hex,
+        witness = witness_hex,
+        anchor = bad_anchor,
+    );
+    let v = build_sapling_value(&request);
+    assert_eq!(v["status"], "error");
+    assert_eq!(v["category"], "witness_anchor_mismatch");
+    assert!(
+        !v.to_string().contains(TEST_SEED_HEX),
+        "rejection must not echo the seed"
+    );
+}
+
+#[test]
+#[cfg(feature = "sapling-spend-build")]
+fn build_sapling_real_note_rejects_unspendable_recipient_without_echo() {
+    let other_seed = vec![0x99u8; 32];
+    let rseed = [3u8; 32];
+    let (recipient, rseed_hex, witness_hex, anchor_hex) =
+        super::sapling_build::real_note_fixture(&other_seed, 0, 100000, rseed);
+    let request = format!(
+        r#"{{"sapling_build_version":1,"network":"regtest","target_height":10,
+                 "fee_zatoshis":10000,"seed":"{seed}","account":0,
+                 "spend_notes":[{{"value_zatoshis":100000,"recipient":"{recipient}",
+                   "rseed":"{rseed}","witness":"{witness}","anchor":"{anchor}"}}],
+                 "outputs":[{{"address":"{recipient}","value_zatoshis":90000}}]}}"#,
+        seed = TEST_SEED_HEX,
+        recipient = recipient,
+        rseed = rseed_hex,
+        witness = witness_hex,
+        anchor = anchor_hex,
+    );
+    let v = build_sapling_value(&request);
+    assert_eq!(v["status"], "error");
+    assert_eq!(v["category"], "note_not_spendable");
+    assert!(!v.to_string().contains(TEST_SEED_HEX));
+}
+
+#[test]
+#[cfg(feature = "sapling-spend-build")]
+fn build_sapling_real_note_rejects_malformed_witness_without_echo() {
+    let rseed = [11u8; 32];
+    let (recipient, rseed_hex, _witness_hex, anchor_hex) =
+        super::sapling_build::real_note_fixture(&test_seed_bytes(), 0, 100000, rseed);
+    let request = format!(
+        r#"{{"sapling_build_version":1,"network":"regtest","target_height":10,
+                 "fee_zatoshis":10000,"seed":"{seed}","account":0,
+                 "spend_notes":[{{"value_zatoshis":100000,"recipient":"{recipient}",
+                   "rseed":"{rseed}","witness":"zzzz","anchor":"{anchor}"}}],
+                 "outputs":[{{"address":"{recipient}","value_zatoshis":90000}}]}}"#,
+        seed = TEST_SEED_HEX,
+        recipient = recipient,
+        rseed = rseed_hex,
+        anchor = anchor_hex,
+    );
+    let v = build_sapling_value(&request);
+    assert_eq!(v["status"], "error");
+    assert_eq!(v["category"], "invalid_request");
+    assert!(!v.to_string().contains(TEST_SEED_HEX));
+}
+
+#[test]
+#[cfg(feature = "sapling-spend-build")]
+fn build_sapling_rejects_mixed_real_and_synthesized_notes() {
+    let rseed = [5u8; 32];
+    let (recipient, rseed_hex, witness_hex, anchor_hex) =
+        super::sapling_build::real_note_fixture(&test_seed_bytes(), 0, 60000, rseed);
+    let request = format!(
+        r#"{{"sapling_build_version":1,"network":"regtest","target_height":10,
+                 "fee_zatoshis":10000,"seed":"{seed}","account":0,
+                 "spend_notes":[
+                   {{"value_zatoshis":60000,"recipient":"{recipient}","rseed":"{rseed}",
+                     "witness":"{witness}","anchor":"{anchor}"}},
+                   {{"value_zatoshis":40000}}],
+                 "outputs":[{{"address":"{recipient}","value_zatoshis":90000}}]}}"#,
+        seed = TEST_SEED_HEX,
+        recipient = recipient,
+        rseed = rseed_hex,
+        witness = witness_hex,
+        anchor = anchor_hex,
+    );
+    let v = build_sapling_value(&request);
+    assert_eq!(v["status"], "error");
+    assert_eq!(v["category"], "invalid_request");
+}
+
+#[test]
+#[cfg(feature = "sapling-spend-build")]
+fn build_sapling_real_note_is_deterministic() {
+    let rseed = [21u8; 32];
+    let (recipient, rseed_hex, witness_hex, anchor_hex) =
+        super::sapling_build::real_note_fixture(&test_seed_bytes(), 0, 100000, rseed);
+    let request = format!(
+        r#"{{"sapling_build_version":1,"network":"regtest","target_height":10,
+                 "rng_seed":"0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d",
+                 "fee_zatoshis":10000,"seed":"{seed}","account":0,
+                 "spend_notes":[{{"value_zatoshis":100000,"recipient":"{recipient}",
+                   "rseed":"{rseed}","witness":"{witness}","anchor":"{anchor}"}}],
+                 "outputs":[{{"address":"{recipient}","value_zatoshis":90000}}]}}"#,
+        seed = TEST_SEED_HEX,
+        recipient = recipient,
+        rseed = rseed_hex,
+        witness = witness_hex,
+        anchor = anchor_hex,
+    );
+    let first = build_sapling_value(&request);
+    let second = build_sapling_value(&request);
+    assert_eq!(first["status"], "ok", "build should succeed: {first}");
+    assert_eq!(
+        first["transaction"], second["transaction"],
+        "one stated seed, one artifact — even spending a real note"
+    );
+}

@@ -4,6 +4,7 @@ import 'package:ffi/ffi.dart';
 import 'package:zcash/zcash.dart';
 import 'native_result.dart';
 import 'native_string.dart';
+import 'sapling_build_request.dart';
 import 'transparent_build_request.dart';
 
 @Native<Pointer<Utf8> Function()>(symbol: 'zcash_ffi_version')
@@ -109,6 +110,13 @@ external Pointer<Utf8> _zcashFfiTransactionTxid(Pointer<Utf8> txHex);
   symbol: 'zcash_ffi_build_transparent_transaction',
 )
 external Pointer<Utf8> _zcashFfiBuildTransparentTransaction(
+  Pointer<Utf8> requestJson,
+);
+
+@Native<Pointer<Utf8> Function(Pointer<Utf8>)>(
+  symbol: 'zcash_ffi_build_sapling_transaction',
+)
+external Pointer<Utf8> _zcashFfiBuildSaplingTransaction(
   Pointer<Utf8> requestJson,
 );
 
@@ -433,6 +441,59 @@ TransparentBuildResult zcashNativeBuildTransparentTransaction({
     redactSensitive: [for (final input in inputs) input.secretKeyHex],
   );
   return TransparentBuildResult.fromJson(json);
+}
+
+SaplingBuildResult zcashNativeBuildSaplingTransaction({
+  required String network,
+  required int targetHeight,
+  int? feeZatoshis,
+  required String seedHex,
+  int account = 0,
+  Iterable<SaplingBuildSpendNote> spendNotes = const [],
+  Iterable<TransparentBuildInput> inputs = const [],
+  required Iterable<SaplingBuildOutput> outputs,
+  String? spendParamsPath,
+  String? outputParamsPath,
+  int? regtestNu63ActivationHeight,
+  String? rngSeedHex,
+  bool allowExperimentalSaplingBuild = false,
+}) {
+  if (!allowExperimentalSaplingBuild) {
+    throw StateError(
+      'zcashNativeBuildSaplingTransaction is experimental and native-backed; '
+      'set allowExperimentalSaplingBuild: true to opt in. It requires a native '
+      'library built with the off-by-default sapling-spend-build feature, and '
+      'without caller-supplied MPC parameters produces placeholder '
+      '(non-consensus-valid) proofs.',
+    );
+  }
+  final requestJson = encodeSaplingBuildRequest(
+    network: network,
+    targetHeight: targetHeight,
+    feeZatoshis: feeZatoshis,
+    seedHex: seedHex,
+    account: account,
+    spendNotes: spendNotes,
+    inputs: inputs,
+    outputs: outputs,
+    spendParamsPath: spendParamsPath,
+    outputParamsPath: outputParamsPath,
+    regtestNu63ActivationHeight: regtestNu63ActivationHeight,
+    rngSeedHex: rngSeedHex,
+  );
+  final requestPtr = requestJson.toNativeUtf8();
+  final String raw;
+  try {
+    raw = _takeString(_zcashFfiBuildSaplingTransaction(requestPtr));
+  } finally {
+    calloc.free(requestPtr);
+  }
+  final json = parseNativeJsonObject(
+    raw,
+    context: 'build_sapling_transaction/native-assets',
+    redactSensitive: [seedHex, for (final input in inputs) input.secretKeyHex],
+  );
+  return SaplingBuildResult.fromJson(json);
 }
 
 ZcashScanResult zcashNativeScanCompactBlocks({

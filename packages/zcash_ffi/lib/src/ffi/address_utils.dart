@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:zcash/zcash.dart';
 import 'native_result.dart';
+import 'sapling_build_request.dart';
 import 'transparent_build_request.dart';
 import 'zcash_ffi_bindings.dart';
 
@@ -372,6 +373,97 @@ TransparentBuildResult buildNativeTransparentTransaction({
     redactSensitive: [for (final input in inputs) input.secretKeyHex],
   );
   return TransparentBuildResult.fromJson(json);
+}
+
+SaplingBuildResult buildNativeSaplingTransaction({
+  required ZcashNetwork network,
+  required int targetHeight,
+  int? feeZatoshis,
+  required String seedHex,
+  int account = 0,
+  Iterable<SaplingBuildSpendNote> spendNotes = const [],
+  Iterable<TransparentBuildInput> inputs = const [],
+  required Iterable<SaplingBuildOutput> outputs,
+  String? spendParamsPath,
+  String? outputParamsPath,
+  int? regtestNu63ActivationHeight,
+  String? rngSeedHex,
+  bool allowExperimentalSaplingBuild = false,
+  ZcashFfiBindings? bindings,
+}) {
+  if (!allowExperimentalSaplingBuild) {
+    throw StateError(
+      'buildNativeSaplingTransaction is experimental and native-backed; set '
+      'allowExperimentalSaplingBuild: true to opt in. It requires a native '
+      'library built with the off-by-default sapling-spend-build feature, and '
+      'even then produces placeholder (non-consensus-valid) proofs.',
+    );
+  }
+  final ffi = bindings ?? ZcashFfiBindings.instance;
+  final requestJson = encodeSaplingBuildRequest(
+    network: network._ffiParam,
+    targetHeight: targetHeight,
+    feeZatoshis: feeZatoshis,
+    seedHex: seedHex,
+    account: account,
+    spendNotes: spendNotes,
+    inputs: inputs,
+    outputs: outputs,
+    spendParamsPath: spendParamsPath,
+    outputParamsPath: outputParamsPath,
+    regtestNu63ActivationHeight: regtestNu63ActivationHeight,
+    rngSeedHex: rngSeedHex,
+  );
+  final raw = ffi.buildSaplingTransaction(requestJson);
+  final json = parseNativeJsonObject(
+    raw,
+    context: 'build_sapling_transaction/DynamicLibrary',
+    redactSensitive: [seedHex, for (final input in inputs) input.secretKeyHex],
+  );
+  return SaplingBuildResult.fromJson(json);
+}
+
+SaplingFeeQuote quoteNativeSaplingFee({
+  required ZcashNetwork network,
+  required int targetHeight,
+  int? feeZatoshis,
+  required String seedHex,
+  int account = 0,
+  Iterable<SaplingBuildSpendNote> spendNotes = const [],
+  Iterable<TransparentBuildInput> inputs = const [],
+  required Iterable<SaplingBuildOutput> outputs,
+  int? regtestNu63ActivationHeight,
+  bool allowExperimentalSaplingBuild = false,
+  ZcashFfiBindings? bindings,
+}) {
+  if (!allowExperimentalSaplingBuild) {
+    throw StateError(
+      'quoteNativeSaplingFee is experimental and native-backed; set '
+      'allowExperimentalSaplingBuild: true to opt in. It requires a native '
+      'library built with the off-by-default sapling-spend-build feature, '
+      'behind the same gate as the build it prices.',
+    );
+  }
+  final ffi = bindings ?? ZcashFfiBindings.instance;
+  final requestJson = encodeSaplingBuildRequest(
+    network: network._ffiParam,
+    targetHeight: targetHeight,
+    feeZatoshis: feeZatoshis,
+    quoteOnly: true,
+    seedHex: seedHex,
+    account: account,
+    spendNotes: spendNotes,
+    inputs: inputs,
+    outputs: outputs,
+    regtestNu63ActivationHeight: regtestNu63ActivationHeight,
+  );
+  final raw = ffi.buildSaplingTransaction(requestJson);
+  final json = parseNativeJsonObject(
+    raw,
+    context: 'build_sapling_transaction/DynamicLibrary',
+    redactSensitive: [seedHex, for (final input in inputs) input.secretKeyHex],
+  );
+  return SaplingFeeQuote.fromJson(json);
 }
 
 void _checkUint32Index(int value, String name) {

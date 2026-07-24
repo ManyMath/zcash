@@ -8,6 +8,10 @@ import 'dart:typed_data';
 import 'package:test/test.dart';
 import 'package:zcash_ffi/zcash_ffi.dart';
 
+const _seed =
+    '000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f'
+    '202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f';
+
 const _expectedMainnetTAddr = 't1c8oqrzA1kYPdgVhfDNUZn3buAbk6rXxiX';
 const _expectedMainnetSapling =
     'zs1zt3mq96vp65l8ch54r78nc50ml68qsyg3pkteq8pn8sfgzakhgw4vqn6px5w08hrf2uzuam5kmj';
@@ -24,6 +28,90 @@ void main() {
     'FFI address utilities',
     skip: _libAvailable ? false : 'ZCASH_FFI_LIB not set',
     () {
+      test('deriveAddress returns correct mainnet UA', () async {
+        final set = await deriveAddress(
+          seedHex: _seed,
+          network: ZcashNetwork.mainnet,
+        );
+        expect(set.ua, equals(_expectedMainnetUa));
+        expect(set.saplingAddress, equals(_expectedMainnetSapling));
+        expect(set.transparentAddress, equals(_expectedMainnetTAddr));
+      });
+
+      test(
+        'deriveNativeViewingKeys returns read-only viewing-key metadata',
+        () {
+          final keys = deriveNativeViewingKeys(
+            seedHex: _seed,
+            network: ZcashNetwork.mainnet,
+          );
+
+          expect(keys.network, ZcashAddressNetwork.mainnet);
+          expect(keys.accountIndex, 0);
+          expect(keys.hasTransparent, isTrue);
+          expect(keys.hasSapling, isTrue);
+          expect(keys.hasOrchard, isTrue);
+          expect(keys.transparent.externalIvk, hasLength(130));
+          expect(keys.transparent.internalIvk, hasLength(130));
+          expect(
+            keys.transparent.externalIvk,
+            isNot(equals(keys.transparent.internalIvk)),
+          );
+          expect(keys.transparent.defaultExternalAddress, startsWith('t1'));
+          expect(keys.transparent.defaultExternalIndex, 0);
+          expect(keys.sapling.defaultAddress, startsWith('zs1'));
+          expect(keys.toJson().toString(), isNot(contains(_seed)));
+          expect(keys.toJson().toString(), isNot(contains('secret-')));
+        },
+      );
+
+      test('deriveNativeViewingKeys account indices differ', () {
+        final account0 = deriveNativeViewingKeys(
+          seedHex: _seed,
+          network: ZcashNetwork.mainnet,
+        );
+        final account1 = deriveNativeViewingKeys(
+          seedHex: _seed,
+          network: ZcashNetwork.mainnet,
+          accountIndex: 1,
+        );
+        expect(
+          account0.transparent.externalIvk,
+          isNot(equals(account1.transparent.externalIvk)),
+        );
+        expect(
+          account0.sapling.defaultAddress,
+          isNot(equals(account1.sapling.defaultAddress)),
+        );
+      });
+
+      test('deriveTransparentAddress child 0 matches expected', () async {
+        final addr = await deriveTransparentAddress(
+          seedHex: _seed,
+          network: ZcashNetwork.mainnet,
+        );
+        expect(addr, equals(_expectedMainnetTAddr));
+      });
+
+      test('deriveTransparentAddress child 1 and 2 differ', () async {
+        final a0 = await deriveTransparentAddress(
+          seedHex: _seed,
+          network: ZcashNetwork.mainnet,
+          childIndex: 0,
+        );
+        final a1 = await deriveTransparentAddress(
+          seedHex: _seed,
+          network: ZcashNetwork.mainnet,
+          childIndex: 1,
+        );
+        final a2 = await deriveTransparentAddress(
+          seedHex: _seed,
+          network: ZcashNetwork.mainnet,
+          childIndex: 2,
+        );
+        expect(a0, isNot(equals(a1)));
+        expect(a1, isNot(equals(a2)));
+      });
 
       test('classifyAddress transparent', () {
         expect(classifyAddress(_expectedMainnetTAddr), AddressType.transparent);
@@ -291,6 +379,46 @@ void main() {
         },
       );
 
+      test('isValidAddress testnet transparent', () async {
+        final addr = await deriveTransparentAddress(
+          seedHex: _seed,
+          network: ZcashNetwork.testnet,
+        );
+        expect(isValidAddress(addr, ZcashNetwork.testnet), isTrue);
+        expect(isValidAddress(addr, ZcashNetwork.mainnet), isFalse);
+      });
+
+      test('different account indices produce different UFVKs', () async {
+        final set0 = await deriveAddress(
+          seedHex: _seed,
+          network: ZcashNetwork.mainnet,
+          accountIndex: 0,
+        );
+        final set1 = await deriveAddress(
+          seedHex: _seed,
+          network: ZcashNetwork.mainnet,
+          accountIndex: 1,
+        );
+        expect(set0.ua, isNot(equals(set1.ua)));
+      });
+
+      test(
+        'deriveSaplingSpendingKey returns deterministic zcashd import key',
+        () async {
+          final key = await deriveSaplingSpendingKey(
+            seedHex: _seed,
+            network: ZcashNetwork.testnet,
+          );
+          final repeated = await deriveSaplingSpendingKey(
+            seedHex: _seed,
+            network: ZcashNetwork.testnet,
+          );
+          expect(key, equals(repeated));
+          expect(key, startsWith('secret-extended-key-test'));
+          expect(key, isNot(contains(_seed)));
+        },
+      );
+
       test('seedToSaplingSpendingKey returns sanitized JSON errors', () {
         final raw = ZcashFfiBindings.instance.seedToSaplingSpendingKey(
           '000102',
@@ -312,6 +440,20 @@ void main() {
         expect(decoded['category'], 'invalid_seed');
         expect(decoded['error'], contains('seed must be at least 32 bytes'));
         expect(raw, isNot(contains('000102')));
+      });
+
+      test('different diversifier indices produce different UAs', () async {
+        final set0 = await deriveAddress(
+          seedHex: _seed,
+          network: ZcashNetwork.mainnet,
+          diversifierIndex: 0,
+        );
+        final set1 = await deriveAddress(
+          seedHex: _seed,
+          network: ZcashNetwork.mainnet,
+          diversifierIndex: 1,
+        );
+        expect(set0.ua, isNot(equals(set1.ua)));
       });
     },
   );
@@ -519,6 +661,423 @@ void main() {
     },
   );
 
+  group(
+    'FFI sapling transaction build (experimental gate)',
+    skip: _libAvailable ? false : 'ZCASH_FFI_LIB not set',
+    () {
+      const seedHex =
+          '000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f'
+          '202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f';
+      const spendNotes = [SaplingBuildSpendNote(valueZatoshis: 100000)];
+      const outputs = [
+        SaplingBuildOutput(
+          address: 'tmEgiuT9b9XHFTGqMHQ7gK6yY6JhsKqYZ9q',
+          valueZatoshis: 90000,
+        ),
+      ];
+
+      test('throws without explicit experimental opt-in', () {
+        expect(
+          () => buildNativeSaplingTransaction(
+            network: ZcashNetwork.testnet,
+            targetHeight: 10,
+            feeZatoshis: 10000,
+            seedHex: seedHex,
+            spendNotes: spendNotes,
+            outputs: outputs,
+          ),
+          throwsA(
+            isA<StateError>().having(
+              (error) => error.message,
+              'message',
+              contains('experimental'),
+            ),
+          ),
+        );
+      });
+
+      test(
+        'default build reports feature disabled without echoing the seed',
+        () {
+          expect(
+            () => buildNativeSaplingTransaction(
+              network: ZcashNetwork.testnet,
+              targetHeight: 10,
+              feeZatoshis: 10000,
+              seedHex: seedHex,
+              spendNotes: spendNotes,
+              outputs: outputs,
+              allowExperimentalSaplingBuild: true,
+            ),
+            throwsA(
+              isA<StateError>().having(
+                (error) => error.message,
+                'message',
+                allOf(
+                  contains('experimental_feature_disabled'),
+                  isNot(contains(seedHex)),
+                ),
+              ),
+            ),
+          );
+        },
+      );
+    },
+  );
+
+  group('Sapling build request shape (no FFI)', () {
+    final rseedHex = '2a' * 32;
+    final anchorHex = '11' * 32;
+
+    test('synthesized spend note encodes only value', () {
+      const note = SaplingBuildSpendNote(valueZatoshis: 100000);
+      expect(note.isRealNote, isFalse);
+      expect(note.toRequestJson(), {'value_zatoshis': 100000});
+    });
+
+    test('real spend note encodes recipient/rseed/witness/anchor', () {
+      final note = SaplingBuildSpendNote(
+        valueZatoshis: 100000,
+        recipientAddress: 'zregtestsapling1abc',
+        rseedHex: rseedHex,
+        witnessHex: 'deadbeef',
+        anchorHex: anchorHex,
+      );
+      expect(note.isRealNote, isTrue);
+      expect(note.toRequestJson(), {
+        'value_zatoshis': 100000,
+        'recipient': 'zregtestsapling1abc',
+        'rseed': rseedHex,
+        'witness': 'deadbeef',
+        'anchor': anchorHex,
+      });
+    });
+
+    test('partial real spend note is rejected (together-or-neither)', () {
+      const note = SaplingBuildSpendNote(
+        valueZatoshis: 100000,
+        recipientAddress: 'zregtestsapling1abc',
+      );
+      expect(note.isRealNote, isTrue);
+      expect(note.toRequestJson, throwsArgumentError);
+    });
+
+    test(
+      'a memo rides on the output it is addressed to, and only that one',
+      () {
+        final json =
+            jsonDecode(
+                  encodeSaplingBuildRequest(
+                    network: 'regtest',
+                    targetHeight: 10,
+                    seedHex: _seed,
+                    spendNotes: const [
+                      SaplingBuildSpendNote(valueZatoshis: 100000),
+                    ],
+                    outputs: const [
+                      SaplingBuildOutput(
+                        address: 'zregtestsapling1recipient',
+                        valueZatoshis: 50000,
+                        memoHex: 'deadbeef',
+                      ),
+                      SaplingBuildOutput(
+                        address: 'zregtestsapling1mine',
+                        valueZatoshis: 40000,
+                      ),
+                    ],
+                  ),
+                )
+                as Map<String, Object?>;
+
+        expect(json['outputs'], [
+          {
+            'address': 'zregtestsapling1recipient',
+            'value_zatoshis': 50000,
+            'memo': 'deadbeef',
+          },
+          {'address': 'zregtestsapling1mine', 'value_zatoshis': 40000},
+        ]);
+      },
+    );
+
+    test('encodeSaplingBuildRequest carries real-note fields verbatim', () {
+      final json =
+          jsonDecode(
+                encodeSaplingBuildRequest(
+                  network: 'regtest',
+                  targetHeight: 10,
+                  feeZatoshis: 10000,
+                  seedHex: _seed,
+                  spendNotes: [
+                    SaplingBuildSpendNote(
+                      valueZatoshis: 100000,
+                      recipientAddress: 'zregtestsapling1abc',
+                      rseedHex: rseedHex,
+                      witnessHex: 'deadbeef',
+                      anchorHex: anchorHex,
+                    ),
+                  ],
+                  outputs: const [
+                    SaplingBuildOutput(
+                      address: 'zregtestsapling1abc',
+                      valueZatoshis: 90000,
+                    ),
+                  ],
+                ),
+              )
+              as Map<String, Object?>;
+      expect(json['sapling_build_version'], saplingBuildRequestVersion);
+      final spendNotes = json['spend_notes'] as List<Object?>;
+      final note = spendNotes.single as Map<String, Object?>;
+      expect(note['recipient'], 'zregtestsapling1abc');
+      expect(note['rseed'], rseedHex);
+      expect(note['witness'], 'deadbeef');
+      expect(note['anchor'], anchorHex);
+    });
+
+    test('omits the staged activation height unless it is stated', () {
+      final json =
+          jsonDecode(
+                encodeSaplingBuildRequest(
+                  network: 'regtest',
+                  targetHeight: 10,
+                  feeZatoshis: 10000,
+                  seedHex: _seed,
+                  spendNotes: const [
+                    SaplingBuildSpendNote(valueZatoshis: 100000),
+                  ],
+                  outputs: const [
+                    SaplingBuildOutput(
+                      address: 'zregtestsapling1abc',
+                      valueZatoshis: 90000,
+                    ),
+                  ],
+                ),
+              )
+              as Map<String, Object?>;
+      expect(json.containsKey('regtest_nu63_activation_height'), isFalse);
+    });
+
+    test('a shielding request carries inputs and no spend notes', () {
+      final json =
+          jsonDecode(
+                encodeSaplingBuildRequest(
+                  network: 'regtest',
+                  targetHeight: 140,
+                  feeZatoshis: 15000,
+                  seedHex: _seed,
+                  inputs: const [
+                    TransparentBuildInput(
+                      txid: '33',
+                      vout: 0,
+                      valueZatoshis: 100000,
+                      secretKeyHex: '11',
+                    ),
+                  ],
+                  outputs: const [
+                    SaplingBuildOutput(
+                      address: 'zregtestsapling1abc',
+                      valueZatoshis: 85000,
+                    ),
+                  ],
+                ),
+              )
+              as Map<String, Object?>;
+      expect(json['spend_notes'], isEmpty);
+      final inputs = json['inputs'] as List<Object?>;
+      final input = inputs.single as Map<String, Object?>;
+      expect(input['txid'], '33');
+      expect(input['vout'], 0);
+      expect(input['value_zatoshis'], 100000);
+      expect(input['secret_key'], '11');
+    });
+
+    test('a quote request omits the fee and asks for the remainder', () {
+      final json =
+          jsonDecode(
+                encodeSaplingBuildRequest(
+                  network: 'regtest',
+                  targetHeight: 140,
+                  quoteOnly: true,
+                  seedHex: _seed,
+                  inputs: const [
+                    TransparentBuildInput(
+                      txid: '33',
+                      vout: 0,
+                      valueZatoshis: 100000,
+                      secretKeyHex: '11',
+                    ),
+                  ],
+                  outputs: const [
+                    SaplingBuildOutput(address: 'zregtestsapling1abc'),
+                  ],
+                ),
+              )
+              as Map<String, Object?>;
+      expect(json['quote_only'], isTrue);
+      expect(json.containsKey('fee_zatoshis'), isFalse);
+      final outputs = json['outputs'] as List<Object?>;
+      final output = outputs.single as Map<String, Object?>;
+      expect(output['address'], 'zregtestsapling1abc');
+      expect(
+        output.containsKey('value_zatoshis'),
+        isFalse,
+        reason: 'an absent value is what asks for the remainder',
+      );
+    });
+
+    test('a build request still states its fee when the caller states one', () {
+      final json =
+          jsonDecode(
+                encodeSaplingBuildRequest(
+                  network: 'regtest',
+                  targetHeight: 140,
+                  feeZatoshis: 20000,
+                  seedHex: _seed,
+                  spendNotes: const [
+                    SaplingBuildSpendNote(valueZatoshis: 100000),
+                  ],
+                  outputs: const [
+                    SaplingBuildOutput(
+                      address: 'zregtestsapling1abc',
+                      valueZatoshis: 80000,
+                    ),
+                  ],
+                ),
+              )
+              as Map<String, Object?>;
+      expect(json['fee_zatoshis'], 20000);
+      expect(json.containsKey('quote_only'), isFalse);
+    });
+
+    test('quoting refuses without the experimental opt-in', () {
+      expect(
+        () => quoteNativeSaplingFee(
+          network: ZcashNetwork.regtest,
+          targetHeight: 140,
+          seedHex: _seed,
+          inputs: [
+            TransparentBuildInput(
+              txid: '33',
+              vout: 0,
+              valueZatoshis: 100000,
+              secretKeyHex: '11' * 32,
+            ),
+          ],
+          outputs: const [SaplingBuildOutput(address: 'zregtestsapling1abc')],
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            allOf(
+              contains('allowExperimentalSaplingBuild'),
+              contains('sapling-spend-build'),
+              isNot(contains('11' * 32)),
+            ),
+          ),
+        ),
+      );
+    });
+
+    test('a scanned note becomes a spend input with three components', () {
+      final note = ZcashScannedNote(
+        height: 200,
+        tx: 'aa' * 32,
+        output: 0,
+        value: 100000,
+        pool: 'sapling',
+        nullifier: 'ab' * 32,
+        commitmentPosition: 0,
+        isChange: false,
+        recipient: 'zregtestsapling1example',
+        rseed: '11' * 32,
+        witness: '33' * 40,
+      );
+      final spend = SaplingBuildSpendNote.fromScannedNote(
+        note,
+        anchorHex: '44' * 32,
+      ).toRequestJson();
+
+      expect(spend['value_zatoshis'], 100000);
+      expect(spend['recipient'], 'zregtestsapling1example');
+      expect(spend['rseed'], '11' * 32);
+      expect(spend['witness'], '33' * 40);
+      expect(spend['anchor'], '44' * 32);
+    });
+
+    test('a note from another pool is not a Sapling spend input', () {
+      final note = ZcashScannedNote(
+        height: 200,
+        tx: 'aa' * 32,
+        output: 0,
+        value: 100000,
+        pool: 'ironwood',
+        nullifier: 'ab' * 32,
+        commitmentPosition: 0,
+        isChange: false,
+        recipient: 'uregtest1example',
+        rseed: '11' * 32,
+        rho: '22' * 32,
+        noteVersion: 'v3',
+        witness: '33' * 40,
+      );
+      expect(
+        () => SaplingBuildSpendNote.fromScannedNote(note, anchorHex: '44' * 32),
+        throwsA(isA<ArgumentError>()),
+      );
+    });
+
+    test('a note with no witness cannot be spent yet', () {
+      final note = ZcashScannedNote(
+        height: 200,
+        tx: 'aa' * 32,
+        output: 0,
+        value: 100000,
+        pool: 'sapling',
+        nullifier: 'ab' * 32,
+        commitmentPosition: 0,
+        isChange: false,
+        recipient: 'zregtestsapling1example',
+        rseed: '11' * 32,
+      );
+      expect(
+        () => SaplingBuildSpendNote.fromScannedNote(note, anchorHex: '44' * 32),
+        throwsA(
+          isA<ArgumentError>().having(
+            (error) => error.message.toString(),
+            'message',
+            contains('includeSaplingWitnesses'),
+          ),
+        ),
+      );
+    });
+
+    test('carries the staged activation height when it is stated', () {
+      final json =
+          jsonDecode(
+                encodeSaplingBuildRequest(
+                  network: 'regtest',
+                  targetHeight: 140,
+                  feeZatoshis: 10000,
+                  seedHex: _seed,
+                  spendNotes: const [
+                    SaplingBuildSpendNote(valueZatoshis: 100000),
+                  ],
+                  outputs: const [
+                    SaplingBuildOutput(
+                      address: 'zregtestsapling1abc',
+                      valueZatoshis: 90000,
+                    ),
+                  ],
+                  regtestNu63ActivationHeight: 130,
+                ),
+              )
+              as Map<String, Object?>;
+      expect(json['regtest_nu63_activation_height'], 130);
+    });
+  });
+
   group('ZcashNetwork', () {
     test('maps each network to the label the native exports take', () {
       expect(ZcashNetwork.mainnet.ffiLabel, 'main');
@@ -531,6 +1090,52 @@ void main() {
       );
     });
   });
+
+  group(
+    'regtest reaches the native layer',
+    skip: _libAvailable ? false : 'ZCASH_FFI_LIB not set',
+    () {
+      test('derives regtest-encoded addresses distinct from testnet', () async {
+        final regtest = await deriveAddress(
+          seedHex: _seed,
+          network: ZcashNetwork.regtest,
+        );
+        final testnet = await deriveAddress(
+          seedHex: _seed,
+          network: ZcashNetwork.testnet,
+        );
+
+        expect(regtest.addressEncoding, 'regtest');
+        expect(testnet.addressEncoding, 'testnet');
+        expect(regtest.ua, startsWith('uregtest'));
+        expect(testnet.ua, startsWith('utest'));
+        expect(regtest.saplingAddress, startsWith('zregtestsapling'));
+
+        expect(regtest.ua, isNot(equals(testnet.ua)));
+        expect(regtest.transparentAddress, equals(testnet.transparentAddress));
+      });
+
+      test(
+        'a regtest UA decodes under regtest and not under testnet',
+        () async {
+          final regtest = await deriveAddress(
+            seedHex: _seed,
+            network: ZcashNetwork.regtest,
+          );
+
+          expect(
+            decodeNativeAddress(
+              address: regtest.ua,
+              network: ZcashNetwork.regtest,
+            ).network,
+            ZcashAddressNetwork.regtest,
+          );
+          expect(isValidAddress(regtest.ua, ZcashNetwork.regtest), isTrue);
+          expect(isValidAddress(regtest.ua, ZcashNetwork.testnet), isFalse);
+        },
+      );
+    },
+  );
 }
 
 // From the crate's Rust decode tests: a v5 with one transparent input and two

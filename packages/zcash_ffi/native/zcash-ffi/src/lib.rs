@@ -403,6 +403,13 @@ fn parse_watched_nullifiers(payload: &Value) -> Result<WatchedNullifiers, Scanne
     Ok(watched)
 }
 
+#[cfg(any(
+    feature = "sapling-spend-build",
+    feature = "orchard-note-discovery",
+    feature = "ironwood-note-discovery"
+))]
+type WitnessExport = (Vec<(usize, String)>, Option<String>);
+
 fn scan_compact_blocks_json(
     net: &Network,
     net_type: NetworkType,
@@ -912,6 +919,54 @@ fn scan_compact_blocks_json(
         "orchard_anchor": orchard_anchor,
         "ironwood_anchor": ironwood_anchor,
     }))
+}
+
+#[cfg(feature = "sapling-spend-build")]
+fn build_sapling_witnesses(
+    mut tree: sapling::CommitmentTree,
+    cmu_stream: &[[u8; 32]],
+    discovered: &[([u8; 32], usize)],
+) -> Result<WitnessExport, ScannerError> {
+    use sapling::{IncrementalWitness, Node};
+    use zcash_primitives::merkle_tree::write_incremental_witness;
+
+    fn witness_err() -> ScannerError {
+        ScannerError::new(
+            "witness_build_failed",
+            "could not build a Sapling note-commitment witness",
+        )
+    }
+
+    let mut tracked: Vec<(usize, IncrementalWitness)> = Vec::with_capacity(discovered.len());
+
+    for cmu in cmu_stream {
+        let node = Option::<Node>::from(Node::from_bytes(*cmu)).ok_or_else(witness_err)?;
+        for (_, witness) in tracked.iter_mut() {
+            witness.append(node).map_err(|_| witness_err())?;
+        }
+        tree.append(node).map_err(|_| witness_err())?;
+        if let Some((_, idx)) = discovered
+            .iter()
+            .find(|(discovered_cmu, _)| discovered_cmu == cmu)
+        {
+            let witness = IncrementalWitness::from_tree(tree.clone()).ok_or_else(witness_err)?;
+            tracked.push((*idx, witness));
+        }
+    }
+
+    let anchor = if tree.size() == 0 {
+        None
+    } else {
+        Some(hex::encode(tree.root().to_bytes()))
+    };
+
+    let mut out = Vec::with_capacity(tracked.len());
+    for (idx, witness) in &tracked {
+        let mut buf = Vec::new();
+        write_incremental_witness(witness, &mut buf).map_err(|_| witness_err())?;
+        out.push((*idx, hex::encode(buf)));
+    }
+    Ok((out, anchor))
 }
 
 fn compact_block_base64(block_value: &Value) -> Option<&str> {
@@ -2734,6 +2789,39 @@ pub extern "C" fn zcash_ffi_build_transparent_transaction(
     }
 }
 
+#[no_mangle]
+pub extern "C" fn zcash_ffi_build_sapling_transaction(request_ptr: *const c_char) -> *mut c_char {
+    let request = match c_str_to_str(request_ptr) {
+        Ok(s) => s,
+        Err(FfiStringError::Null) => return json_err("null_pointer", "null request pointer"),
+        Err(FfiStringError::MalformedUtf8) => {
+            return json_err("malformed_utf8", "request is not valid UTF-8")
+        }
+    };
+
+    #[cfg(not(feature = "sapling-spend-build"))]
+    {
+        let _ = request;
+        json_err(
+            "experimental_feature_disabled",
+            "Sapling spend transaction building requires the experimental \
+             'sapling-spend-build' native feature, which is disabled in this build",
+        )
+    }
+
+    #[cfg(feature = "sapling-spend-build")]
+    {
+        let value: Value = match serde_json::from_str(request) {
+            Ok(v) => v,
+            Err(_) => return json_err("invalid_json", "request is not valid JSON"),
+        };
+        match sapling_build::build_sapling_transaction_json(&value) {
+            Ok(v) => json_success(v),
+            Err((category, message)) => json_err(&category, &message),
+        }
+    }
+}
+
 #[cfg(any(
     feature = "transparent-tx-build",
     feature = "orchard-tx-build",
@@ -2747,6 +2835,9 @@ mod transparent_build;
 
 /// Regtest with a movable NU6.3 height, so pre-activation Orchard notes can exist (ZIP 258).
 mod staged_regtest;
+
+#[cfg(feature = "sapling-spend-build")]
+mod sapling_build;
 
 fn read_full_transaction(bytes: &[u8]) -> Result<Transaction, ()> {
     let mut cursor = std::io::Cursor::new(bytes);
