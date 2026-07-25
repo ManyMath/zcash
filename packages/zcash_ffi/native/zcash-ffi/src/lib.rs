@@ -364,6 +364,17 @@ const POOL_SAPLING: usize = 0;
 const POOL_ORCHARD: usize = 1;
 const POOL_IRONWOOD: usize = 2;
 
+#[cfg(any(
+    feature = "orchard-note-discovery",
+    feature = "ironwood-note-discovery"
+))]
+fn spend_pool_index(pool: &str) -> usize {
+    SPEND_POOLS
+        .iter()
+        .position(|candidate| *candidate == pool)
+        .unwrap_or(POOL_SAPLING)
+}
+
 type WatchedNullifiers = [HashSet<[u8; 32]>; 3];
 
 fn parse_watched_nullifiers(payload: &Value) -> Result<WatchedNullifiers, ScannerError> {
@@ -402,6 +413,12 @@ fn parse_watched_nullifiers(payload: &Value) -> Result<WatchedNullifiers, Scanne
     }
     Ok(watched)
 }
+
+#[cfg(any(
+    feature = "orchard-note-discovery",
+    feature = "ironwood-note-discovery"
+))]
+type PoolWitnessCollectors = (Vec<[u8; 32]>, Vec<([u8; 32], usize)>);
 
 #[cfg(any(
     feature = "sapling-spend-build",
@@ -919,6 +936,94 @@ fn scan_compact_blocks_json(
         "orchard_anchor": orchard_anchor,
         "ironwood_anchor": ironwood_anchor,
     }))
+}
+
+/// ZIP 229: Ironwood shares the Orchard receiver and address encoding.
+#[cfg(any(
+    feature = "orchard-note-discovery",
+    feature = "ironwood-note-discovery"
+))]
+fn encode_orchard_receiver_ua(network: NetworkType, recipient: &orchard::Address) -> String {
+    use zcash_address::unified::{Encoding, Receiver};
+    zcash_address::unified::Address::try_from_items(vec![Receiver::Orchard(
+        recipient.to_raw_address_bytes(),
+    )])
+    .expect("a single Orchard receiver is a valid Unified Address")
+    .encode(&network)
+}
+
+#[cfg(any(
+    feature = "orchard-note-discovery",
+    feature = "ironwood-note-discovery"
+))]
+fn build_orchard_family_witnesses(
+    prior_frontier: Option<&str>,
+    frontier_field: &str,
+    cmx_stream: &[[u8; 32]],
+    discovered: &[([u8; 32], usize)],
+) -> Result<WitnessExport, ScannerError> {
+    use incrementalmerkletree::witness::IncrementalWitness;
+    use orchard::tree::MerkleHashOrchard;
+    use zcash_primitives::merkle_tree::{read_commitment_tree, write_incremental_witness};
+
+    const DEPTH: u8 = orchard::NOTE_COMMITMENT_TREE_DEPTH as u8;
+    const EMPTY_TREE: [u8; 3] = [0, 0, 0];
+
+    fn witness_err() -> ScannerError {
+        ScannerError::new(
+            "witness_build_failed",
+            "could not build an Orchard-family note-commitment witness",
+        )
+    }
+
+    let mut tree = match prior_frontier {
+        Some(hex_str) => {
+            let bytes = hex::decode(hex_str.trim()).map_err(|_| {
+                ScannerError::new(
+                    "invalid_prior_frontier",
+                    &format!("{frontier_field} is not valid hex"),
+                )
+            })?;
+            read_commitment_tree::<MerkleHashOrchard, _, DEPTH>(&bytes[..]).map_err(|_| {
+                ScannerError::new(
+                    "invalid_prior_frontier",
+                    &format!("{frontier_field} is not a valid note commitment tree"),
+                )
+            })?
+        }
+        None => read_commitment_tree::<MerkleHashOrchard, _, DEPTH>(&EMPTY_TREE[..])
+            .map_err(|_| witness_err())?,
+    };
+
+    let mut tracked = Vec::with_capacity(discovered.len());
+    for cmx in cmx_stream {
+        let leaf = Option::<MerkleHashOrchard>::from(MerkleHashOrchard::from_bytes(cmx))
+            .ok_or_else(witness_err)?;
+        for (_, witness) in tracked.iter_mut() {
+            IncrementalWitness::append(witness, leaf).map_err(|_| witness_err())?;
+        }
+        tree.append(leaf).map_err(|_| witness_err())?;
+        if let Some((_, idx)) = discovered
+            .iter()
+            .find(|(discovered_cmx, _)| discovered_cmx == cmx)
+        {
+            let witness = IncrementalWitness::from_tree(tree.clone()).ok_or_else(witness_err)?;
+            tracked.push((*idx, witness));
+        }
+    }
+
+    let anchor = if tree.size() == 0 {
+        None
+    } else {
+        Some(hex::encode(tree.root().to_bytes()))
+    };
+    let mut out = Vec::with_capacity(tracked.len());
+    for (idx, witness) in &tracked {
+        let mut buf = Vec::new();
+        write_incremental_witness(witness, &mut buf).map_err(|_| witness_err())?;
+        out.push((*idx, hex::encode(buf)));
+    }
+    Ok((out, anchor))
 }
 
 #[cfg(feature = "sapling-spend-build")]
@@ -2926,6 +3031,17 @@ fn tx_version_label(version: TxVersion) -> &'static str {
         TxVersion::V4 => "v4",
         TxVersion::V5 => "v5",
         TxVersion::V6 => "v6",
+    }
+}
+
+#[cfg(any(
+    feature = "orchard-note-discovery",
+    feature = "ironwood-note-discovery"
+))]
+fn orchard_value_pool_label(pool: orchard::ValuePool) -> &'static str {
+    match pool {
+        orchard::ValuePool::Orchard => "orchard",
+        orchard::ValuePool::Ironwood => "ironwood",
     }
 }
 
