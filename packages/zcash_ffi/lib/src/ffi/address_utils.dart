@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:zcash/zcash.dart';
 import 'native_result.dart';
+import 'orchard_build_request.dart';
 import 'sapling_build_request.dart';
 import 'transparent_build_request.dart';
 import 'zcash_ffi_bindings.dart';
@@ -464,6 +465,55 @@ SaplingFeeQuote quoteNativeSaplingFee({
     redactSensitive: [seedHex, for (final input in inputs) input.secretKeyHex],
   );
   return SaplingFeeQuote.fromJson(json);
+}
+
+OrchardBuildResult buildNativeOrchardTransaction({
+  required ZcashNetwork network,
+  required int targetHeight,
+  required OrchardAnchorSource anchor,
+  required Iterable<TransparentBuildInput> inputs,
+  required OrchardBuildOutput orchardOutput,
+  Iterable<TransparentBuildOutput> outputs = const [],
+  int? expiryHeight,
+  int? regtestNu63ActivationHeight,
+  int? feeZatoshis,
+  String? rngSeedHex,
+  bool allowExperimentalOrchardBuild = false,
+  ZcashFfiBindings? bindings,
+}) {
+  if (!allowExperimentalOrchardBuild) {
+    throw StateError(
+      'buildNativeOrchardTransaction is experimental and native-backed; set '
+      'allowExperimentalOrchardBuild: true to opt in. It requires a native '
+      'library built with the off-by-default orchard-tx-build feature, it only '
+      'works below the NU6.3 activation height, and the caller remains '
+      'responsible for supplying a real Orchard anchor.',
+    );
+  }
+  final ffi = bindings ?? ZcashFfiBindings.instance;
+  final requestJson = encodeOrchardBuildRequest(
+    network: network._ffiParam,
+    targetHeight: targetHeight,
+    anchor: anchor,
+    inputs: inputs,
+    orchardOutput: orchardOutput,
+    outputs: outputs,
+    expiryHeight: expiryHeight,
+    regtestNu63ActivationHeight: regtestNu63ActivationHeight,
+    feeZatoshis: feeZatoshis,
+    rngSeedHex: rngSeedHex,
+  );
+  final raw = ffi.buildOrchardTransaction(requestJson);
+  final json = parseNativeJsonObject(
+    raw,
+    context: 'build_orchard_transaction/DynamicLibrary',
+    redactSensitive: [
+      for (final input in inputs) input.secretKeyHex,
+      if (orchardOutput.outgoingViewingKeyHex != null)
+        orchardOutput.outgoingViewingKeyHex!,
+    ],
+  );
+  return OrchardBuildResult.fromJson(json);
 }
 
 void _checkUint32Index(int value, String name) {

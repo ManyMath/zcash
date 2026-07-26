@@ -23,4 +23,5 @@ export 'src/models/spend.dart';
 export 'src/models/proposal.dart';
 export 'src/models/transparent_build.dart';
 export 'src/models/sapling_build.dart';
+export 'src/models/orchard_build.dart';
 export 'src/zip321.dart';

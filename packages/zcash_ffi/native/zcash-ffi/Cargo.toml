@@ -79,6 +79,20 @@ sapling-spend-build = [
     "zcash_protocol/local-consensus",
 ]
 
+# ZIP 258 closes Orchard at NU6.3; this builds pre-activation Orchard notes for ZIP 318 migration.
+orchard-tx-build = [
+    "dep:secp256k1",
+    "dep:sapling",
+    "dep:jubjub",
+    "dep:bls12_381",
+    "dep:rand_core",
+    "dep:rand_chacha",
+    "dep:orchard",
+    "zcash_primitives/transparent-inputs",
+    "zcash_primitives/non-standard-fees",
+    "zcash_protocol/local-consensus",
+]
+
 [dev-dependencies]
 sapling = { package = "sapling-crypto", version = "0.7" }
 zcash_client_backend = { version = "0.23", features = ["orchard", "test-dependencies"] }

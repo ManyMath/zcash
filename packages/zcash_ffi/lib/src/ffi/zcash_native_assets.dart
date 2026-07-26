@@ -4,6 +4,7 @@ import 'package:ffi/ffi.dart';
 import 'package:zcash/zcash.dart';
 import 'native_result.dart';
 import 'native_string.dart';
+import 'orchard_build_request.dart';
 import 'sapling_build_request.dart';
 import 'transparent_build_request.dart';
 
@@ -117,6 +118,13 @@ external Pointer<Utf8> _zcashFfiBuildTransparentTransaction(
   symbol: 'zcash_ffi_build_sapling_transaction',
 )
 external Pointer<Utf8> _zcashFfiBuildSaplingTransaction(
+  Pointer<Utf8> requestJson,
+);
+
+@Native<Pointer<Utf8> Function(Pointer<Utf8>)>(
+  symbol: 'zcash_ffi_build_orchard_transaction',
+)
+external Pointer<Utf8> _zcashFfiBuildOrchardTransaction(
   Pointer<Utf8> requestJson,
 );
 
@@ -494,6 +502,59 @@ SaplingBuildResult zcashNativeBuildSaplingTransaction({
     redactSensitive: [seedHex, for (final input in inputs) input.secretKeyHex],
   );
   return SaplingBuildResult.fromJson(json);
+}
+
+OrchardBuildResult zcashNativeBuildOrchardTransaction({
+  required String network,
+  required int targetHeight,
+  required OrchardAnchorSource anchor,
+  required Iterable<TransparentBuildInput> inputs,
+  required OrchardBuildOutput orchardOutput,
+  Iterable<TransparentBuildOutput> outputs = const [],
+  int? expiryHeight,
+  int? regtestNu63ActivationHeight,
+  int? feeZatoshis,
+  String? rngSeedHex,
+  bool allowExperimentalOrchardBuild = false,
+}) {
+  if (!allowExperimentalOrchardBuild) {
+    throw StateError(
+      'zcashNativeBuildOrchardTransaction is experimental and native-backed; '
+      'set allowExperimentalOrchardBuild: true to opt in. It requires a native '
+      'library built with the off-by-default orchard-tx-build feature, it only '
+      'works below the NU6.3 activation height, and the caller remains '
+      'responsible for supplying a real Orchard anchor.',
+    );
+  }
+  final requestJson = encodeOrchardBuildRequest(
+    network: network,
+    targetHeight: targetHeight,
+    anchor: anchor,
+    inputs: inputs,
+    orchardOutput: orchardOutput,
+    outputs: outputs,
+    expiryHeight: expiryHeight,
+    regtestNu63ActivationHeight: regtestNu63ActivationHeight,
+    feeZatoshis: feeZatoshis,
+    rngSeedHex: rngSeedHex,
+  );
+  final requestPtr = requestJson.toNativeUtf8();
+  final String raw;
+  try {
+    raw = _takeString(_zcashFfiBuildOrchardTransaction(requestPtr));
+  } finally {
+    calloc.free(requestPtr);
+  }
+  final json = parseNativeJsonObject(
+    raw,
+    context: 'build_orchard_transaction/native-assets',
+    redactSensitive: [
+      for (final input in inputs) input.secretKeyHex,
+      if (orchardOutput.outgoingViewingKeyHex != null)
+        orchardOutput.outgoingViewingKeyHex!,
+    ],
+  );
+  return OrchardBuildResult.fromJson(json);
 }
 
 ZcashScanResult zcashNativeScanCompactBlocks({

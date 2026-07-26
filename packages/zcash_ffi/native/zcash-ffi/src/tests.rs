@@ -1134,6 +1134,17 @@ fn regtest_ufvk_to_address_encodes_every_receiver_for_regtest() {
 }
 
 #[test]
+#[cfg(feature = "orchard-tx-build")]
+fn regtest_ufvk_to_address_agrees_with_the_orchard_builder_fixture() {
+    let net = cptr("regtest");
+    let val = ufvk_to_address_value(&account_ufvk(&net), &net, 0);
+    assert_eq!(
+        val["ua"].as_str().expect("ua field missing"),
+        orchard_build::test_regtest_unified_address(&hex::decode(TEST_SEED_HEX).unwrap())
+    );
+}
+
+#[test]
 fn ufvk_to_address_rejects_malformed_inputs_without_secret_echo() {
     let main = cptr("main");
     let malformed_ufvk = "not-a-valid-ufvk-with-wallet-input";
@@ -1676,6 +1687,414 @@ fn build_transparent_transaction_rejects_unsupported_version_and_bad_json() {
     let v = build_transparent_value(r#"{"network":"regtest"}"#);
     assert_eq!(v["status"], "error");
     assert_eq!(v["category"], "invalid_request");
+}
+
+fn build_orchard_value(request: &str) -> Value {
+    let req = cptr(request);
+    result_value(zcash_ffi_build_orchard_transaction(req.as_ptr()))
+}
+
+#[test]
+#[cfg(not(feature = "orchard-tx-build"))]
+fn build_orchard_transaction_disabled_in_default_build() {
+    let request = format!(
+        r#"{{"orchard_build_version":1,"network":"regtest","target_height":10,
+                 "orchard_tree":"",
+                 "inputs":[{{"txid":"{txid}","vout":0,"value_zatoshis":100000,"secret_key":"{sk}"}}],
+                 "orchard_output":{{"address":"uregtest1"}}}}"#,
+        txid = "22".repeat(32),
+        sk = BUILD_TEST_SECRET_KEY,
+    );
+    let v = build_orchard_value(&request);
+    assert_eq!(v["status"], "error");
+    assert_eq!(v["category"], "experimental_feature_disabled");
+    assert!(
+        !v.to_string().contains(BUILD_TEST_SECRET_KEY),
+        "disabled build must not echo the supplied secret key"
+    );
+}
+
+#[test]
+#[cfg(not(feature = "orchard-tx-build"))]
+fn build_orchard_transaction_disabled_rejects_null_pointer() {
+    let v = result_value(zcash_ffi_build_orchard_transaction(std::ptr::null()));
+    assert_eq!(v["status"], "error");
+    assert_eq!(v["category"], "null_pointer");
+}
+
+#[cfg(feature = "orchard-tx-build")]
+fn orchard_regtest_unified_address() -> String {
+    orchard_build::test_regtest_unified_address(&hex::decode(TEST_SEED_HEX).unwrap())
+}
+
+#[test]
+#[cfg(feature = "orchard-tx-build")]
+fn build_orchard_transaction_shields_transparent_input_into_orchard() {
+    let to = orchard_regtest_unified_address();
+    let (tree_hex, root_hex) = orchard_build::test_tree_fixture(3);
+    let request = format!(
+        r#"{{"orchard_build_version":1,"network":"regtest","target_height":10,
+                 "orchard_tree":"{tree}",
+                 "rng_seed":"{seed}",
+                 "inputs":[{{"txid":"{txid}","vout":0,"value_zatoshis":100000,"secret_key":"{sk}"}}],
+                 "orchard_output":{{"address":"{to}"}}}}"#,
+        tree = tree_hex,
+        seed = "07".repeat(32),
+        txid = "22".repeat(32),
+        sk = BUILD_TEST_SECRET_KEY,
+        to = to,
+    );
+    let v = build_orchard_value(&request);
+    assert_eq!(v["status"], "ok", "build should succeed: {v}");
+    assert_eq!(v["network"], "regtest");
+    assert_eq!(v["version"], "v5");
+    assert_eq!(v["proof_validity"], "real");
+    assert_eq!(v["fee_rule"], "zip317");
+    assert_eq!(v["rng"], "deterministic");
+
+    assert_eq!(v["orchard_anchor"], root_hex);
+    assert_eq!(v["orchard_anchor_source"], "tree");
+    assert_eq!(v["orchard_anchor_tree_size"], 3);
+
+    // ZIP 317: 1 transparent input + 2 Orchard actions = 3 logical actions at 5000 zatoshis.
+    assert_eq!(v["fee_zatoshis"], 15000);
+    assert_eq!(v["total_input_zatoshis"], 100000);
+    assert_eq!(v["non_orchard_output_zatoshis"], 0);
+    assert_eq!(v["orchard_output_zatoshis"], 85000);
+    assert_eq!(v["transparent"]["vin"], 1);
+    assert_eq!(v["transparent"]["vout"], 0);
+    assert_eq!(v["orchard"]["actions"], 2);
+
+    let tx_hex = v["transaction"].as_str().expect("transaction hex");
+    let net = cptr("regtest");
+    let decoded = result_value(zcash_ffi_decode_transaction(
+        cptr(tx_hex).as_ptr(),
+        net.as_ptr(),
+    ));
+    assert_eq!(decoded["status"], "ok", "v5 decode must succeed: {decoded}");
+    assert_eq!(decoded["version"], "v5");
+    assert_eq!(decoded["txid"], v["txid"]);
+    assert_eq!(
+        decoded["consensus_branch_id"], "nu6.2",
+        "the setup transaction must be signed under the pre-activation branch"
+    );
+    assert_eq!(decoded["orchard"]["present"], true);
+    assert_eq!(decoded["orchard"]["actions"], 2);
+    assert_eq!(decoded["ironwood"]["present"], false);
+    assert_eq!(decoded["sapling"]["present"], false);
+    assert_eq!(decoded["transparent"]["vin"], 1);
+
+    assert!(
+        !v.to_string().contains(BUILD_TEST_SECRET_KEY),
+        "build output must not echo the signing key"
+    );
+}
+
+#[test]
+#[cfg(feature = "orchard-tx-build")]
+fn build_orchard_transaction_requires_a_supplied_anchor() {
+    let to = orchard_regtest_unified_address();
+    let (tree_hex, _) = orchard_build::test_tree_fixture(2);
+    let request_with = |anchor_fields: &str| {
+        format!(
+            r#"{{"orchard_build_version":1,"network":"regtest","target_height":10,
+                     {anchor}
+                     "inputs":[{{"txid":"{txid}","vout":0,"value_zatoshis":100000,"secret_key":"{sk}"}}],
+                     "orchard_output":{{"address":"{to}"}}}}"#,
+            anchor = anchor_fields,
+            txid = "22".repeat(32),
+            sk = BUILD_TEST_SECRET_KEY,
+            to = to,
+        )
+    };
+
+    let v = build_orchard_value(&request_with(""));
+    assert_eq!(v["category"], "missing_orchard_anchor", "{v}");
+
+    let v = build_orchard_value(&request_with(&format!(
+        r#""orchard_tree":"{tree_hex}","orchard_anchor":"{anchor}","#,
+        anchor = "11".repeat(32),
+    )));
+    assert_eq!(v["category"], "conflicting_orchard_anchor", "{v}");
+
+    let v = build_orchard_value(&request_with(r#""orchard_tree":"not hex","#));
+    assert_eq!(v["category"], "invalid_orchard_tree", "{v}");
+
+    let v = build_orchard_value(&request_with(r#""orchard_tree":"abcdef","#));
+    assert_eq!(v["category"], "invalid_orchard_tree", "{v}");
+
+    let v = build_orchard_value(&request_with(&format!(
+        r#""orchard_anchor":"{anchor}","#,
+        anchor = "ff".repeat(32),
+    )));
+    assert_eq!(v["category"], "invalid_orchard_anchor", "{v}");
+
+    let v = build_orchard_value(&request_with(r#""orchard_anchor":"0011","#));
+    assert_eq!(v["category"], "invalid_orchard_anchor", "{v}");
+}
+
+#[test]
+#[cfg(feature = "orchard-tx-build")]
+fn build_orchard_transaction_accepts_a_declared_empty_tree() {
+    let to = orchard_regtest_unified_address();
+    let request = format!(
+        r#"{{"orchard_build_version":1,"network":"regtest","target_height":10,
+                 "orchard_tree":"","rng_seed":"{seed}",
+                 "inputs":[{{"txid":"{txid}","vout":0,"value_zatoshis":100000,"secret_key":"{sk}"}}],
+                 "orchard_output":{{"address":"{to}"}}}}"#,
+        seed = "08".repeat(32),
+        txid = "22".repeat(32),
+        sk = BUILD_TEST_SECRET_KEY,
+        to = to,
+    );
+    let v = build_orchard_value(&request);
+    assert_eq!(v["status"], "ok", "{v}");
+    assert_eq!(v["orchard_anchor_source"], "tree");
+    assert_eq!(v["orchard_anchor_tree_size"], 0);
+    assert_eq!(v["orchard"]["actions"], 2);
+}
+
+#[test]
+#[cfg(feature = "orchard-tx-build")]
+fn build_orchard_transaction_refuses_heights_outside_the_pre_activation_window() {
+    let request_at = |network: &str, height: u64| {
+        format!(
+            r#"{{"orchard_build_version":1,"network":"{network}","target_height":{height},
+                     "orchard_tree":"",
+                     "inputs":[{{"txid":"{txid}","vout":0,"value_zatoshis":100000,"secret_key":"{sk}"}}],
+                     "orchard_output":{{"address":"{to}"}}}}"#,
+            network = network,
+            height = height,
+            txid = "22".repeat(32),
+            sk = BUILD_TEST_SECRET_KEY,
+            to = "u1placeholder",
+        )
+    };
+
+    // Mainnet NU6.2 (3,364,600) and NU6.3 (3,428,143) heights from zcash_protocol.
+    let v = build_orchard_value(&request_at("main", 3_428_143));
+    assert_eq!(v["category"], "orchard_pool_closed", "{v}");
+    let v = build_orchard_value(&request_at("main", 4_000_000));
+    assert_eq!(v["category"], "orchard_pool_closed", "{v}");
+
+    let v = build_orchard_value(&request_at("main", 3_364_599));
+    assert_eq!(v["category"], "orchard_circuit_pre_nu6_2", "{v}");
+    let v = build_orchard_value(&request_at("main", 1_000_000));
+    assert_eq!(v["category"], "orchard_circuit_pre_nu6_2", "{v}");
+
+    let v = build_orchard_value(&request_at("main", 3_400_000));
+    assert_eq!(
+        v["category"], "invalid_output_address",
+        "a height inside the window must get past the height checks: {v}"
+    );
+}
+
+#[test]
+#[cfg(feature = "orchard-tx-build")]
+fn build_orchard_transaction_pays_transparent_change_with_a_fixed_fee() {
+    let to = orchard_regtest_unified_address();
+    let change = orchard_build::test_regtest_transparent_address();
+    let (tree_hex, _) = orchard_build::test_tree_fixture(1);
+    let request = format!(
+        r#"{{"orchard_build_version":1,"network":"regtest","target_height":10,
+                 "orchard_tree":"{tree}","fee_zatoshis":12000,"rng_seed":"{seed}",
+                 "inputs":[{{"txid":"{txid}","vout":0,"value_zatoshis":100000,"secret_key":"{sk}"}}],
+                 "outputs":[{{"address":"{change}","value_zatoshis":30000}}],
+                 "orchard_output":{{"address":"{to}","value_zatoshis":58000}}}}"#,
+        tree = tree_hex,
+        seed = "09".repeat(32),
+        txid = "22".repeat(32),
+        sk = BUILD_TEST_SECRET_KEY,
+        change = change,
+        to = to,
+    );
+    let v = build_orchard_value(&request);
+    assert_eq!(v["status"], "ok", "{v}");
+    assert_eq!(v["fee_rule"], "fixed");
+    assert_eq!(v["fee_zatoshis"], 12000);
+    assert_eq!(v["transparent"]["vout"], 1);
+    assert_eq!(v["non_orchard_output_zatoshis"], 30000);
+    assert_eq!(v["orchard_output_zatoshis"], 58000);
+    assert_eq!(v["orchard"]["actions"], 2);
+}
+
+#[test]
+#[cfg(feature = "orchard-tx-build")]
+fn build_orchard_transaction_rejects_recipients_that_cannot_receive_orchard() {
+    let transparent = orchard_build::test_regtest_transparent_address();
+    let request_to = |address: &str| {
+        format!(
+            r#"{{"orchard_build_version":1,"network":"regtest","target_height":10,
+                     "orchard_tree":"",
+                     "inputs":[{{"txid":"{txid}","vout":0,"value_zatoshis":100000,"secret_key":"{sk}"}}],
+                     "orchard_output":{{"address":"{to}"}}}}"#,
+            txid = "22".repeat(32),
+            sk = BUILD_TEST_SECRET_KEY,
+            to = address,
+        )
+    };
+
+    let v = build_orchard_value(&request_to(&transparent));
+    assert_eq!(v["category"], "unsupported_orchard_recipient", "{v}");
+
+    let v = build_orchard_value(&request_to("not an address"));
+    assert_eq!(v["category"], "invalid_output_address", "{v}");
+
+    let to = orchard_regtest_unified_address();
+    let request = format!(
+        r#"{{"orchard_build_version":1,"network":"regtest","target_height":10,
+                 "orchard_tree":"",
+                 "inputs":[{{"txid":"{txid}","vout":0,"value_zatoshis":100000,"secret_key":"{sk}"}}],
+                 "outputs":[{{"address":"{to}","value_zatoshis":1000}}],
+                 "orchard_output":{{"address":"{to}"}}}}"#,
+        txid = "22".repeat(32),
+        sk = BUILD_TEST_SECRET_KEY,
+        to = to,
+    );
+    let v = build_orchard_value(&request);
+    assert_eq!(v["category"], "unsupported_shielded_output", "{v}");
+}
+
+#[test]
+#[cfg(feature = "orchard-tx-build")]
+fn build_orchard_transaction_rejects_malformed_requests_without_echo() {
+    let to = orchard_regtest_unified_address();
+    let cases: &[(&str, &str)] = &[
+        (
+            r#"{"orchard_build_version":2,"network":"regtest","target_height":10}"#,
+            "unsupported_orchard_build_version",
+        ),
+        (
+            r#"{"orchard_build_version":1,"network":"simnet","target_height":10}"#,
+            "unsupported_network",
+        ),
+        (
+            r#"{"orchard_build_version":1,"network":"regtest","target_height":0}"#,
+            "invalid_height",
+        ),
+        ("[]", "invalid_request"),
+    ];
+    for (request, category) in cases {
+        let v = build_orchard_value(request);
+        assert_eq!(v["category"], *category, "request {request} -> {v}");
+    }
+
+    let request = format!(
+        r#"{{"orchard_build_version":1,"network":"regtest","target_height":10,
+                 "orchard_tree":"",
+                 "inputs":[{{"txid":"{txid}","vout":0,"value_zatoshis":100000,"secret_key":"{sk}"}}],
+                 "orchard_output":{{"address":"{to}"}}}}"#,
+        txid = "22".repeat(32),
+        sk = "00".repeat(32),
+        to = to,
+    );
+    let v = build_orchard_value(&request);
+    assert_eq!(v["category"], "invalid_secret_key", "{v}");
+    assert!(!v.to_string().contains(&"00".repeat(32)));
+
+    let v = result_value(zcash_ffi_build_orchard_transaction(cptr("{").as_ptr()));
+    assert_eq!(v["category"], "invalid_json", "{v}");
+}
+
+#[test]
+#[cfg(feature = "orchard-tx-build")]
+fn build_orchard_transaction_is_deterministic_only_with_a_supplied_seed() {
+    let to = orchard_regtest_unified_address();
+    let request = |seed_field: &str| {
+        format!(
+            r#"{{"orchard_build_version":1,"network":"regtest","target_height":10,
+                     "orchard_tree":"",{seed}
+                     "inputs":[{{"txid":"{txid}","vout":0,"value_zatoshis":100000,"secret_key":"{sk}"}}],
+                     "orchard_output":{{"address":"{to}"}}}}"#,
+            seed = seed_field,
+            txid = "22".repeat(32),
+            sk = BUILD_TEST_SECRET_KEY,
+            to = to,
+        )
+    };
+    let seeded = format!(r#""rng_seed":"{}","#, "0a".repeat(32));
+
+    let first = build_orchard_value(&request(&seeded));
+    let second = build_orchard_value(&request(&seeded));
+    assert_eq!(first["status"], "ok", "{first}");
+    assert_eq!(first["transaction"], second["transaction"]);
+    assert_eq!(first["rng"], "deterministic");
+
+    let os_first = build_orchard_value(&request(""));
+    let os_second = build_orchard_value(&request(""));
+    assert_eq!(os_first["status"], "ok", "{os_first}");
+    assert_eq!(os_first["rng"], "os");
+    assert_ne!(
+        os_first["transaction"], os_second["transaction"],
+        "the OS RNG must not produce identical transactions"
+    );
+}
+
+#[test]
+#[cfg(feature = "orchard-tx-build")]
+fn the_build_test_key_owns_the_live_proof_miner_address() {
+    // The Dart live harness mines to this address.
+    assert_eq!(
+        orchard_build::test_regtest_transparent_address(),
+        "tmYjAZFpvdDXTaJrq2WikAntitBNJJo9VSo"
+    );
+}
+
+/// The Dart live harness uses this UA.
+#[test]
+#[cfg(feature = "orchard-tx-build")]
+fn the_test_seed_owns_the_live_proof_unified_address() {
+    assert_eq!(
+            orchard_build::test_regtest_unified_address(
+                &hex::decode(TEST_SEED_HEX).unwrap()
+            ),
+            "uregtest1t5ljufrslrjkts4ku72pj7cer8qtck0yzv58jna7pg7ygjm2taexqnvcl8eg28ac6verjfdnsx3p028x2pykav0q2vvp0hu3nk3z72vh2adxjgvp34y47zc2efx98pqvqsp9k30j7cq9vwx09g9ukzfqxzzcm6sm5qt7l0md4t66uj4fxntqk7mlgy4az57rkk6xwu0ag53g5j2h9rz"
+        );
+}
+
+#[test]
+#[cfg(feature = "orchard-tx-build")]
+fn build_orchard_transaction_honours_a_staged_regtest_activation_height() {
+    let to = orchard_regtest_unified_address();
+    let request_at = |height: u64, activation: &str| {
+        format!(
+            r#"{{"orchard_build_version":1,"network":"regtest","target_height":{height},
+                     "orchard_tree":"","rng_seed":"{seed}",{activation}
+                     "inputs":[{{"txid":"{txid}","vout":0,"value_zatoshis":100000,"secret_key":"{sk}"}}],
+                     "orchard_output":{{"address":"{to}"}}}}"#,
+            height = height,
+            activation = activation,
+            seed = "0b".repeat(32),
+            txid = "22".repeat(32),
+            sk = BUILD_TEST_SECRET_KEY,
+            to = to,
+        )
+    };
+
+    let v = build_orchard_value(&request_at(50, r#""regtest_nu63_activation_height":100,"#));
+    assert_eq!(v["status"], "ok", "{v}");
+    assert_eq!(v["consensus_branch_id"], "nu6.2");
+    assert_eq!(v["version"], "v5");
+
+    let v = build_orchard_value(&request_at(100, r#""regtest_nu63_activation_height":100,"#));
+    assert_eq!(v["category"], "orchard_pool_closed", "{v}");
+    let v = build_orchard_value(&request_at(101, r#""regtest_nu63_activation_height":100,"#));
+    assert_eq!(v["category"], "orchard_pool_closed", "{v}");
+
+    let v = build_orchard_value(&request_at(101, ""));
+    assert_eq!(v["status"], "ok", "{v}");
+    assert_eq!(v["consensus_branch_id"], "nu6.2");
+
+    let main = format!(
+        r#"{{"orchard_build_version":1,"network":"main","target_height":3400000,
+                 "orchard_tree":"","regtest_nu63_activation_height":100,
+                 "inputs":[{{"txid":"{txid}","vout":0,"value_zatoshis":100000,"secret_key":"{sk}"}}],
+                 "orchard_output":{{"address":"u1x"}}}}"#,
+        txid = "22".repeat(32),
+        sk = BUILD_TEST_SECRET_KEY,
+    );
+    let v = build_orchard_value(&main);
+    assert_eq!(v["category"], "unsupported_activation_override", "{v}");
 }
 
 fn build_sapling_value(request: &str) -> Value {
