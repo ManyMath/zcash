@@ -24,4 +24,7 @@ export 'src/models/proposal.dart';
 export 'src/models/transparent_build.dart';
 export 'src/models/sapling_build.dart';
 export 'src/models/orchard_build.dart';
+export 'src/models/zip318_migration.dart';
+export 'src/models/zip318_transfer_plan.dart';
+export 'src/models/zip318_anchor_acquisition.dart';
 export 'src/zip321.dart';
