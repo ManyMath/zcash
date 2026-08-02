@@ -9,6 +9,11 @@ import 'package:ffi/ffi.dart';
 external int _zcashFfiAddressType(Pointer<Utf8> p0);
 
 @Native<Pointer<Utf8> Function(Pointer<Utf8>)>(
+  symbol: 'zcash_ffi_build_ironwood_transaction',
+)
+external Pointer<Utf8> _zcashFfiBuildIronwoodTransaction(Pointer<Utf8> p0);
+
+@Native<Pointer<Utf8> Function(Pointer<Utf8>)>(
   symbol: 'zcash_ffi_build_orchard_transaction',
 )
 external Pointer<Utf8> _zcashFfiBuildOrchardTransaction(Pointer<Utf8> p0);
@@ -187,6 +192,10 @@ final Map<String, Pointer<Void> Function()> _addresses = {
   'zcash_ffi_address_type': () =>
       Native.addressOf<NativeFunction<Int32 Function(Pointer<Utf8>)>>(
         _zcashFfiAddressType,
+      ).cast(),
+  'zcash_ffi_build_ironwood_transaction': () =>
+      Native.addressOf<NativeFunction<Pointer<Utf8> Function(Pointer<Utf8>)>>(
+        _zcashFfiBuildIronwoodTransaction,
       ).cast(),
   'zcash_ffi_build_orchard_transaction': () =>
       Native.addressOf<NativeFunction<Pointer<Utf8> Function(Pointer<Utf8>)>>(

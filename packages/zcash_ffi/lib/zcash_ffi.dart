@@ -4,6 +4,7 @@ export 'package:zcash/zcash.dart';
 
 export 'src/ffi/address_utils.dart';
 export 'src/ffi/consensus_utils.dart';
+export 'src/ffi/ironwood_build_request.dart';
 export 'src/ffi/mnemonic.dart';
 export 'src/ffi/orchard_build_request.dart';
 export 'src/ffi/mining_utils.dart';

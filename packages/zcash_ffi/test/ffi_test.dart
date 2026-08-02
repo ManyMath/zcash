@@ -725,6 +725,662 @@ void main() {
     },
   );
 
+  group(
+    'FFI Ironwood transaction build (experimental gate)',
+    skip: _libAvailable ? false : 'ZCASH_FFI_LIB not set',
+    () {
+      const secretKey =
+          '1111111111111111111111111111111111111111111111111111111111111111';
+      final inputs = [
+        TransparentBuildInput(
+          txid: '22' * 32,
+          vout: 0,
+          valueZatoshis: 100000,
+          secretKeyHex: secretKey,
+        ),
+      ];
+      const ironwoodOutput = IronwoodBuildOutput(
+        address: 'utest1notarealaddress',
+      );
+      const anchor = IronwoodAnchorSource.tree('');
+
+      test('throws without explicit experimental opt-in', () {
+        expect(
+          () => buildNativeIronwoodTransaction(
+            network: ZcashNetwork.testnet,
+            targetHeight: 4134000,
+            anchor: anchor,
+            inputs: inputs,
+            ironwoodOutput: ironwoodOutput,
+          ),
+          throwsA(
+            isA<StateError>().having(
+              (error) => error.message,
+              'message',
+              contains('experimental'),
+            ),
+          ),
+        );
+      });
+
+      test(
+        'default build reports feature disabled without echoing the key',
+        () {
+          expect(
+            () => buildNativeIronwoodTransaction(
+              network: ZcashNetwork.testnet,
+              targetHeight: 4134000,
+              anchor: anchor,
+              inputs: inputs,
+              ironwoodOutput: ironwoodOutput,
+              allowExperimentalIronwoodBuild: true,
+            ),
+            throwsA(
+              isA<StateError>().having(
+                (error) => error.message,
+                'message',
+                allOf(
+                  contains('experimental_feature_disabled'),
+                  isNot(contains(secretKey)),
+                ),
+              ),
+            ),
+          );
+        },
+      );
+
+      test('the fee quote is gated exactly as the build is', () {
+        expect(
+          () => quoteNativeIronwoodFee(
+            network: ZcashNetwork.testnet,
+            targetHeight: 4134000,
+            anchor: anchor,
+            inputs: inputs,
+            ironwoodOutput: ironwoodOutput,
+          ),
+          throwsA(
+            isA<StateError>().having(
+              (error) => error.message,
+              'message',
+              contains('experimental'),
+            ),
+          ),
+        );
+        expect(
+          () => quoteNativeIronwoodFee(
+            network: ZcashNetwork.testnet,
+            targetHeight: 4134000,
+            anchor: anchor,
+            inputs: inputs,
+            ironwoodOutput: ironwoodOutput,
+            allowExperimentalIronwoodBuild: true,
+          ),
+          throwsA(
+            isA<StateError>().having(
+              (error) => error.message,
+              'message',
+              allOf(
+                contains('experimental_feature_disabled'),
+                isNot(contains(secretKey)),
+              ),
+            ),
+          ),
+        );
+      });
+    },
+  );
+
+  group('Orchard build request shape (pre-NU6.3 setup path, no FFI)', () {
+    final inputs = [
+      TransparentBuildInput(
+        txid: '22' * 32,
+        vout: 0,
+        valueZatoshis: 100000,
+        secretKeyHex: '11' * 32,
+      ),
+    ];
+
+    Map<String, Object?> decode(String json) =>
+        (jsonDecode(json) as Map).cast<String, Object?>();
+
+    test('emits a versioned envelope with the tree as the anchor source', () {
+      final request = decode(
+        encodeOrchardBuildRequest(
+          network: 'regtest',
+          targetHeight: 10,
+          anchor: const OrchardAnchorSource.tree(''),
+          inputs: inputs,
+          orchardOutput: const OrchardBuildOutput(address: 'uregtest1x'),
+        ),
+      );
+      expect(request['orchard_build_version'], orchardBuildRequestVersion);
+      expect(request['network'], 'regtest');
+      expect(request['target_height'], 10);
+      expect(request['orchard_tree'], '');
+      expect(request.containsKey('orchard_anchor'), isFalse);
+      expect(request.containsKey('fee_zatoshis'), isFalse);
+      expect(request.containsKey('rng_seed'), isFalse);
+      expect(request['orchard_output'], {'address': 'uregtest1x'});
+      expect(request['outputs'], isEmpty);
+    });
+
+    test('emits a directly supplied anchor instead of a tree', () {
+      final request = decode(
+        encodeOrchardBuildRequest(
+          network: 'main',
+          targetHeight: 3400000,
+          anchor: OrchardAnchorSource.anchor('cd' * 32),
+          inputs: inputs,
+          orchardOutput: const OrchardBuildOutput(address: 'u1x'),
+        ),
+      );
+      expect(request['orchard_anchor'], 'cd' * 32);
+      expect(request.containsKey('orchard_tree'), isFalse);
+    });
+
+    test('carries transparent change, an explicit value, fee, and expiry', () {
+      final request = decode(
+        encodeOrchardBuildRequest(
+          network: 'regtest',
+          targetHeight: 10,
+          anchor: const OrchardAnchorSource.tree('abcd'),
+          inputs: inputs,
+          outputs: const [
+            TransparentBuildOutput(address: 'tmchange', valueZatoshis: 30000),
+          ],
+          expiryHeight: 60,
+          feeZatoshis: 12000,
+          rngSeedHex: '0a' * 32,
+          orchardOutput: OrchardBuildOutput(
+            address: 'uregtest1x',
+            valueZatoshis: 58000,
+            memoHex: 'aabb',
+            outgoingViewingKeyHex: '33' * 32,
+          ),
+        ),
+      );
+      expect(request['expiry_height'], 60);
+      expect(request['fee_zatoshis'], 12000);
+      expect(request['rng_seed'], '0a' * 32);
+      expect(request['outputs'], [
+        {'address': 'tmchange', 'value_zatoshis': 30000},
+      ]);
+      expect(request['orchard_output'], {
+        'address': 'uregtest1x',
+        'value_zatoshis': 58000,
+        'memo': 'aabb',
+        'outgoing_viewing_key': '33' * 32,
+      });
+    });
+
+    test('carries a staged regtest activation height when one is declared', () {
+      // ZIP 258 closes the pool at NU6.3; on regtest only the caller knows H.
+      final request = decode(
+        encodeOrchardBuildRequest(
+          network: 'regtest',
+          targetHeight: 50,
+          anchor: const OrchardAnchorSource.tree(''),
+          inputs: inputs,
+          regtestNu63ActivationHeight: 100,
+          orchardOutput: const OrchardBuildOutput(address: 'uregtest1x'),
+        ),
+      );
+      expect(request['regtest_nu63_activation_height'], 100);
+
+      final without = decode(
+        encodeOrchardBuildRequest(
+          network: 'regtest',
+          targetHeight: 50,
+          anchor: const OrchardAnchorSource.tree(''),
+          inputs: inputs,
+          orchardOutput: const OrchardBuildOutput(address: 'uregtest1x'),
+        ),
+      );
+      expect(without.containsKey('regtest_nu63_activation_height'), isFalse);
+    });
+
+    test('the native-backed wrappers refuse without an explicit opt-in', () {
+      expect(
+        () => zcashNativeBuildOrchardTransaction(
+          network: 'regtest',
+          targetHeight: 10,
+          anchor: const OrchardAnchorSource.tree(''),
+          inputs: inputs,
+          orchardOutput: const OrchardBuildOutput(address: 'uregtest1x'),
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            allOf(
+              contains('allowExperimentalOrchardBuild'),
+              contains('orchard-tx-build'),
+              isNot(contains('11' * 32)),
+            ),
+          ),
+        ),
+      );
+    });
+  });
+
+  group('Ironwood build request shape (no FFI)', () {
+    final inputs = [
+      TransparentBuildInput(
+        txid: '22' * 32,
+        vout: 0,
+        valueZatoshis: 100000,
+        secretKeyHex: '11' * 32,
+      ),
+    ];
+
+    Map<String, Object?> decode(String json) =>
+        (jsonDecode(json) as Map).cast<String, Object?>();
+
+    test('emits a versioned envelope with the tree as the anchor source', () {
+      final request = decode(
+        encodeIronwoodBuildRequest(
+          network: 'regtest',
+          targetHeight: 10,
+          anchor: const IronwoodAnchorSource.tree('abcd'),
+          inputs: inputs,
+          ironwoodOutput: const IronwoodBuildOutput(address: 'uregtest1x'),
+        ),
+      );
+      expect(request['ironwood_build_version'], ironwoodBuildRequestVersion);
+      expect(request['network'], 'regtest');
+      expect(request['target_height'], 10);
+      expect(request['ironwood_tree'], 'abcd');
+      expect(request.containsKey('ironwood_anchor'), isFalse);
+      expect(request.containsKey('fee_zatoshis'), isFalse);
+      expect(request.containsKey('rng_seed'), isFalse);
+      expect(request['ironwood_output'], {'address': 'uregtest1x'});
+      expect(request['outputs'], isEmpty);
+    });
+
+    test('carries a staged regtest activation height when one is declared', () {
+      final request = decode(
+        encodeIronwoodBuildRequest(
+          network: 'regtest',
+          targetHeight: 120,
+          anchor: const IronwoodAnchorSource.tree(''),
+          inputs: inputs,
+          regtestNu63ActivationHeight: 100,
+          ironwoodOutput: const IronwoodBuildOutput(address: 'uregtest1x'),
+        ),
+      );
+      expect(request['regtest_nu63_activation_height'], 100);
+    });
+
+    test('emits a directly supplied anchor instead of a tree', () {
+      final request = decode(
+        encodeIronwoodBuildRequest(
+          network: 'main',
+          targetHeight: 3428143,
+          anchor: IronwoodAnchorSource.anchor('cd' * 32),
+          inputs: inputs,
+          ironwoodOutput: const IronwoodBuildOutput(address: 'u1x'),
+        ),
+      );
+      expect(request['ironwood_anchor'], 'cd' * 32);
+      expect(request.containsKey('ironwood_tree'), isFalse);
+    });
+
+    test('emits Sapling spends with the seed and MPC parameter paths', () {
+      final request = decode(
+        encodeIronwoodBuildRequest(
+          network: 'regtest',
+          targetHeight: 10,
+          anchor: const IronwoodAnchorSource.tree(''),
+          inputs: const [],
+          saplingSpends: [
+            IronwoodBuildSpendNote(
+              valueZatoshis: 100000,
+              recipientAddress: 'zregtest1note',
+              rseedHex: '2a' * 32,
+              witnessHex: 'aabbcc',
+              anchorHex: '55' * 32,
+            ),
+          ],
+          seedHex: '00' * 32,
+          account: 3,
+          spendParamsPath: '/params/sapling-spend.params',
+          outputParamsPath: '/params/sapling-output.params',
+          ironwoodOutput: const IronwoodBuildOutput(address: 'uregtest1x'),
+        ),
+      );
+      expect(request['inputs'], isEmpty);
+      expect(request['sapling_spends'], [
+        {
+          'value_zatoshis': 100000,
+          'recipient': 'zregtest1note',
+          'rseed': '2a' * 32,
+          'witness': 'aabbcc',
+          'anchor': '55' * 32,
+        },
+      ]);
+      expect(request['seed'], '00' * 32);
+      expect(request['account'], 3);
+      expect(request['spend_params_path'], '/params/sapling-spend.params');
+      expect(request['output_params_path'], '/params/sapling-output.params');
+    });
+
+    test('omits Sapling fields entirely for a transparent-only build', () {
+      final request = decode(
+        encodeIronwoodBuildRequest(
+          network: 'regtest',
+          targetHeight: 10,
+          anchor: const IronwoodAnchorSource.tree(''),
+          inputs: inputs,
+          ironwoodOutput: const IronwoodBuildOutput(address: 'uregtest1x'),
+        ),
+      );
+      expect(request.containsKey('sapling_spends'), isFalse);
+      expect(request.containsKey('seed'), isFalse);
+      expect(request.containsKey('account'), isFalse);
+      expect(request.containsKey('spend_params_path'), isFalse);
+    });
+
+    test('emits value, memo, viewing key, fee, seed, and change outputs', () {
+      final request = decode(
+        encodeIronwoodBuildRequest(
+          network: 'regtest',
+          targetHeight: 10,
+          anchor: const IronwoodAnchorSource.tree(''),
+          inputs: inputs,
+          ironwoodOutput: IronwoodBuildOutput(
+            address: 'uregtest1x',
+            valueZatoshis: 58000,
+            memoHex: 'aabb',
+            outgoingViewingKeyHex: '33' * 32,
+          ),
+          outputs: const [
+            TransparentBuildOutput(address: 'tmChange', valueZatoshis: 30000),
+          ],
+          feeZatoshis: 12000,
+          rngSeedHex: '44' * 32,
+        ),
+      );
+      expect(request['ironwood_tree'], '');
+      expect(request['fee_zatoshis'], 12000);
+      expect(request['rng_seed'], '44' * 32);
+      expect(request['ironwood_output'], {
+        'address': 'uregtest1x',
+        'value_zatoshis': 58000,
+        'memo': 'aabb',
+        'outgoing_viewing_key': '33' * 32,
+      });
+      expect(request['outputs'], [
+        {'address': 'tmChange', 'value_zatoshis': 30000},
+      ]);
+    });
+
+    test('emits an Orchard spend with rho and the note version', () {
+      final request = decode(
+        encodeIronwoodBuildRequest(
+          network: 'regtest',
+          targetHeight: 10,
+          anchor: const IronwoodAnchorSource.tree(''),
+          inputs: const [],
+          orchardSpends: [
+            IronwoodBuildOrchardSpendNote(
+              valueZatoshis: 1000000,
+              recipientAddress: 'uregtest1note',
+              rseedHex: '2a' * 32,
+              rhoHex: '3b' * 32,
+              witnessHex: 'aabbcc',
+              anchorHex: '55' * 32,
+            ),
+          ],
+          orchardChangeZatoshis: 300000,
+          expiryHeight: 69120,
+          seedHex: '00' * 32,
+          ironwoodOutput: const IronwoodBuildOutput(address: 'uregtest1x'),
+        ),
+      );
+      expect(request['orchard_spends'], [
+        {
+          'value_zatoshis': 1000000,
+          'recipient': 'uregtest1note',
+          'rseed': '2a' * 32,
+          'rho': '3b' * 32,
+          'note_version': 'v2',
+          'witness': 'aabbcc',
+          'anchor': '55' * 32,
+        },
+      ]);
+      expect(request['orchard_change_zatoshis'], 300000);
+      expect(request['expiry_height'], 69120);
+      expect(request.containsKey('spend_params_path'), isFalse);
+      expect(request.containsKey('sapling_spends'), isFalse);
+    });
+
+    test('omits Orchard fields entirely for a non-migration build', () {
+      final request = decode(
+        encodeIronwoodBuildRequest(
+          network: 'regtest',
+          targetHeight: 10,
+          anchor: const IronwoodAnchorSource.tree(''),
+          inputs: inputs,
+          ironwoodOutput: const IronwoodBuildOutput(address: 'uregtest1x'),
+        ),
+      );
+      expect(request.containsKey('orchard_spends'), isFalse);
+      expect(request.containsKey('orchard_change_zatoshis'), isFalse);
+      expect(request.containsKey('ironwood_spends'), isFalse);
+      expect(request.containsKey('ironwood_change_zatoshis'), isFalse);
+      expect(request.containsKey('expiry_height'), isFalse);
+    });
+
+    test('emits an Ironwood spend with change and no ZIP 318 fields', () {
+      final request = decode(
+        encodeIronwoodBuildRequest(
+          network: 'regtest',
+          targetHeight: 10,
+          anchor: IronwoodAnchorSource.anchor('55' * 32),
+          inputs: const [],
+          ironwoodSpends: [
+            IronwoodBuildIronwoodSpendNote(
+              valueZatoshis: 1000000,
+              recipientAddress: 'uregtest1note',
+              rseedHex: '2a' * 32,
+              rhoHex: '3b' * 32,
+              witnessHex: 'aabbcc',
+              anchorHex: '55' * 32,
+            ),
+          ],
+          ironwoodChangeZatoshis: 250000,
+          seedHex: '00' * 32,
+          ironwoodOutput: const IronwoodBuildOutput(address: 'uregtest1x'),
+        ),
+      );
+      expect(request['ironwood_spends'], [
+        {
+          'value_zatoshis': 1000000,
+          'recipient': 'uregtest1note',
+          'rseed': '2a' * 32,
+          'rho': '3b' * 32,
+          'note_version': 'v3',
+          'witness': 'aabbcc',
+          'anchor': '55' * 32,
+        },
+      ]);
+      expect(request['ironwood_change_zatoshis'], 250000);
+      expect(request['ironwood_anchor'], '55' * 32);
+      expect(request.containsKey('orchard_spends'), isFalse);
+      expect(request.containsKey('expiry_height'), isFalse);
+    });
+
+    test('builds an Ironwood spend entry from a scanned note', () {
+      final note = ZcashScannedNote.fromJson({
+        'height': 3428400,
+        'tx': 'aa' * 32,
+        'output': 0,
+        'value': 900000,
+        'pool': 'ironwood',
+        'recipient': 'uregtest1note',
+        'rseed': '2a' * 32,
+        'rho': '3b' * 32,
+        'note_version': 'v3',
+        'witness': 'aabbcc',
+      }, allowExperimentalOrchardNotes: true);
+
+      final spend = IronwoodBuildIronwoodSpendNote.fromScannedNote(
+        note,
+        anchorHex: '77' * 32,
+      );
+      expect(spend.valueZatoshis, 900000);
+      expect(spend.rhoHex, '3b' * 32);
+      expect(spend.noteVersion, 'v3');
+      expect(spend.anchorHex, '77' * 32);
+
+      final orchardNote = ZcashScannedNote.fromJson({
+        'height': 3428400,
+        'tx': 'aa' * 32,
+        'output': 0,
+        'value': 900000,
+        'pool': 'orchard',
+        'recipient': 'uregtest1note',
+        'rseed': '2a' * 32,
+        'rho': '3b' * 32,
+        'note_version': 'v2',
+        'witness': 'aabbcc',
+      }, allowExperimentalOrchardNotes: true);
+      expect(
+        () => IronwoodBuildIronwoodSpendNote.fromScannedNote(
+          orchardNote,
+          anchorHex: '77' * 32,
+        ),
+        throwsA(isA<ArgumentError>()),
+      );
+    });
+  });
+
+  group('ZIP 318 schedule -> builder wiring', () {
+    Map<String, Object?> decode(String json) =>
+        (jsonDecode(json) as Map).cast<String, Object?>();
+
+    ZcashScannedNote scannedOrchardNote(int value) =>
+        ZcashScannedNote.fromJson({
+          'height': 3428400,
+          'tx': 'aa' * 32,
+          'output': 0,
+          'value': value,
+          'pool': 'orchard',
+          'recipient': 'uregtest1note',
+          'rseed': '2a' * 32,
+          'rho': '3b' * 32,
+          'note_version': 'v2',
+          'witness': 'aabbcc',
+        }, allowExperimentalOrchardNotes: true);
+
+    const denomination = 10000000;
+    const fee = 15000;
+    final scheduled = Zip318ScheduledTransfer(
+      denominationZatoshis: denomination,
+      feeZatoshis: fee,
+      broadcastHeight: 3428600,
+      anchorHeight: 3428496,
+      expiryHeight: Zip318Schedule.canonicalExpiryHeight(3428600),
+    );
+
+    Zip318TransferPlan planFor(int noteValue) => Zip318TransferPlan.forTransfer(
+      transfer: scheduled,
+      funding: Zip318FundingSelection.select(
+        transfer: scheduled,
+        notes: [scannedOrchardNote(noteValue)],
+      ),
+      orchardAnchorHex: 'cd' * 32,
+      ironwoodAnchorHex: 'ef' * 32,
+      recipientAddress: 'uregtest1self',
+    );
+
+    test('takes every canonical field from the plan', () {
+      final request = decode(
+        encodeZip318MigrationRequest(
+          network: 'main',
+          plan: planFor(denomination + fee),
+          seedHex: '00' * 32,
+        ),
+      );
+      expect(request['target_height'], 3428600);
+      expect(
+        request['expiry_height'],
+        Zip318Schedule.canonicalExpiryHeight(3428600),
+      );
+      expect(request['ironwood_anchor'], 'ef' * 32);
+      expect(request['inputs'], isEmpty);
+      expect(request['outputs'], isEmpty);
+      expect(request.containsKey('sapling_spends'), isFalse);
+      expect(request.containsKey('orchard_change_zatoshis'), isFalse);
+      expect(
+        (request['orchard_spends'] as List).single,
+        containsPair('rho', '3b' * 32),
+      );
+      expect(
+        (request['orchard_spends'] as List).single,
+        containsPair('anchor', 'cd' * 32),
+      );
+      expect(request['ironwood_output'], {
+        'address': 'uregtest1self',
+        'value_zatoshis': denomination,
+      });
+    });
+
+    test('states the denomination explicitly when change is present', () {
+      final request = decode(
+        encodeZip318MigrationRequest(
+          network: 'main',
+          plan: planFor(denomination + fee + 4200),
+          seedHex: '00' * 32,
+        ),
+      );
+      expect(request['orchard_change_zatoshis'], 4200);
+      expect(
+        (request['ironwood_output'] as Map)['value_zatoshis'],
+        denomination,
+      );
+    });
+
+    test('refuses a scanned note that cannot be rebuilt', () {
+      final bare = ZcashScannedNote.fromJson({
+        'height': 3428400,
+        'tx': 'bb' * 32,
+        'output': 0,
+        'value': denomination + fee,
+        'pool': 'orchard',
+      }, allowExperimentalOrchardNotes: true);
+      expect(
+        () => IronwoodBuildOrchardSpendNote.fromScannedNote(
+          bare,
+          anchorHex: 'cd' * 32,
+        ),
+        throwsA(isA<ArgumentError>()),
+      );
+    });
+
+    test('refuses an Ironwood note as a migration source', () {
+      final ironwood = ZcashScannedNote.fromJson({
+        'height': 3428400,
+        'tx': 'cc' * 32,
+        'output': 0,
+        'value': denomination + fee,
+        'pool': 'ironwood',
+        'recipient': 'uregtest1note',
+        'rseed': '2a' * 32,
+        'rho': '3b' * 32,
+        'note_version': 'v3',
+        'witness': 'aabbcc',
+      }, allowExperimentalOrchardNotes: true);
+      expect(
+        () => IronwoodBuildOrchardSpendNote.fromScannedNote(
+          ironwood,
+          anchorHex: 'cd' * 32,
+        ),
+        throwsA(isA<ArgumentError>()),
+      );
+    });
+  });
+
   group('Sapling build request shape (no FFI)', () {
     final rseedHex = '2a' * 32;
     final anchorHex = '11' * 32;

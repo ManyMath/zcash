@@ -2960,6 +2960,39 @@ pub extern "C" fn zcash_ffi_build_orchard_transaction(request_ptr: *const c_char
     }
 }
 
+#[no_mangle]
+pub extern "C" fn zcash_ffi_build_ironwood_transaction(request_ptr: *const c_char) -> *mut c_char {
+    let request = match c_str_to_str(request_ptr) {
+        Ok(s) => s,
+        Err(FfiStringError::Null) => return json_err("null_pointer", "null request pointer"),
+        Err(FfiStringError::MalformedUtf8) => {
+            return json_err("malformed_utf8", "request is not valid UTF-8")
+        }
+    };
+
+    #[cfg(not(feature = "ironwood-tx-build"))]
+    {
+        let _ = request;
+        json_err(
+            "experimental_feature_disabled",
+            "Ironwood transaction building requires the experimental \
+             'ironwood-tx-build' native feature, which is disabled in this build",
+        )
+    }
+
+    #[cfg(feature = "ironwood-tx-build")]
+    {
+        let value: Value = match serde_json::from_str(request) {
+            Ok(v) => v,
+            Err(_) => return json_err("invalid_json", "request is not valid JSON"),
+        };
+        match ironwood_build::build_ironwood_transaction_json(&value) {
+            Ok(v) => json_success(v),
+            Err((category, message)) => json_err(&category, &message),
+        }
+    }
+}
+
 #[cfg(any(
     feature = "transparent-tx-build",
     feature = "orchard-tx-build",
@@ -2976,6 +3009,9 @@ mod staged_regtest;
 
 #[cfg(feature = "orchard-tx-build")]
 mod orchard_build;
+
+#[cfg(feature = "ironwood-tx-build")]
+mod ironwood_build;
 
 #[cfg(feature = "sapling-spend-build")]
 mod sapling_build;

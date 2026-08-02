@@ -2,6 +2,7 @@ const LIB_RS: &str = include_str!("../src/lib.rs");
 
 const EXPECTED_SYMBOLS: &[&str] = &[
     "zcash_ffi_address_type",
+    "zcash_ffi_build_ironwood_transaction",
     "zcash_ffi_build_orchard_transaction",
     "zcash_ffi_build_sapling_transaction",
     "zcash_ffi_build_transparent_transaction",
@@ -83,4 +84,21 @@ fn exported_symbol_set_is_pinned() {
         EXPECTED_SYMBOLS.len(),
         "duplicate or miscounted symbols: {actual:?}"
     );
+}
+
+#[test]
+fn experimental_exports_are_always_present() {
+    let symbols = exported_symbols();
+    for gated_behavior_export in [
+        "zcash_ffi_build_transparent_transaction",
+        "zcash_ffi_build_sapling_transaction",
+        "zcash_ffi_build_orchard_transaction",
+        "zcash_ffi_build_ironwood_transaction",
+    ] {
+        assert!(
+            symbols.contains(&gated_behavior_export.to_string()),
+            "{gated_behavior_export} must be exported in every build (behavior \
+             is feature-gated, the symbol is not)"
+        );
+    }
 }

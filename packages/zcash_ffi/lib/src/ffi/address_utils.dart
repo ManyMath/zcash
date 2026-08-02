@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:zcash/zcash.dart';
+import 'ironwood_build_request.dart';
 import 'native_result.dart';
 import 'orchard_build_request.dart';
 import 'sapling_build_request.dart';
@@ -514,6 +515,138 @@ OrchardBuildResult buildNativeOrchardTransaction({
     ],
   );
   return OrchardBuildResult.fromJson(json);
+}
+
+IronwoodBuildResult buildNativeIronwoodTransaction({
+  required ZcashNetwork network,
+  required int targetHeight,
+  required IronwoodAnchorSource anchor,
+  required Iterable<TransparentBuildInput> inputs,
+  required IronwoodBuildOutput ironwoodOutput,
+  Iterable<TransparentBuildOutput> outputs = const [],
+  Iterable<IronwoodBuildSpendNote> saplingSpends = const [],
+  Iterable<IronwoodBuildOrchardSpendNote> orchardSpends = const [],
+  Iterable<IronwoodBuildIronwoodSpendNote> ironwoodSpends = const [],
+  int? orchardChangeZatoshis,
+  int? ironwoodChangeZatoshis,
+  int? expiryHeight,
+  int? regtestNu63ActivationHeight,
+  String? seedHex,
+  int account = 0,
+  String? spendParamsPath,
+  String? outputParamsPath,
+  int? feeZatoshis,
+  String? rngSeedHex,
+  bool allowExperimentalIronwoodBuild = false,
+  ZcashFfiBindings? bindings,
+}) {
+  if (!allowExperimentalIronwoodBuild) {
+    throw StateError(
+      'buildNativeIronwoodTransaction is experimental and native-backed; set '
+      'allowExperimentalIronwoodBuild: true to opt in. It requires a native '
+      'library built with the off-by-default ironwood-tx-build feature, and the '
+      'caller remains responsible for supplying a real Ironwood anchor.',
+    );
+  }
+  final ffi = bindings ?? ZcashFfiBindings.instance;
+  final requestJson = encodeIronwoodBuildRequest(
+    network: network._ffiParam,
+    targetHeight: targetHeight,
+    anchor: anchor,
+    inputs: inputs,
+    ironwoodOutput: ironwoodOutput,
+    outputs: outputs,
+    saplingSpends: saplingSpends,
+    orchardSpends: orchardSpends,
+    ironwoodSpends: ironwoodSpends,
+    orchardChangeZatoshis: orchardChangeZatoshis,
+    ironwoodChangeZatoshis: ironwoodChangeZatoshis,
+    expiryHeight: expiryHeight,
+    regtestNu63ActivationHeight: regtestNu63ActivationHeight,
+    seedHex: seedHex,
+    account: account,
+    spendParamsPath: spendParamsPath,
+    outputParamsPath: outputParamsPath,
+    feeZatoshis: feeZatoshis,
+    rngSeedHex: rngSeedHex,
+  );
+  final raw = ffi.buildIronwoodTransaction(requestJson);
+  final json = parseNativeJsonObject(
+    raw,
+    context: 'build_ironwood_transaction/DynamicLibrary',
+    redactSensitive: [
+      for (final input in inputs) input.secretKeyHex,
+      if (ironwoodOutput.outgoingViewingKeyHex != null)
+        ironwoodOutput.outgoingViewingKeyHex!,
+      ?seedHex,
+    ],
+  );
+  return IronwoodBuildResult.fromJson(json);
+}
+
+IronwoodFeeQuote quoteNativeIronwoodFee({
+  required ZcashNetwork network,
+  required int targetHeight,
+  required IronwoodAnchorSource anchor,
+  required Iterable<TransparentBuildInput> inputs,
+  required IronwoodBuildOutput ironwoodOutput,
+  Iterable<TransparentBuildOutput> outputs = const [],
+  Iterable<IronwoodBuildSpendNote> saplingSpends = const [],
+  Iterable<IronwoodBuildOrchardSpendNote> orchardSpends = const [],
+  Iterable<IronwoodBuildIronwoodSpendNote> ironwoodSpends = const [],
+  int? orchardChangeZatoshis,
+  int? ironwoodChangeZatoshis,
+  int? expiryHeight,
+  int? regtestNu63ActivationHeight,
+  String? seedHex,
+  int account = 0,
+  String? spendParamsPath,
+  String? outputParamsPath,
+  int? feeZatoshis,
+  bool allowExperimentalIronwoodBuild = false,
+  ZcashFfiBindings? bindings,
+}) {
+  if (!allowExperimentalIronwoodBuild) {
+    throw StateError(
+      'quoteNativeIronwoodFee is experimental and native-backed; set '
+      'allowExperimentalIronwoodBuild: true to opt in. It requires a native '
+      'library built with the off-by-default ironwood-tx-build feature.',
+    );
+  }
+  final ffi = bindings ?? ZcashFfiBindings.instance;
+  final requestJson = encodeIronwoodBuildRequest(
+    network: network._ffiParam,
+    targetHeight: targetHeight,
+    anchor: anchor,
+    inputs: inputs,
+    ironwoodOutput: ironwoodOutput,
+    outputs: outputs,
+    saplingSpends: saplingSpends,
+    orchardSpends: orchardSpends,
+    ironwoodSpends: ironwoodSpends,
+    orchardChangeZatoshis: orchardChangeZatoshis,
+    ironwoodChangeZatoshis: ironwoodChangeZatoshis,
+    expiryHeight: expiryHeight,
+    regtestNu63ActivationHeight: regtestNu63ActivationHeight,
+    seedHex: seedHex,
+    account: account,
+    spendParamsPath: spendParamsPath,
+    outputParamsPath: outputParamsPath,
+    feeZatoshis: feeZatoshis,
+    quoteOnly: true,
+  );
+  final raw = ffi.buildIronwoodTransaction(requestJson);
+  final json = parseNativeJsonObject(
+    raw,
+    context: 'quote_ironwood_fee/DynamicLibrary',
+    redactSensitive: [
+      for (final input in inputs) input.secretKeyHex,
+      if (ironwoodOutput.outgoingViewingKeyHex != null)
+        ironwoodOutput.outgoingViewingKeyHex!,
+      ?seedHex,
+    ],
+  );
+  return IronwoodFeeQuote.fromJson(json);
 }
 
 void _checkUint32Index(int value, String name) {

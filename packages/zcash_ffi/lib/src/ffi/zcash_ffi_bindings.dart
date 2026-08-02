@@ -182,6 +182,11 @@ class ZcashFfiBindings {
         'zcash_ffi_build_orchard_transaction',
       ).asFunction<Pointer<Utf8> Function(Pointer<Utf8>)>();
 
+  late final _buildIronwoodTransaction =
+      _symbol<NativeFunction<Pointer<Utf8> Function(Pointer<Utf8>)>>(
+        'zcash_ffi_build_ironwood_transaction',
+      ).asFunction<Pointer<Utf8> Function(Pointer<Utf8>)>();
+
   late final _classifyTransparentAddress =
       _symbol<
             NativeFunction<Pointer<Utf8> Function(Pointer<Utf8>, Pointer<Utf8>)>
@@ -417,6 +422,15 @@ class ZcashFfiBindings {
     final requestPtr = requestJson.toNativeUtf8();
     try {
       return _takeString(_buildOrchardTransaction(requestPtr));
+    } finally {
+      calloc.free(requestPtr);
+    }
+  }
+
+  String buildIronwoodTransaction(String requestJson) {
+    final requestPtr = requestJson.toNativeUtf8();
+    try {
+      return _takeString(_buildIronwoodTransaction(requestPtr));
     } finally {
       calloc.free(requestPtr);
     }

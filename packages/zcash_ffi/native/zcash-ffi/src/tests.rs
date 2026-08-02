@@ -2097,6 +2097,1167 @@ fn build_orchard_transaction_honours_a_staged_regtest_activation_height() {
     assert_eq!(v["category"], "unsupported_activation_override", "{v}");
 }
 
+fn build_ironwood_value(request: &str) -> Value {
+    let req = cptr(request);
+    result_value(zcash_ffi_build_ironwood_transaction(req.as_ptr()))
+}
+
+#[test]
+#[cfg(not(feature = "ironwood-tx-build"))]
+fn build_ironwood_transaction_disabled_in_default_build() {
+    let request = format!(
+        r#"{{"ironwood_build_version":1,"network":"regtest","target_height":10,
+                 "ironwood_tree":"",
+                 "inputs":[{{"txid":"{txid}","vout":0,"value_zatoshis":100000,"secret_key":"{sk}"}}],
+                 "ironwood_output":{{"address":"uregtest1"}}}}"#,
+        txid = "22".repeat(32),
+        sk = BUILD_TEST_SECRET_KEY,
+    );
+    let v = build_ironwood_value(&request);
+    assert_eq!(v["status"], "error");
+    assert_eq!(v["category"], "experimental_feature_disabled");
+    assert!(
+        !v.to_string().contains(BUILD_TEST_SECRET_KEY),
+        "disabled build must not echo the supplied secret key"
+    );
+}
+
+#[test]
+#[cfg(not(feature = "ironwood-tx-build"))]
+fn build_ironwood_transaction_disabled_rejects_null_pointer() {
+    let v = result_value(zcash_ffi_build_ironwood_transaction(std::ptr::null()));
+    assert_eq!(v["status"], "error");
+    assert_eq!(v["category"], "null_pointer");
+}
+
+#[cfg(feature = "ironwood-tx-build")]
+fn regtest_unified_address() -> String {
+    ironwood_build::test_regtest_unified_address(&hex::decode(TEST_SEED_HEX).unwrap())
+}
+
+#[test]
+#[cfg(feature = "ironwood-tx-build")]
+fn build_ironwood_transaction_shields_transparent_input_into_ironwood() {
+    let to = regtest_unified_address();
+    let (tree_hex, root_hex) = ironwood_build::test_tree_fixture(3);
+    let request = format!(
+        r#"{{"ironwood_build_version":1,"network":"regtest","target_height":10,
+                 "ironwood_tree":"{tree}",
+                 "rng_seed":"{seed}",
+                 "inputs":[{{"txid":"{txid}","vout":0,"value_zatoshis":100000,"secret_key":"{sk}"}}],
+                 "ironwood_output":{{"address":"{to}"}}}}"#,
+        tree = tree_hex,
+        seed = "05".repeat(32),
+        txid = "22".repeat(32),
+        sk = BUILD_TEST_SECRET_KEY,
+        to = to,
+    );
+    let v = build_ironwood_value(&request);
+    assert_eq!(v["status"], "ok", "build should succeed: {v}");
+    assert_eq!(v["network"], "regtest");
+    assert_eq!(v["version"], "v6");
+    assert_eq!(v["proof_validity"], "real");
+    assert_eq!(v["fee_rule"], "zip317");
+    assert_eq!(v["rng"], "deterministic");
+
+    assert_eq!(v["ironwood_anchor"], root_hex);
+    assert_eq!(v["ironwood_anchor_source"], "tree");
+    assert_eq!(v["ironwood_anchor_tree_size"], 3);
+
+    // ZIP 317 Revision 1: 1 transparent input + 2 Ironwood actions = 3 logical actions at 5000.
+    assert_eq!(v["fee_zatoshis"], 15000);
+    assert_eq!(v["total_input_zatoshis"], 100000);
+    assert_eq!(v["non_ironwood_output_zatoshis"], 0);
+    assert_eq!(v["ironwood_output_zatoshis"], 85000);
+    assert_eq!(v["transparent"]["vin"], 1);
+    assert_eq!(v["transparent"]["vout"], 0);
+    assert_eq!(v["ironwood"]["actions"], 2);
+
+    let tx_hex = v["transaction"].as_str().expect("transaction hex");
+    let net = cptr("regtest");
+    let decoded = result_value(zcash_ffi_decode_transaction(
+        cptr(tx_hex).as_ptr(),
+        net.as_ptr(),
+    ));
+    assert_eq!(decoded["status"], "ok", "v6 decode must succeed: {decoded}");
+    assert_eq!(decoded["version"], "v6");
+    assert_eq!(decoded["txid"], v["txid"]);
+    assert_eq!(decoded["consensus_branch_id"], "nu6.3");
+    assert_eq!(decoded["ironwood"]["present"], true);
+    assert_eq!(decoded["ironwood"]["actions"], 2);
+    assert_eq!(decoded["orchard"]["present"], false);
+    assert_eq!(decoded["sapling"]["present"], false);
+    assert_eq!(decoded["transparent"]["vin"], 1);
+
+    assert!(
+        !v.to_string().contains(BUILD_TEST_SECRET_KEY),
+        "build output must not echo the signing key"
+    );
+}
+
+#[test]
+#[cfg(feature = "ironwood-tx-build")]
+fn ironwood_fee_quote_equals_the_fee_the_build_charges() {
+    let to = regtest_unified_address();
+    let (tree_hex, _) = ironwood_build::test_tree_fixture(3);
+
+    let shapes: [(&str, &str); 3] = [
+        (
+            "one transparent input",
+            &format!(
+                r#""inputs":[{{"txid":"{txid}","vout":0,"value_zatoshis":100000,"secret_key":"{sk}"}}]"#,
+                txid = "22".repeat(32),
+                sk = BUILD_TEST_SECRET_KEY,
+            ),
+        ),
+        (
+            "two transparent inputs",
+            &format!(
+                r#""inputs":[{{"txid":"{txid}","vout":0,"value_zatoshis":100000,"secret_key":"{sk}"}},
+                                 {{"txid":"{txid2}","vout":1,"value_zatoshis":70000,"secret_key":"{sk}"}}]"#,
+                txid = "22".repeat(32),
+                txid2 = "33".repeat(32),
+                sk = BUILD_TEST_SECRET_KEY,
+            ),
+        ),
+        (
+            "two inputs and a transparent output",
+            &format!(
+                r#""inputs":[{{"txid":"{txid}","vout":0,"value_zatoshis":100000,"secret_key":"{sk}"}},
+                                 {{"txid":"{txid2}","vout":1,"value_zatoshis":70000,"secret_key":"{sk}"}}],
+                       "outputs":[{{"address":"{change}","value_zatoshis":10000}}]"#,
+                txid = "22".repeat(32),
+                txid2 = "33".repeat(32),
+                sk = BUILD_TEST_SECRET_KEY,
+                change = ironwood_build::test_regtest_transparent_address(),
+            ),
+        ),
+    ];
+
+    let mut fees = Vec::new();
+    for (label, shape) in shapes {
+        let request = |quote: bool| {
+            format!(
+                r#"{{"ironwood_build_version":1,"network":"regtest","target_height":10,
+                         "ironwood_tree":"{tree}","rng_seed":"{seed}",{quote}
+                         {shape},
+                         "ironwood_output":{{"address":"{to}"}}}}"#,
+                tree = tree_hex,
+                seed = "05".repeat(32),
+                quote = if quote { r#""quote_only":true,"# } else { "" },
+                shape = shape,
+                to = to,
+            )
+        };
+
+        let quoted = build_ironwood_value(&request(true));
+        assert_eq!(quoted["status"], "ok", "{label} quote failed: {quoted}");
+        let built = build_ironwood_value(&request(false));
+        assert_eq!(built["status"], "ok", "{label} build failed: {built}");
+
+        assert_eq!(
+            quoted["fee_zatoshis"], built["fee_zatoshis"],
+            "{label}: the quote must be the fee the build charges"
+        );
+        assert_eq!(quoted["fee_rule"], built["fee_rule"]);
+        assert_eq!(quoted["consensus_branch_id"], built["consensus_branch_id"]);
+        assert_eq!(
+            quoted["max_ironwood_output_zatoshis"], built["ironwood_output_zatoshis"],
+            "{label}: the quoted maximum is what the build actually paid"
+        );
+        fees.push(quoted["fee_zatoshis"].as_u64().expect("fee"));
+
+        assert_eq!(quoted["quote_only"], true);
+        assert!(quoted.get("transaction").is_none(), "{label}: {quoted}");
+        assert!(quoted.get("txid").is_none(), "{label}: {quoted}");
+        assert!(
+            !quoted.to_string().contains(BUILD_TEST_SECRET_KEY),
+            "{label}: a quote must not echo the signing key"
+        );
+    }
+
+    assert!(
+        fees.iter().collect::<std::collections::HashSet<_>>().len() > 1,
+        "expected the shapes to differ in fee, got {fees:?}"
+    );
+}
+
+#[test]
+#[cfg(feature = "ironwood-tx-build")]
+fn ironwood_fee_quote_reports_a_shortfall_rather_than_refusing() {
+    let to = regtest_unified_address();
+    let (tree_hex, _) = ironwood_build::test_tree_fixture(3);
+    let request = |quote: bool| {
+        format!(
+            r#"{{"ironwood_build_version":1,"network":"regtest","target_height":10,
+                     "ironwood_tree":"{tree}","rng_seed":"{seed}",{quote}
+                     "inputs":[{{"txid":"{txid}","vout":0,"value_zatoshis":1000,"secret_key":"{sk}"}}],
+                     "ironwood_output":{{"address":"{to}"}}}}"#,
+            tree = tree_hex,
+            seed = "05".repeat(32),
+            quote = if quote { r#""quote_only":true,"# } else { "" },
+            txid = "22".repeat(32),
+            sk = BUILD_TEST_SECRET_KEY,
+            to = to,
+        )
+    };
+
+    let quoted = build_ironwood_value(&request(true));
+    assert_eq!(quoted["status"], "ok", "a shortfall is not a failed quote");
+    assert_eq!(quoted["fee_zatoshis"], 15000);
+    assert_eq!(quoted["total_input_zatoshis"], 1000);
+    assert!(
+        quoted["max_ironwood_output_zatoshis"].is_null(),
+        "1000 zatoshis cannot cover a 15000 fee: {quoted}"
+    );
+
+    let built = build_ironwood_value(&request(false));
+    assert_eq!(built["status"], "error");
+    assert_eq!(built["category"], "insufficient_funds");
+}
+
+#[test]
+#[cfg(feature = "ironwood-tx-build")]
+fn build_ironwood_transaction_requires_a_supplied_anchor() {
+    let to = regtest_unified_address();
+    let (tree_hex, _) = ironwood_build::test_tree_fixture(2);
+    let request_with = |anchor_fields: &str| {
+        format!(
+            r#"{{"ironwood_build_version":1,"network":"regtest","target_height":10,
+                     {anchor}
+                     "inputs":[{{"txid":"{txid}","vout":0,"value_zatoshis":100000,"secret_key":"{sk}"}}],
+                     "ironwood_output":{{"address":"{to}"}}}}"#,
+            anchor = anchor_fields,
+            txid = "22".repeat(32),
+            sk = BUILD_TEST_SECRET_KEY,
+            to = to,
+        )
+    };
+
+    let v = build_ironwood_value(&request_with(""));
+    assert_eq!(v["category"], "missing_ironwood_anchor", "{v}");
+
+    let v = build_ironwood_value(&request_with(&format!(
+        r#""ironwood_tree":"{tree_hex}","ironwood_anchor":"{anchor}","#,
+        anchor = "11".repeat(32),
+    )));
+    assert_eq!(v["category"], "conflicting_ironwood_anchor", "{v}");
+
+    let v = build_ironwood_value(&request_with(r#""ironwood_tree":"not hex","#));
+    assert_eq!(v["category"], "invalid_ironwood_tree", "{v}");
+
+    let v = build_ironwood_value(&request_with(r#""ironwood_tree":"abcdef","#));
+    assert_eq!(v["category"], "invalid_ironwood_tree", "{v}");
+
+    let v = build_ironwood_value(&request_with(&format!(
+        r#""ironwood_anchor":"{anchor}","#,
+        anchor = "ff".repeat(32),
+    )));
+    assert_eq!(v["category"], "invalid_ironwood_anchor", "{v}");
+
+    let v = build_ironwood_value(&request_with(r#""ironwood_anchor":"0011","#));
+    assert_eq!(v["category"], "invalid_ironwood_anchor", "{v}");
+}
+
+#[test]
+#[cfg(feature = "ironwood-tx-build")]
+fn build_ironwood_transaction_accepts_a_declared_empty_tree() {
+    let to = regtest_unified_address();
+    let request = format!(
+        r#"{{"ironwood_build_version":1,"network":"regtest","target_height":10,
+                 "ironwood_tree":"","rng_seed":"{seed}",
+                 "inputs":[{{"txid":"{txid}","vout":0,"value_zatoshis":100000,"secret_key":"{sk}"}}],
+                 "ironwood_output":{{"address":"{to}"}}}}"#,
+        seed = "06".repeat(32),
+        txid = "22".repeat(32),
+        sk = BUILD_TEST_SECRET_KEY,
+        to = to,
+    );
+    let v = build_ironwood_value(&request);
+    assert_eq!(v["status"], "ok", "{v}");
+    assert_eq!(v["ironwood_anchor_source"], "tree");
+    assert_eq!(v["ironwood_anchor_tree_size"], 0);
+    assert_eq!(v["ironwood"]["actions"], 2);
+}
+
+#[test]
+#[cfg(feature = "ironwood-tx-build")]
+fn build_ironwood_transaction_pays_transparent_change_with_a_fixed_fee() {
+    let to = regtest_unified_address();
+    let change = ironwood_build::test_regtest_transparent_address();
+    let (tree_hex, _) = ironwood_build::test_tree_fixture(1);
+    let request = format!(
+        r#"{{"ironwood_build_version":1,"network":"regtest","target_height":10,
+                 "ironwood_tree":"{tree}","fee_zatoshis":12000,
+                 "inputs":[{{"txid":"{txid}","vout":0,"value_zatoshis":100000,"secret_key":"{sk}"}}],
+                 "outputs":[{{"address":"{change}","value_zatoshis":30000}}],
+                 "ironwood_output":{{"address":"{to}","value_zatoshis":58000,"memo":"{memo}"}}}}"#,
+        tree = tree_hex,
+        txid = "22".repeat(32),
+        sk = BUILD_TEST_SECRET_KEY,
+        change = change,
+        to = to,
+        memo = hex::encode(b"ironwood"),
+    );
+    let v = build_ironwood_value(&request);
+    assert_eq!(v["status"], "ok", "{v}");
+    assert_eq!(v["fee_rule"], "fixed");
+    assert_eq!(v["fee_zatoshis"], 12000);
+    assert_eq!(v["rng"], "os");
+    assert_eq!(v["transparent"]["vout"], 1);
+    assert_eq!(v["non_ironwood_output_zatoshis"], 30000);
+    assert_eq!(v["ironwood_output_zatoshis"], 58000);
+
+    let tx_hex = v["transaction"].as_str().expect("transaction hex");
+    let net = cptr("regtest");
+    let decoded = result_value(zcash_ffi_decode_transaction(
+        cptr(tx_hex).as_ptr(),
+        net.as_ptr(),
+    ));
+    assert_eq!(decoded["version"], "v6");
+    assert_eq!(decoded["transparent"]["vout"], 1);
+    assert_eq!(decoded["ironwood"]["present"], true);
+}
+
+#[test]
+#[cfg(feature = "ironwood-tx-build")]
+fn build_ironwood_transaction_is_deterministic_with_a_supplied_seed() {
+    let to = regtest_unified_address();
+    let (tree_hex, _) = ironwood_build::test_tree_fixture(2);
+    let request = format!(
+        r#"{{"ironwood_build_version":1,"network":"regtest","target_height":10,
+                 "ironwood_tree":"{tree}","rng_seed":"{seed}",
+                 "inputs":[{{"txid":"{txid}","vout":0,"value_zatoshis":100000,"secret_key":"{sk}"}}],
+                 "ironwood_output":{{"address":"{to}"}}}}"#,
+        tree = tree_hex,
+        seed = "07".repeat(32),
+        txid = "22".repeat(32),
+        sk = BUILD_TEST_SECRET_KEY,
+        to = to,
+    );
+    let first = build_ironwood_value(&request);
+    let second = build_ironwood_value(&request);
+    assert_eq!(first["status"], "ok", "{first}");
+    assert_eq!(first["transaction"], second["transaction"]);
+    assert_eq!(first["txid"], second["txid"]);
+}
+
+#[test]
+#[cfg(feature = "ironwood-tx-build")]
+fn build_ironwood_transaction_rejects_a_pre_activation_target_height() {
+    let request = format!(
+        r#"{{"ironwood_build_version":1,"network":"main","target_height":3428142,
+                 "ironwood_tree":"",
+                 "inputs":[{{"txid":"{txid}","vout":0,"value_zatoshis":100000,"secret_key":"{sk}"}}],
+                 "ironwood_output":{{"address":"u1whatever"}}}}"#,
+        txid = "22".repeat(32),
+        sk = BUILD_TEST_SECRET_KEY,
+    );
+    let v = build_ironwood_value(&request);
+    assert_eq!(v["category"], "ironwood_not_active", "{v}");
+
+    let v = build_ironwood_value(&request.replace("3428142", "3428143"));
+    assert_eq!(v["category"], "invalid_output_address", "{v}");
+}
+
+#[test]
+#[cfg(feature = "ironwood-tx-build")]
+fn build_ironwood_transaction_honours_a_staged_regtest_activation_height() {
+    let to = regtest_unified_address();
+    let request_at = |height: u64, activation: &str| {
+        format!(
+            r#"{{"ironwood_build_version":1,"network":"regtest","target_height":{height},
+                     "ironwood_tree":"","rng_seed":"{seed}",{activation}
+                     "inputs":[{{"txid":"{txid}","vout":0,"value_zatoshis":100000,"secret_key":"{sk}"}}],
+                     "ironwood_output":{{"address":"{to}"}}}}"#,
+            height = height,
+            activation = activation,
+            seed = "0c".repeat(32),
+            txid = "22".repeat(32),
+            sk = BUILD_TEST_SECRET_KEY,
+            to = to,
+        )
+    };
+
+    let v = build_ironwood_value(&request_at(99, r#""regtest_nu63_activation_height":100,"#));
+    assert_eq!(v["category"], "ironwood_not_active", "{v}");
+
+    let v = build_ironwood_value(&request_at(100, r#""regtest_nu63_activation_height":100,"#));
+    assert_eq!(v["status"], "ok", "{v}");
+    assert_eq!(v["version"], "v6");
+    assert_eq!(v["consensus_branch_id"], "nu6.3");
+
+    let v = build_ironwood_value(&request_at(99, ""));
+    assert_eq!(v["status"], "ok", "{v}");
+    assert_eq!(v["consensus_branch_id"], "nu6.3");
+
+    let main = format!(
+        r#"{{"ironwood_build_version":1,"network":"main","target_height":3428143,
+                 "ironwood_tree":"","regtest_nu63_activation_height":100,
+                 "inputs":[{{"txid":"{txid}","vout":0,"value_zatoshis":100000,"secret_key":"{sk}"}}],
+                 "ironwood_output":{{"address":"u1x"}}}}"#,
+        txid = "22".repeat(32),
+        sk = BUILD_TEST_SECRET_KEY,
+    );
+    let v = build_ironwood_value(&main);
+    assert_eq!(v["category"], "unsupported_activation_override", "{v}");
+}
+
+#[test]
+#[cfg(feature = "ironwood-tx-build")]
+fn build_ironwood_transaction_rejects_recipients_that_cannot_receive_ironwood() {
+    let (tree_hex, _) = ironwood_build::test_tree_fixture(1);
+    let transparent = ironwood_build::test_regtest_transparent_address();
+    let request_paying = |to: &str| {
+        format!(
+            r#"{{"ironwood_build_version":1,"network":"regtest","target_height":10,
+                     "ironwood_tree":"{tree}",
+                     "inputs":[{{"txid":"{txid}","vout":0,"value_zatoshis":100000,"secret_key":"{sk}"}}],
+                     "ironwood_output":{{"address":"{to}"}}}}"#,
+            tree = tree_hex,
+            txid = "22".repeat(32),
+            sk = BUILD_TEST_SECRET_KEY,
+            to = to,
+        )
+    };
+
+    let v = build_ironwood_value(&request_paying(&transparent));
+    assert_eq!(v["category"], "unsupported_ironwood_recipient", "{v}");
+
+    let v = build_ironwood_value(&request_paying("not an address"));
+    assert_eq!(v["category"], "invalid_output_address", "{v}");
+
+    let to = regtest_unified_address();
+    let request = format!(
+        r#"{{"ironwood_build_version":1,"network":"regtest","target_height":10,
+                 "ironwood_tree":"{tree}","fee_zatoshis":10000,
+                 "inputs":[{{"txid":"{txid}","vout":0,"value_zatoshis":100000,"secret_key":"{sk}"}}],
+                 "outputs":[{{"address":"{to}","value_zatoshis":30000}}],
+                 "ironwood_output":{{"address":"{to}","value_zatoshis":60000}}}}"#,
+        tree = tree_hex,
+        txid = "22".repeat(32),
+        sk = BUILD_TEST_SECRET_KEY,
+        to = to,
+    );
+    let v = build_ironwood_value(&request);
+    assert_eq!(v["category"], "unsupported_shielded_output", "{v}");
+}
+
+#[test]
+#[cfg(feature = "ironwood-tx-build")]
+fn build_ironwood_transaction_rejects_malformed_requests_without_echo() {
+    let to = regtest_unified_address();
+    let (tree_hex, _) = ironwood_build::test_tree_fixture(1);
+
+    let v = build_ironwood_value(r#"{"ironwood_build_version":2}"#);
+    assert_eq!(v["category"], "unsupported_ironwood_build_version");
+
+    let v = build_ironwood_value("not json");
+    assert_eq!(v["category"], "invalid_json");
+
+    let v = build_ironwood_value(r#"{"network":"regtest"}"#);
+    assert_eq!(v["category"], "invalid_request");
+
+    let bad_key = "00".repeat(32);
+    let request = format!(
+        r#"{{"ironwood_build_version":1,"network":"regtest","target_height":10,
+                 "ironwood_tree":"{tree}",
+                 "inputs":[{{"txid":"{txid}","vout":0,"value_zatoshis":100000,"secret_key":"{sk}"}}],
+                 "ironwood_output":{{"address":"{to}"}}}}"#,
+        tree = tree_hex,
+        txid = "22".repeat(32),
+        sk = bad_key,
+        to = to,
+    );
+    let v = build_ironwood_value(&request);
+    assert_eq!(v["category"], "invalid_secret_key", "{v}");
+    assert!(!v.to_string().contains(&bad_key));
+
+    let request = format!(
+        r#"{{"ironwood_build_version":1,"network":"regtest","target_height":10,
+                 "ironwood_tree":"{tree}","fee_zatoshis":200000,
+                 "inputs":[{{"txid":"{txid}","vout":0,"value_zatoshis":100000,"secret_key":"{sk}"}}],
+                 "ironwood_output":{{"address":"{to}"}}}}"#,
+        tree = tree_hex,
+        txid = "22".repeat(32),
+        sk = BUILD_TEST_SECRET_KEY,
+        to = to,
+    );
+    let v = build_ironwood_value(&request);
+    assert_eq!(v["category"], "insufficient_funds", "{v}");
+    assert!(!v.to_string().contains(BUILD_TEST_SECRET_KEY));
+}
+
+#[cfg(feature = "ironwood-tx-build")]
+fn sapling_spend_fragment(value: u64) -> String {
+    let (recipient, rseed, witness, anchor) = ironwood_build::test_sapling_note_fixture(
+        &hex::decode(TEST_SEED_HEX).unwrap(),
+        value,
+        [0x2au8; 32],
+    );
+    format!(
+        r#""sapling_spends":[{{"value_zatoshis":{value},"recipient":"{recipient}",
+                 "rseed":"{rseed}","witness":"{witness}","anchor":"{anchor}"}}],
+               "seed":"{seed}","account":0"#,
+        value = value,
+        recipient = recipient,
+        rseed = rseed,
+        witness = witness,
+        anchor = anchor,
+        seed = TEST_SEED_HEX,
+    )
+}
+
+/// Real Sapling proving needs the MPC parameters.
+#[test]
+#[cfg(feature = "ironwood-tx-build")]
+fn build_ironwood_transaction_requires_sapling_params_to_spend_sapling() {
+    let to = regtest_unified_address();
+    let (tree_hex, _) = ironwood_build::test_tree_fixture(1);
+    let request = format!(
+        r#"{{"ironwood_build_version":1,"network":"regtest","target_height":10,
+                 "ironwood_tree":"{tree}",{sapling},
+                 "ironwood_output":{{"address":"{to}"}}}}"#,
+        tree = tree_hex,
+        sapling = sapling_spend_fragment(100000),
+        to = to,
+    );
+    let v = build_ironwood_value(&request);
+    assert_eq!(v["category"], "sapling_params_required", "{v}");
+    assert!(
+        !v.to_string().contains(TEST_SEED_HEX),
+        "error must not echo the seed"
+    );
+}
+
+#[test]
+#[cfg(feature = "ironwood-tx-build")]
+fn build_ironwood_transaction_validates_sapling_spend_components() {
+    let to = regtest_unified_address();
+    let (tree_hex, _) = ironwood_build::test_tree_fixture(1);
+    let seed_bytes = hex::decode(TEST_SEED_HEX).unwrap();
+    let (recipient, rseed, witness, anchor) =
+        ironwood_build::test_sapling_note_fixture(&seed_bytes, 100000, [0x2au8; 32]);
+    let params = "\"spend_params_path\":\"/nonexistent/spend\",\
+                      \"output_params_path\":\"/nonexistent/output\"";
+    let request_with = |spends: String| {
+        format!(
+            r#"{{"ironwood_build_version":1,"network":"regtest","target_height":10,
+                     "ironwood_tree":"{tree}","seed":"{seed}","account":0,{params},
+                     "sapling_spends":[{spends}],
+                     "ironwood_output":{{"address":"{to}"}}}}"#,
+            tree = tree_hex,
+            seed = TEST_SEED_HEX,
+            params = params,
+            spends = spends,
+            to = to,
+        )
+    };
+
+    let v = build_ironwood_value(&request_with(format!(
+        r#"{{"value_zatoshis":100000,"recipient":"{recipient}","rseed":"{rseed}",
+                "witness":"{witness}","anchor":"{bad}"}}"#,
+        recipient = recipient,
+        rseed = rseed,
+        witness = witness,
+        bad = "11".repeat(32),
+    )));
+    assert_eq!(v["category"], "witness_anchor_mismatch", "{v}");
+
+    let (recipient2, rseed2, witness2, anchor2) =
+        ironwood_build::test_sapling_note_fixture(&seed_bytes, 50000, [0x3bu8; 32]);
+    assert_ne!(
+        anchor, anchor2,
+        "distinct notes must yield distinct anchors"
+    );
+    let v = build_ironwood_value(&request_with(format!(
+        r#"{{"value_zatoshis":100000,"recipient":"{r1}","rseed":"{s1}",
+                "witness":"{w1}","anchor":"{a1}"}},
+               {{"value_zatoshis":50000,"recipient":"{r2}","rseed":"{s2}",
+                "witness":"{w2}","anchor":"{a2}"}}"#,
+        r1 = recipient,
+        s1 = rseed,
+        w1 = witness,
+        a1 = anchor,
+        r2 = recipient2,
+        s2 = rseed2,
+        w2 = witness2,
+        a2 = anchor2,
+    )));
+    assert_eq!(v["category"], "anchor_mismatch", "{v}");
+
+    let other_seed = "ff".repeat(32);
+    let (other_recipient, other_rseed, other_witness, other_anchor) =
+        ironwood_build::test_sapling_note_fixture(
+            &hex::decode(&other_seed).unwrap(),
+            100000,
+            [0x2au8; 32],
+        );
+    let v = build_ironwood_value(&request_with(format!(
+        r#"{{"value_zatoshis":100000,"recipient":"{r}","rseed":"{s}",
+                "witness":"{w}","anchor":"{a}"}}"#,
+        r = other_recipient,
+        s = other_rseed,
+        w = other_witness,
+        a = other_anchor,
+    )));
+    assert_eq!(v["category"], "note_not_spendable", "{v}");
+
+    let v = build_ironwood_value(&request_with(format!(
+        r#"{{"value_zatoshis":100000,"recipient":"{r}","rseed":"{s}",
+                "witness":"{w}","anchor":"{a}"}}"#,
+        r = recipient,
+        s = rseed,
+        w = witness,
+        a = anchor,
+    )));
+    assert_eq!(v["category"], "params_not_found", "{v}");
+    assert!(!v.to_string().contains(TEST_SEED_HEX));
+}
+
+#[test]
+#[cfg(feature = "ironwood-tx-build")]
+fn build_ironwood_transaction_rejects_sapling_change_without_a_sapling_spend() {
+    let to = regtest_unified_address();
+    let (tree_hex, _) = ironwood_build::test_tree_fixture(1);
+    let (sapling_addr, _, _, _) = ironwood_build::test_sapling_note_fixture(
+        &hex::decode(TEST_SEED_HEX).unwrap(),
+        1,
+        [0x2au8; 32],
+    );
+    let request = format!(
+        r#"{{"ironwood_build_version":1,"network":"regtest","target_height":10,
+                 "ironwood_tree":"{tree}","fee_zatoshis":10000,
+                 "inputs":[{{"txid":"{txid}","vout":0,"value_zatoshis":100000,"secret_key":"{sk}"}}],
+                 "outputs":[{{"address":"{sapling}","value_zatoshis":30000}}],
+                 "ironwood_output":{{"address":"{to}","value_zatoshis":60000}}}}"#,
+        tree = tree_hex,
+        txid = "22".repeat(32),
+        sk = BUILD_TEST_SECRET_KEY,
+        sapling = sapling_addr,
+        to = to,
+    );
+    let v = build_ironwood_value(&request);
+    assert_eq!(v["category"], "sapling_output_without_spend", "{v}");
+}
+
+#[test]
+#[cfg(feature = "ironwood-tx-build")]
+fn build_ironwood_transaction_requires_at_least_one_input_source() {
+    let to = regtest_unified_address();
+    let (tree_hex, _) = ironwood_build::test_tree_fixture(1);
+    let request = format!(
+        r#"{{"ironwood_build_version":1,"network":"regtest","target_height":10,
+                 "ironwood_tree":"{tree}",
+                 "ironwood_output":{{"address":"{to}","value_zatoshis":1000}}}}"#,
+        tree = tree_hex,
+        to = to,
+    );
+    let v = build_ironwood_value(&request);
+    assert_eq!(v["category"], "invalid_request", "{v}");
+    assert!(v["error"].as_str().unwrap().contains("input source"), "{v}");
+}
+
+#[test]
+#[cfg(feature = "ironwood-tx-build")]
+fn build_ironwood_transaction_migrates_a_sapling_note_with_supplied_params() {
+    let (spend_path, output_path) = match (
+        std::env::var("ZCASH_SAPLING_SPEND_PARAMS"),
+        std::env::var("ZCASH_SAPLING_OUTPUT_PARAMS"),
+    ) {
+        (Ok(s), Ok(o)) if !s.is_empty() && !o.is_empty() => (s, o),
+        _ => {
+            eprintln!(
+                    "skipping Sapling -> Ironwood migration test: set                      ZCASH_SAPLING_SPEND_PARAMS and ZCASH_SAPLING_OUTPUT_PARAMS                      to the real Sapling parameter files to run it"
+                );
+            return;
+        }
+    };
+
+    let to = regtest_unified_address();
+    let (tree_hex, root_hex) = ironwood_build::test_tree_fixture(2);
+    let request = format!(
+        r#"{{"ironwood_build_version":1,"network":"regtest","target_height":10,
+                 "ironwood_tree":"{tree}",{sapling},
+                 "spend_params_path":{spend:?},"output_params_path":{output:?},
+                 "ironwood_output":{{"address":"{to}"}}}}"#,
+        tree = tree_hex,
+        sapling = sapling_spend_fragment(100000),
+        spend = spend_path,
+        output = output_path,
+        to = to,
+    );
+    let v = build_ironwood_value(&request);
+    assert_eq!(v["status"], "ok", "migration build should succeed: {v}");
+    assert_eq!(v["version"], "v6");
+    assert_eq!(v["proof_validity"], "real");
+    assert_eq!(v["ironwood_anchor"], root_hex);
+    assert_eq!(v["sapling"]["spends"], 1);
+    assert_eq!(v["ironwood"]["actions"], 2);
+    assert_eq!(v["transparent"]["vin"], 0);
+    assert_eq!(v["sapling_input_zatoshis"], 100000);
+    assert_eq!(v["transparent_input_zatoshis"], 0);
+    assert!(!v.to_string().contains(TEST_SEED_HEX));
+
+    let tx_hex = v["transaction"].as_str().expect("transaction hex");
+    let net = cptr("regtest");
+    let decoded = result_value(zcash_ffi_decode_transaction(
+        cptr(tx_hex).as_ptr(),
+        net.as_ptr(),
+    ));
+    assert_eq!(decoded["status"], "ok", "{decoded}");
+    assert_eq!(decoded["version"], "v6");
+    assert_eq!(decoded["consensus_branch_id"], "nu6.3");
+    assert_eq!(decoded["sapling"]["present"], true);
+    assert_eq!(decoded["sapling"]["spends"], 1);
+    assert_eq!(decoded["ironwood"]["present"], true);
+    assert_eq!(decoded["orchard"]["present"], false);
+}
+
+#[cfg(feature = "ironwood-tx-build")]
+fn orchard_spend_fragment(value: u64, nonce: u8) -> String {
+    let (recipient, rseed, rho, witness, anchor) = ironwood_build::test_orchard_note_fixture(
+        &hex::decode(TEST_SEED_HEX).unwrap(),
+        value,
+        nonce,
+        false,
+    );
+    format!(
+        r#""orchard_spends":[{{"value_zatoshis":{value},"recipient":"{recipient}",
+                 "rseed":"{rseed}","rho":"{rho}","note_version":"v2",
+                 "witness":"{witness}","anchor":"{anchor}"}}],
+               "seed":"{seed}","account":0"#,
+        value = value,
+        recipient = recipient,
+        rseed = rseed,
+        rho = rho,
+        witness = witness,
+        anchor = anchor,
+        seed = TEST_SEED_HEX,
+    )
+}
+
+/// ZIP 318 expiry for the first 30-day window (34560 blocks). `EXPIRY_MODULUS` is
+/// provisional, so the crate takes the expiry as input.
+#[cfg(feature = "ironwood-tx-build")]
+const TEST_CANONICAL_EXPIRY: u32 = 2 * 34560;
+
+#[test]
+#[cfg(feature = "ironwood-tx-build")]
+fn build_ironwood_transaction_migrates_an_orchard_note_in_the_zip318_canonical_shape() {
+    let to = regtest_unified_address();
+    let (tree_hex, root_hex) = ironwood_build::test_tree_fixture(2);
+    let request = format!(
+        r#"{{"ironwood_build_version":1,"network":"regtest","target_height":10,
+                 "ironwood_tree":"{tree}","expiry_height":{expiry},{orchard},
+                 "ironwood_output":{{"address":"{to}"}}}}"#,
+        tree = tree_hex,
+        expiry = TEST_CANONICAL_EXPIRY,
+        orchard = orchard_spend_fragment(1_000_000, 0x11),
+        to = to,
+    );
+    let v = build_ironwood_value(&request);
+    assert_eq!(v["status"], "ok", "canonical migration should build: {v}");
+    assert_eq!(v["version"], "v6");
+    assert_eq!(v["proof_validity"], "real");
+    assert_eq!(v["zip318_canonical"], true);
+
+    assert_eq!(v["orchard"]["spends"], 1);
+    assert_eq!(v["orchard"]["actions"], 2);
+    assert_eq!(v["orchard"]["change_outputs"], 0);
+    assert_eq!(v["ironwood"]["actions"], 1);
+
+    // ZIP 317 Revision 1: 2 Orchard + 1 Ironwood action = 3 logical actions at 5000 each.
+    assert_eq!(v["fee_zatoshis"], 15000);
+    assert_eq!(v["fee_rule"], "zip317");
+    assert_eq!(v["orchard_input_zatoshis"], 1_000_000);
+    assert_eq!(v["orchard_change_zatoshis"], 0);
+    assert_eq!(v["transparent_input_zatoshis"], 0);
+    assert_eq!(v["sapling_input_zatoshis"], 0);
+    assert_eq!(v["non_ironwood_output_zatoshis"], 0);
+    assert_eq!(v["ironwood_output_zatoshis"], 985_000);
+    assert_eq!(v["ironwood_anchor"], root_hex);
+
+    assert_eq!(v["expiry_height"], TEST_CANONICAL_EXPIRY);
+
+    let tx_hex = v["transaction"].as_str().expect("transaction hex");
+    let net = cptr("regtest");
+    let decoded = result_value(zcash_ffi_decode_transaction(
+        cptr(tx_hex).as_ptr(),
+        net.as_ptr(),
+    ));
+    assert_eq!(decoded["status"], "ok", "{decoded}");
+    assert_eq!(decoded["version"], "v6");
+    assert_eq!(decoded["consensus_branch_id"], "nu6.3");
+    assert_eq!(decoded["orchard"]["present"], true);
+    assert_eq!(decoded["orchard"]["actions"], 2);
+    assert_eq!(decoded["ironwood"]["present"], true);
+    assert_eq!(decoded["ironwood"]["actions"], 1);
+    assert_eq!(decoded["sapling"]["present"], false);
+    assert_eq!(decoded["transparent"]["vin"], 0);
+    assert_eq!(decoded["transparent"]["vout"], 0);
+
+    assert!(
+        !v.to_string().contains(TEST_SEED_HEX),
+        "build output must not echo the seed"
+    );
+}
+
+/// ZIP 318 pads the Orchard bundle to two actions so change is not observable.
+#[test]
+#[cfg(feature = "ironwood-tx-build")]
+fn build_ironwood_transaction_keeps_orchard_change_indistinguishable_from_none() {
+    let to = regtest_unified_address();
+    let (tree_hex, _) = ironwood_build::test_tree_fixture(2);
+    let request = format!(
+        r#"{{"ironwood_build_version":1,"network":"regtest","target_height":10,
+                 "ironwood_tree":"{tree}","expiry_height":{expiry},
+                 "orchard_change_zatoshis":300000,{orchard},
+                 "ironwood_output":{{"address":"{to}"}}}}"#,
+        tree = tree_hex,
+        expiry = TEST_CANONICAL_EXPIRY,
+        orchard = orchard_spend_fragment(1_000_000, 0x22),
+        to = to,
+    );
+    let v = build_ironwood_value(&request);
+    assert_eq!(v["status"], "ok", "partial migration should build: {v}");
+    assert_eq!(v["orchard"]["spends"], 1);
+    assert_eq!(v["orchard"]["change_outputs"], 1);
+    assert_eq!(v["orchard"]["actions"], 2);
+    assert_eq!(v["ironwood"]["actions"], 1);
+    assert_eq!(v["fee_zatoshis"], 15000);
+    assert_eq!(v["orchard_change_zatoshis"], 300000);
+    assert_eq!(v["non_ironwood_output_zatoshis"], 300000);
+    assert_eq!(v["ironwood_output_zatoshis"], 685_000);
+
+    let tx_hex = v["transaction"].as_str().expect("transaction hex");
+    let net = cptr("regtest");
+    let decoded = result_value(zcash_ffi_decode_transaction(
+        cptr(tx_hex).as_ptr(),
+        net.as_ptr(),
+    ));
+    assert_eq!(decoded["orchard"]["actions"], 2, "{decoded}");
+    assert_eq!(decoded["ironwood"]["actions"], 1);
+
+    let request = format!(
+        r#"{{"ironwood_build_version":1,"network":"regtest","target_height":10,
+                 "ironwood_tree":"{tree}","expiry_height":{expiry},
+                 "orchard_change_zatoshis":2000000,{orchard},
+                 "ironwood_output":{{"address":"{to}"}}}}"#,
+        tree = tree_hex,
+        expiry = TEST_CANONICAL_EXPIRY,
+        orchard = orchard_spend_fragment(1_000_000, 0x22),
+        to = to,
+    );
+    let v = build_ironwood_value(&request);
+    assert_eq!(v["category"], "invalid_request", "{v}");
+    assert!(v["error"].as_str().unwrap().contains("Orchard pool"), "{v}");
+}
+
+#[test]
+#[cfg(feature = "ironwood-tx-build")]
+fn build_ironwood_transaction_refuses_ironwood_change_without_a_spend() {
+    let to = regtest_unified_address();
+    let (tree_hex, _) = ironwood_build::test_tree_fixture(2);
+    let request = format!(
+        r#"{{"ironwood_build_version":1,"network":"regtest","target_height":10,
+                 "ironwood_tree":"{tree}","ironwood_change_zatoshis":1000,
+                 "inputs":[{{"txid":"{txid}","vout":0,"value_zatoshis":100000,
+                   "secret_key":"{sk}"}}],
+                 "ironwood_output":{{"address":"{to}"}}}}"#,
+        tree = tree_hex,
+        txid = "22".repeat(32),
+        sk = BUILD_TEST_SECRET_KEY,
+        to = to,
+    );
+    let v = build_ironwood_value(&request);
+    assert_eq!(v["category"], "ironwood_change_without_spend", "{v}");
+}
+
+#[test]
+#[cfg(feature = "ironwood-tx-build")]
+fn build_ironwood_transaction_requires_a_seed_to_spend_ironwood() {
+    let to = regtest_unified_address();
+    let (tree_hex, _) = ironwood_build::test_tree_fixture(2);
+    let request = format!(
+        r#"{{"ironwood_build_version":1,"network":"regtest","target_height":10,
+                 "ironwood_tree":"{tree}",
+                 "ironwood_spends":[{{"value_zatoshis":100000,"recipient":"{to}",
+                   "rseed":"{h}","rho":"{h}","note_version":"v3","witness":"{h}",
+                   "anchor":"{h}"}}],
+                 "ironwood_output":{{"address":"{to}"}}}}"#,
+        tree = tree_hex,
+        to = to,
+        h = "11".repeat(32),
+    );
+    let v = build_ironwood_value(&request);
+    assert_eq!(v["category"], "invalid_request", "{v}");
+    assert!(
+        v["error"]
+            .as_str()
+            .unwrap()
+            .contains("Ironwood notes requires a seed"),
+        "{v}"
+    );
+}
+
+/// ZIP 318: each of these is consensus-valid but breaks the canonical migration shape.
+#[test]
+#[cfg(feature = "ironwood-tx-build")]
+fn build_ironwood_transaction_refuses_non_canonical_orchard_migrations() {
+    let to = regtest_unified_address();
+    let (tree_hex, _) = ironwood_build::test_tree_fixture(2);
+    let request_with = |extra: &str, expiry: &str| {
+        format!(
+            r#"{{"ironwood_build_version":1,"network":"regtest","target_height":10,
+                     "ironwood_tree":"{tree}",{expiry}{extra}{orchard},
+                     "ironwood_output":{{"address":"{to}"}}}}"#,
+            tree = tree_hex,
+            expiry = expiry,
+            extra = extra,
+            orchard = orchard_spend_fragment(1_000_000, 0x33),
+            to = to,
+        )
+    };
+    let expiry = format!(r#""expiry_height":{TEST_CANONICAL_EXPIRY},"#);
+
+    let v = build_ironwood_value(&request_with(
+        &format!(
+            r#""inputs":[{{"txid":"{txid}","vout":0,"value_zatoshis":100000,
+                     "secret_key":"{sk}"}}],"#,
+            txid = "22".repeat(32),
+            sk = BUILD_TEST_SECRET_KEY,
+        ),
+        &expiry,
+    ));
+    assert_eq!(v["category"], "non_canonical_orchard_migration", "{v}");
+
+    let v = build_ironwood_value(&request_with(
+        &format!(
+            r#""outputs":[{{"address":"{t}","value_zatoshis":1000}}],"#,
+            t = ironwood_build::test_regtest_transparent_address(),
+        ),
+        &expiry,
+    ));
+    assert_eq!(v["category"], "non_canonical_orchard_migration", "{v}");
+
+    let v = build_ironwood_value(&request_with(
+        &format!("{},", sapling_spend_fragment(100000)),
+        &expiry,
+    ));
+    assert_eq!(v["category"], "non_canonical_orchard_migration", "{v}");
+
+    let v = build_ironwood_value(&request_with(
+        &format!(
+            r#""ironwood_spends":[{{"value_zatoshis":100000,"recipient":"{to}",
+                     "rseed":"{h}","rho":"{h}","note_version":"v3","witness":"{h}",
+                     "anchor":"{h}"}}],"#,
+            to = to,
+            h = "11".repeat(32),
+        ),
+        &expiry,
+    ));
+    assert_eq!(v["category"], "non_canonical_orchard_migration", "{v}");
+
+    let (r2, s2, rho2, w2, a2) = ironwood_build::test_orchard_note_fixture(
+        &hex::decode(TEST_SEED_HEX).unwrap(),
+        500_000,
+        0x44,
+        false,
+    );
+    let two_spends = format!(
+        r#"{{"ironwood_build_version":1,"network":"regtest","target_height":10,
+                 "ironwood_tree":"{tree}","expiry_height":{expiry},"seed":"{seed}",
+                 "account":0,"orchard_spends":[
+                   {{"value_zatoshis":500000,"recipient":"{r2}","rseed":"{s2}",
+                     "rho":"{rho2}","note_version":"v2","witness":"{w2}","anchor":"{a2}"}},
+                   {{"value_zatoshis":500000,"recipient":"{r2}","rseed":"{s2}",
+                     "rho":"{rho2}","note_version":"v2","witness":"{w2}","anchor":"{a2}"}}],
+                 "ironwood_output":{{"address":"{to}"}}}}"#,
+        tree = tree_hex,
+        expiry = TEST_CANONICAL_EXPIRY,
+        seed = TEST_SEED_HEX,
+        r2 = r2,
+        s2 = s2,
+        rho2 = rho2,
+        w2 = w2,
+        a2 = a2,
+        to = to,
+    );
+    let v = build_ironwood_value(&two_spends);
+    assert_eq!(v["category"], "non_canonical_orchard_migration", "{v}");
+
+    let v = build_ironwood_value(&request_with("", ""));
+    assert_eq!(v["category"], "missing_canonical_expiry_height", "{v}");
+
+    assert!(!v.to_string().contains(TEST_SEED_HEX));
+}
+
+#[test]
+#[cfg(feature = "ironwood-tx-build")]
+fn build_ironwood_transaction_validates_orchard_spend_components() {
+    let to = regtest_unified_address();
+    let (tree_hex, _) = ironwood_build::test_tree_fixture(2);
+    let seed_bytes = hex::decode(TEST_SEED_HEX).unwrap();
+    let (recipient, rseed, rho, witness, anchor) =
+        ironwood_build::test_orchard_note_fixture(&seed_bytes, 1_000_000, 0x55, false);
+    let request_with = |spends: String| {
+        format!(
+            r#"{{"ironwood_build_version":1,"network":"regtest","target_height":10,
+                     "ironwood_tree":"{tree}","expiry_height":{expiry},
+                     "seed":"{seed}","account":0,"orchard_spends":[{spends}],
+                     "ironwood_output":{{"address":"{to}"}}}}"#,
+            tree = tree_hex,
+            expiry = TEST_CANONICAL_EXPIRY,
+            seed = TEST_SEED_HEX,
+            spends = spends,
+            to = to,
+        )
+    };
+    let entry = |value: u64, rseed: &str, rho: &str, version: &str, anchor: &str| {
+        format!(
+            r#"{{"value_zatoshis":{value},"recipient":"{recipient}","rseed":"{rseed}",
+                    "rho":"{rho}","note_version":"{version}","witness":"{witness}",
+                    "anchor":"{anchor}"}}"#,
+            value = value,
+            recipient = recipient,
+            rseed = rseed,
+            rho = rho,
+            version = version,
+            witness = witness,
+            anchor = anchor,
+        )
+    };
+
+    let v = build_ironwood_value(&request_with(entry(1_000_000, &rseed, &rho, "v2", &anchor)));
+    assert_eq!(v["status"], "ok", "the control case must build: {v}");
+
+    let v = build_ironwood_value(&request_with(entry(
+        1_000_000,
+        &rseed,
+        &rho,
+        "v2",
+        &"11".repeat(32),
+    )));
+    assert_eq!(v["category"], "witness_anchor_mismatch", "{v}");
+
+    let v = build_ironwood_value(&request_with(entry(1_000_000, &rseed, &rho, "v3", &anchor)));
+    assert_eq!(v["category"], "unsupported_orchard_note_version", "{v}");
+
+    let (_, other_rseed, other_rho, _, _) =
+        ironwood_build::test_orchard_note_fixture(&seed_bytes, 1_000_000, 0x66, false);
+    let v = build_ironwood_value(&request_with(entry(
+        1_000_000,
+        &other_rseed,
+        &other_rho,
+        "v2",
+        &anchor,
+    )));
+    assert_eq!(v["category"], "witness_anchor_mismatch", "{v}");
+
+    let v = build_ironwood_value(&request_with(entry(2_000_000, &rseed, &rho, "v2", &anchor)));
+    assert_eq!(v["category"], "witness_anchor_mismatch", "{v}");
+
+    let (other_recipient, other_rseed, other_rho, other_witness, other_anchor) =
+        ironwood_build::test_orchard_note_fixture(
+            &hex::decode("ff".repeat(32)).unwrap(),
+            1_000_000,
+            0x55,
+            false,
+        );
+    let v = build_ironwood_value(&request_with(format!(
+        r#"{{"value_zatoshis":1000000,"recipient":"{r}","rseed":"{s}","rho":"{rho}",
+                "note_version":"v2","witness":"{w}","anchor":"{a}"}}"#,
+        r = other_recipient,
+        s = other_rseed,
+        rho = other_rho,
+        w = other_witness,
+        a = other_anchor,
+    )));
+    assert_eq!(v["category"], "note_not_spendable", "{v}");
+
+    assert!(!v.to_string().contains(TEST_SEED_HEX));
+}
+
+/// ZIP 326: upstream randomizes the same-address output only for an external-scope spend.
+#[test]
+#[cfg(feature = "ironwood-tx-build")]
+fn build_ironwood_transaction_migrates_an_internal_scope_orchard_note() {
+    let to = regtest_unified_address();
+    let (tree_hex, _) = ironwood_build::test_tree_fixture(2);
+    let (recipient, rseed, rho, witness, anchor) = ironwood_build::test_orchard_note_fixture(
+        &hex::decode(TEST_SEED_HEX).unwrap(),
+        1_000_000,
+        0x77,
+        true,
+    );
+    let request = format!(
+        r#"{{"ironwood_build_version":1,"network":"regtest","target_height":10,
+                 "ironwood_tree":"{tree}","expiry_height":{expiry},
+                 "seed":"{seed}","account":0,
+                 "orchard_spends":[{{"value_zatoshis":1000000,"recipient":"{recipient}",
+                   "rseed":"{rseed}","rho":"{rho}","note_version":"v2",
+                   "witness":"{witness}","anchor":"{anchor}"}}],
+                 "ironwood_output":{{"address":"{to}"}}}}"#,
+        tree = tree_hex,
+        expiry = TEST_CANONICAL_EXPIRY,
+        seed = TEST_SEED_HEX,
+        recipient = recipient,
+        rseed = rseed,
+        rho = rho,
+        witness = witness,
+        anchor = anchor,
+        to = to,
+    );
+    let v = build_ironwood_value(&request);
+    assert_eq!(v["status"], "ok", "{v}");
+    assert_eq!(v["orchard"]["actions"], 2);
+    assert_eq!(v["ironwood"]["actions"], 1);
+}
+
+#[test]
+#[cfg(feature = "ironwood-tx-build")]
+fn build_ironwood_transaction_rejects_orchard_change_without_an_orchard_spend() {
+    // ZIP 258: Orchard change without an Orchard spend is value entering the Orchard pool.
+    let to = regtest_unified_address();
+    let (tree_hex, _) = ironwood_build::test_tree_fixture(1);
+    let request = format!(
+        r#"{{"ironwood_build_version":1,"network":"regtest","target_height":10,
+                 "ironwood_tree":"{tree}","orchard_change_zatoshis":10000,
+                 "inputs":[{{"txid":"{txid}","vout":0,"value_zatoshis":100000,"secret_key":"{sk}"}}],
+                 "ironwood_output":{{"address":"{to}"}}}}"#,
+        tree = tree_hex,
+        txid = "22".repeat(32),
+        sk = BUILD_TEST_SECRET_KEY,
+        to = to,
+    );
+    let v = build_ironwood_value(&request);
+    assert_eq!(v["category"], "orchard_change_without_spend", "{v}");
+}
+
+#[test]
+#[cfg(feature = "ironwood-tx-build")]
+fn build_ironwood_transaction_leaves_the_non_migration_shape_padded() {
+    let to = regtest_unified_address();
+    let (tree_hex, _) = ironwood_build::test_tree_fixture(2);
+    let request = format!(
+        r#"{{"ironwood_build_version":1,"network":"regtest","target_height":10,
+                 "ironwood_tree":"{tree}",
+                 "inputs":[{{"txid":"{txid}","vout":0,"value_zatoshis":100000,"secret_key":"{sk}"}}],
+                 "ironwood_output":{{"address":"{to}"}}}}"#,
+        tree = tree_hex,
+        txid = "22".repeat(32),
+        sk = BUILD_TEST_SECRET_KEY,
+        to = to,
+    );
+    let v = build_ironwood_value(&request);
+    assert_eq!(v["status"], "ok", "{v}");
+    assert_eq!(v["zip318_canonical"], false);
+    assert_eq!(v["ironwood"]["actions"], 2);
+    assert_eq!(v["orchard"]["spends"], 0);
+    assert_eq!(v["orchard"]["actions"], 0);
+}
+
 fn build_sapling_value(request: &str) -> Value {
     let req = cptr(request);
     result_value(zcash_ffi_build_sapling_transaction(req.as_ptr()))

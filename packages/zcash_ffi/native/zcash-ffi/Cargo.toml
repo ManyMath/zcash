@@ -49,11 +49,14 @@ incrementalmerkletree = { version = "0.8", optional = true }
 zcash_proofs = { version = "0.29", optional = true }
 
 [features]
+default = ["ironwood-note-discovery", "ironwood-tx-build"]
 
 # Test-only: allows `rng_seed`; without it builds refuse it (`rng_seed_not_permitted`).
 deterministic-build-rng = []
 
 orchard-note-discovery = ["dep:orchard", "dep:incrementalmerkletree"]
+
+ironwood-note-discovery = ["dep:orchard", "dep:incrementalmerkletree"]
 
 transparent-tx-build = [
     "dep:secp256k1",
@@ -88,6 +91,21 @@ orchard-tx-build = [
     "dep:rand_core",
     "dep:rand_chacha",
     "dep:orchard",
+    "zcash_primitives/transparent-inputs",
+    "zcash_primitives/non-standard-fees",
+    "zcash_protocol/local-consensus",
+]
+
+ironwood-tx-build = [
+    "dep:secp256k1",
+    "dep:sapling",
+    "dep:jubjub",
+    "dep:bls12_381",
+    "dep:rand_core",
+    "dep:rand_chacha",
+    "dep:orchard",
+    "dep:incrementalmerkletree",
+    "dep:zcash_proofs",
     "zcash_primitives/transparent-inputs",
     "zcash_primitives/non-standard-fees",
     "zcash_protocol/local-consensus",
