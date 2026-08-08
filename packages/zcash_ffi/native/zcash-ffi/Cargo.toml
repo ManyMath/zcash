@@ -23,12 +23,12 @@ prost = "0.14"
 hex = "0.4"
 bs58 = { version = "0.5", features = ["check"] }
 zcash_client_backend = { version = "0.23", features = ["orchard"] }
-zcash_keys = { version = "0.15", features = ["sapling", "orchard", "transparent-inputs"] }
+zcash_keys = { version = "0.16.1", features = ["sapling", "orchard", "transparent-inputs"] }
 zcash_primitives = "0.29"
 zcash_address = "0.13"
 zcash_protocol = { version = "0.10.0", features = ["std", "local-consensus"] }
 zcash_script = "0.4.5"
-zcash_transparent = { version = "0.9", features = ["transparent-inputs"] }
+zcash_transparent = { version = "0.10", features = ["transparent-inputs"] }
 zip32 = "0.2.1"
 equihash = { version = "0.3", features = ["solver"] }
 # 0.13, not 0.14: shares sha2 0.10 with the Zcash crates (0.14.1+ duplicates it).
@@ -42,11 +42,11 @@ rand_core = { version = "0.6", features = ["getrandom"], optional = true }
 
 rand_chacha = { version = "0.3", optional = true }
 
-orchard = { version = "0.15", optional = true }
+orchard = { version = "0.15.5", optional = true }
 
 incrementalmerkletree = { version = "0.8", optional = true }
 
-zcash_proofs = { version = "0.29", optional = true }
+zcash_proofs = { version = "0.30", optional = true }
 
 [features]
 default = ["ironwood-note-discovery", "ironwood-tx-build"]
@@ -114,6 +114,6 @@ ironwood-tx-build = [
 [dev-dependencies]
 sapling = { package = "sapling-crypto", version = "0.7" }
 zcash_client_backend = { version = "0.23", features = ["orchard", "test-dependencies"] }
-orchard = { version = "0.15", features = ["test-dependencies"] }
+orchard = { version = "0.15.5", features = ["test-dependencies"] }
 zcash_note_encryption = "0.4"
 rand = "0.8"
