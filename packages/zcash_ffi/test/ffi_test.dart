@@ -1709,6 +1709,67 @@ void main() {
       );
     });
 
+    test('a send refuses without the experimental opt-in', () {
+      expect(
+        () => prepareNativeSaplingSend(
+          network: ZcashNetwork.regtest,
+          scan: ZcashScanResult(
+            scannedBlocks: 0,
+            discoveredNotes: 0,
+            totalValue: 0,
+            notes: const [],
+          ),
+          toAddress: 'zregtestsapling1recipient',
+          changeAddress: 'zregtestsapling1mine',
+          amountZatoshis: 1000,
+          targetHeight: 200,
+          seedHex: _seed,
+          spendParamsPath: '/nonexistent/spend.params',
+          outputParamsPath: '/nonexistent/output.params',
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            allOf(
+              contains('allowExperimentalSaplingBuild'),
+              contains('sapling-spend-build'),
+              contains('does not broadcast'),
+            ),
+          ),
+        ),
+      );
+    });
+
+    test('a send refuses without the MPC parameters, before planning', () {
+      expect(
+        () => prepareNativeSaplingSend(
+          network: ZcashNetwork.regtest,
+          scan: ZcashScanResult(
+            scannedBlocks: 0,
+            discoveredNotes: 0,
+            totalValue: 0,
+            notes: const [],
+          ),
+          toAddress: 'zregtestsapling1recipient',
+          changeAddress: 'zregtestsapling1mine',
+          amountZatoshis: 1000,
+          targetHeight: 200,
+          seedHex: _seed,
+          spendParamsPath: '',
+          outputParamsPath: '',
+          allowExperimentalSaplingBuild: true,
+        ),
+        throwsA(
+          isA<ArgumentError>().having(
+            (error) => error.message.toString(),
+            'message',
+            contains('placeholder proofs'),
+          ),
+        ),
+      );
+    });
+
     test('carries the staged activation height when it is stated', () {
       final json =
           jsonDecode(
