@@ -1,0 +1,106 @@
+import 'ironwood_notes.dart';
+import 'scan.dart';
+
+enum IronwoodSelectionRefusal {
+  insufficientFunds,
+
+  insufficientSpendableNotes,
+
+  invalidAmount,
+
+  invalidFee,
+
+  tooManyNotes,
+}
+
+class IronwoodSelectionException implements Exception {
+  IronwoodSelectionException(this.refusal, this.message);
+
+  final IronwoodSelectionRefusal refusal;
+  final String message;
+
+  @override
+  String toString() => 'IronwoodSelectionException: $message';
+}
+
+class IronwoodInputSelection {
+  const IronwoodInputSelection({
+    required this.notes,
+    required this.amountZatoshis,
+    required this.feeZatoshis,
+    required this.changeZatoshis,
+  });
+
+  final List<ZcashScannedNote> notes;
+
+  final int amountZatoshis;
+
+  final int feeZatoshis;
+
+  final int changeZatoshis;
+
+  int get inputZatoshis => notes.fold(0, (sum, note) => sum + note.value);
+
+  /// [feeForSpends] must come from the builder's ZIP 317 fee quote.
+  static IronwoodInputSelection select({
+    required IronwoodNoteSet notes,
+    required int amountZatoshis,
+    required int Function(List<ZcashScannedNote> spends) feeForSpends,
+    int? maxNotes,
+  }) {
+    if (amountZatoshis <= 0) {
+      throw IronwoodSelectionException(
+        IronwoodSelectionRefusal.invalidAmount,
+        'the payment amount must be positive',
+      );
+    }
+
+    final candidates = [...notes.spendable]
+      ..sort((a, b) => a.value.compareTo(b.value));
+
+    final chosen = <ZcashScannedNote>[];
+    var total = 0;
+    for (final note in candidates) {
+      if (maxNotes != null && chosen.length >= maxNotes) {
+        throw IronwoodSelectionException(
+          IronwoodSelectionRefusal.tooManyNotes,
+          'covering $amountZatoshis zatoshis would take more than $maxNotes '
+          'notes; $total is the most $maxNotes of them hold',
+        );
+      }
+      chosen.add(note);
+      total += note.value;
+      final fee = feeForSpends(List<ZcashScannedNote>.unmodifiable(chosen));
+      if (fee < 0) {
+        throw IronwoodSelectionException(
+          IronwoodSelectionRefusal.invalidFee,
+          'the fee quote returned a negative fee for ${chosen.length} notes',
+        );
+      }
+      final required = amountZatoshis + fee;
+      if (total >= required) {
+        return IronwoodInputSelection(
+          notes: List<ZcashScannedNote>.unmodifiable(chosen),
+          amountZatoshis: amountZatoshis,
+          feeZatoshis: fee,
+          changeZatoshis: total - required,
+        );
+      }
+    }
+
+    final held = notes.unspentZatoshis;
+    if (held > total) {
+      throw IronwoodSelectionException(
+        IronwoodSelectionRefusal.insufficientSpendableNotes,
+        'the wallet holds $held zatoshis in Ironwood and can spend only $total '
+        'of it; the rest is in notes missing a witness or a nullifier. Rescan '
+        'with witness export before treating this as an insufficient balance',
+      );
+    }
+    throw IronwoodSelectionException(
+      IronwoodSelectionRefusal.insufficientFunds,
+      'the spendable Ironwood notes total $total zatoshis, which does not '
+      'cover $amountZatoshis plus its fee',
+    );
+  }
+}
