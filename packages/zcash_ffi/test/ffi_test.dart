@@ -1770,6 +1770,83 @@ void main() {
       );
     });
 
+    test('shielding into Ironwood refuses without an anchor', () {
+      expect(
+        () => prepareNativeShieldingSend(
+          network: ZcashNetwork.regtest,
+          destination: ShieldingDestination.ironwood,
+          coins: TransparentCoinSet.fromUtxos(
+            utxos: const [],
+            chainHeight: 500,
+            coinbaseOutpoints: const {},
+          ),
+          toAddress: 'uregtest1example',
+          targetHeight: 501,
+          signingKeyForCoin: (coin) => '11' * 32,
+          allowExperimentalBuild: true,
+        ),
+        throwsA(
+          isA<ShieldingException>().having(
+            (e) => e.refusal,
+            'refusal',
+            ShieldingRefusal.noIronwoodAnchor,
+          ),
+        ),
+      );
+    });
+
+    test('shielding into Sapling refuses without the MPC parameters', () {
+      expect(
+        () => prepareNativeShieldingSend(
+          network: ZcashNetwork.regtest,
+          destination: ShieldingDestination.sapling,
+          coins: TransparentCoinSet.fromUtxos(
+            utxos: const [],
+            chainHeight: 500,
+            coinbaseOutpoints: const {},
+          ),
+          toAddress: 'zregtestsapling1example',
+          targetHeight: 501,
+          signingKeyForCoin: (coin) => '11' * 32,
+          allowExperimentalBuild: true,
+        ),
+        throwsA(
+          isA<ShieldingException>().having(
+            (e) => e.refusal,
+            'refusal',
+            ShieldingRefusal.noSaplingParameters,
+          ),
+        ),
+      );
+    });
+
+    test('shielding refuses without the experimental opt-in', () {
+      expect(
+        () => prepareNativeShieldingSend(
+          network: ZcashNetwork.regtest,
+          destination: ShieldingDestination.ironwood,
+          coins: TransparentCoinSet.fromUtxos(
+            utxos: const [],
+            chainHeight: 500,
+            coinbaseOutpoints: const {},
+          ),
+          toAddress: 'uregtest1example',
+          targetHeight: 501,
+          signingKeyForCoin: (coin) => '11' * 32,
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            allOf(
+              contains('allowExperimentalBuild'),
+              contains('does not broadcast'),
+            ),
+          ),
+        ),
+      );
+    });
+
     test('carries the staged activation height when it is stated', () {
       final json =
           jsonDecode(
