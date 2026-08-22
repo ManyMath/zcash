@@ -22,9 +22,9 @@ base64 = "0.22"
 prost = "0.14"
 hex = "0.4"
 bs58 = { version = "0.5", features = ["check"] }
-zcash_client_backend = { version = "0.23", features = ["orchard"] }
+zcash_client_backend = { version = "0.24.0", features = ["orchard"] }
 zcash_keys = { version = "0.16.1", features = ["sapling", "orchard", "transparent-inputs"] }
-zcash_primitives = "0.29"
+zcash_primitives = "0.30.1"
 zcash_address = "0.13"
 zcash_protocol = { version = "0.10.0", features = ["std", "local-consensus"] }
 zcash_script = "0.4.5"
@@ -113,7 +113,7 @@ ironwood-tx-build = [
 
 [dev-dependencies]
 sapling = { package = "sapling-crypto", version = "0.7" }
-zcash_client_backend = { version = "0.23", features = ["orchard", "test-dependencies"] }
+zcash_client_backend = { version = "0.24.0", features = ["orchard", "test-dependencies"] }
 orchard = { version = "0.15.5", features = ["test-dependencies"] }
 zcash_note_encryption = "0.4"
 rand = "0.8"
