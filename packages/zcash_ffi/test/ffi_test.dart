@@ -38,6 +38,62 @@ void main() {
         expect(set.transparentAddress, equals(_expectedMainnetTAddr));
       });
 
+      test('deriveNativeDiversifierSearch returns structured metadata', () {
+        final ufvkRaw = ZcashFfiBindings.instance.seedToAccountUfvk(
+          _seed,
+          'main',
+          0,
+        );
+        final ufvk =
+            (jsonDecode(ufvkRaw) as Map<String, dynamic>)['ufvk'] as String;
+
+        final result = deriveNativeDiversifierSearch(
+          ufvk: ufvk,
+          network: ZcashNetwork.mainnet,
+          diversifierIndex: 1,
+        );
+
+        expect(result.requestedIndex, 1);
+        expect(result.nextValidIndex, greaterThanOrEqualTo(1));
+        expect(result.skippedCount, result.nextValidIndex - 1);
+        expect(result.receiverPresence.orchard, isTrue);
+        expect(result.receiverPresence.sapling, isTrue);
+        expect(result.receiverPresence.transparent, isTrue);
+        expect(result.receiverPresence.total, 3);
+        expect(result.addresses.ua, startsWith('u'));
+        expect(result.addresses.saplingAddress, startsWith('zs'));
+        expect(result.addresses.transparentAddress, startsWith('t1'));
+      });
+
+      test(
+        'deriveNativeAccountMetadata returns read-only account metadata',
+        () {
+          final metadata = deriveNativeAccountMetadata(
+            seedHex: _seed,
+            network: ZcashNetwork.mainnet,
+          );
+
+          expect(metadata.network, ZcashAddressNetwork.mainnet);
+          expect(metadata.accountIndex, 0);
+          expect(metadata.ufvk, startsWith('uview'));
+          expect(metadata.transparentAccountXpub, startsWith('xpub'));
+          expect(metadata.hasOrchard, isTrue);
+          expect(metadata.hasSapling, isTrue);
+          expect(metadata.hasTransparent, isTrue);
+          expect(metadata.receivers.total, 3);
+          expect(
+            metadata.receiverKinds.map((receiver) => receiver.kind),
+            containsAll([
+              ZcashAddressReceiverType.orchard,
+              ZcashAddressReceiverType.sapling,
+              ZcashAddressReceiverType.p2pkh,
+            ]),
+          );
+          expect(metadata.toJson().toString(), isNot(contains(_seed)));
+          expect(metadata.toJson().toString(), isNot(contains('secret-')));
+        },
+      );
+
       test(
         'deriveNativeViewingKeys returns read-only viewing-key metadata',
         () {
@@ -83,6 +139,57 @@ void main() {
           account0.sapling.defaultAddress,
           isNot(equals(account1.sapling.defaultAddress)),
         );
+      });
+
+      test('validateNativeKey accepts valid keys and flags wrong network', () {
+        final ufvkRaw = ZcashFfiBindings.instance.seedToAccountUfvk(
+          _seed,
+          'main',
+          0,
+        );
+        final ufvk =
+            (jsonDecode(ufvkRaw) as Map<String, dynamic>)['ufvk'] as String;
+
+        final valid = validateNativeKey(
+          key: ufvk,
+          keyType: ZcashKeyType.ufvk,
+          network: ZcashNetwork.mainnet,
+        );
+        expect(valid.valid, isTrue);
+        expect(valid.keyType, ZcashKeyType.ufvk);
+        expect(valid.network, ZcashAddressNetwork.mainnet);
+        expect(valid.components!.sapling, isTrue);
+
+        final wrongNetwork = validateNativeKey(
+          key: ufvk,
+          keyType: ZcashKeyType.ufvk,
+          network: ZcashNetwork.testnet,
+        );
+        expect(wrongNetwork.valid, isFalse);
+        expect(wrongNetwork.reason, ZcashKeyValidationReason.wrongNetwork);
+
+        final xpub = deriveNativeAccountMetadata(
+          seedHex: _seed,
+          network: ZcashNetwork.mainnet,
+        ).transparentAccountXpub!;
+        final xpubValid = validateNativeKey(
+          key: xpub,
+          keyType: ZcashKeyType.transparentXpub,
+          network: ZcashNetwork.mainnet,
+        );
+        expect(xpubValid.valid, isTrue);
+      });
+
+      test('validateNativeKey reports invalid for garbage without echo', () {
+        const garbage = 'uview-garbage-with-user-input';
+        final result = validateNativeKey(
+          key: garbage,
+          keyType: ZcashKeyType.ufvk,
+          network: ZcashNetwork.mainnet,
+        );
+        expect(result.valid, isFalse);
+        expect(result.reason, ZcashKeyValidationReason.invalid);
+        expect(result.toJson().toString(), isNot(contains(garbage)));
       });
 
       test('deriveTransparentAddress child 0 matches expected', () async {
@@ -402,6 +509,27 @@ void main() {
         expect(set0.ua, isNot(equals(set1.ua)));
       });
 
+      test('deriveNativeAccountMetadata account indices differ', () {
+        final account0 = deriveNativeAccountMetadata(
+          seedHex: _seed,
+          network: ZcashNetwork.testnet,
+          accountIndex: 0,
+        );
+        final account1 = deriveNativeAccountMetadata(
+          seedHex: _seed,
+          network: ZcashNetwork.testnet,
+          accountIndex: 1,
+        );
+
+        expect(account0.network, ZcashAddressNetwork.testnet);
+        expect(account1.accountIndex, 1);
+        expect(account0.ufvk, isNot(equals(account1.ufvk)));
+        expect(
+          account0.transparentAccountXpub,
+          isNot(equals(account1.transparentAccountXpub)),
+        );
+      });
+
       test(
         'deriveSaplingSpendingKey returns deterministic zcashd import key',
         () async {
@@ -442,6 +570,25 @@ void main() {
         expect(raw, isNot(contains('000102')));
       });
 
+      test('deriveNativeDiversifierSearch rejects out-of-range index', () {
+        expect(
+          () => deriveNativeDiversifierSearch(
+            ufvk: 'uviewtest-secret-that-must-not-leak',
+            network: ZcashNetwork.testnet,
+            diversifierIndex: -1,
+          ),
+          throwsRangeError,
+        );
+        expect(
+          () => deriveNativeDiversifierSearch(
+            ufvk: 'uviewtest-secret-that-must-not-leak',
+            network: ZcashNetwork.testnet,
+            diversifierIndex: 0x100000000,
+          ),
+          throwsRangeError,
+        );
+      });
+
       test('different diversifier indices produce different UAs', () async {
         final set0 = await deriveAddress(
           seedHex: _seed,
@@ -478,6 +625,81 @@ void main() {
         final result = solveEquihash(header);
         expect(result.nonce, hasLength(32));
         expect(result.solution, hasLength(1344));
+      });
+    },
+  );
+
+  group(
+    'FFI memo read (not gated)',
+    skip: _libAvailable ? false : 'ZCASH_FFI_LIB not set',
+    () {
+      String ufvk() => deriveNativeAccountMetadata(
+        seedHex: _seed,
+        network: ZcashNetwork.testnet,
+      ).ufvk;
+
+      test(
+        'an output that is not this wallet\'s reads as null, not an error',
+        () {
+          final memo = readNativeNoteMemo(
+            network: ZcashNetwork.testnet,
+            transactionHex: _v5TransparentTxHex,
+            pool: ZcashMemoPool.sapling,
+            outputIndex: 0,
+            ufvk: ufvk(),
+          );
+
+          expect(memo, isNull);
+        },
+      );
+
+      test('every pool answers the same way, separately', () {
+        for (final pool in ZcashMemoPool.values) {
+          expect(
+            readNativeNoteMemo(
+              network: ZcashNetwork.testnet,
+              transactionHex: _v5TransparentTxHex,
+              pool: pool,
+              outputIndex: 0,
+              ufvk: ufvk(),
+            ),
+            isNull,
+            reason: 'a transparent transaction has no ${pool.jsonValue} output',
+          );
+        }
+      });
+
+      test('a malformed transaction is refused without echoing the key', () {
+        final key = ufvk();
+        expect(
+          () => readNativeNoteMemo(
+            network: ZcashNetwork.testnet,
+            transactionHex: 'nothexzz',
+            pool: ZcashMemoPool.sapling,
+            outputIndex: 0,
+            ufvk: key,
+          ),
+          throwsA(
+            isA<StateError>().having(
+              (error) => error.message,
+              'message',
+              allOf(contains('invalid_transaction'), isNot(contains(key))),
+            ),
+          ),
+        );
+      });
+
+      test('a negative output index is refused before the native call', () {
+        expect(
+          () => readNativeNoteMemo(
+            network: ZcashNetwork.testnet,
+            transactionHex: _v5TransparentTxHex,
+            pool: ZcashMemoPool.sapling,
+            outputIndex: -1,
+            ufvk: ufvk(),
+          ),
+          throwsArgumentError,
+        );
       });
     },
   );

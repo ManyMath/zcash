@@ -86,6 +86,11 @@ external Pointer<Utf8> _zcashFfiMnemonicToSeed(
   Pointer<Utf8> p1,
 );
 
+@Native<Pointer<Utf8> Function(Pointer<Utf8>)>(
+  symbol: 'zcash_ffi_read_note_memo',
+)
+external Pointer<Utf8> _zcashFfiReadNoteMemo(Pointer<Utf8> p0);
+
 @Native<Pointer<Utf8> Function(Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>)>(
   symbol: 'zcash_ffi_scan_compact_blocks',
 )
@@ -253,6 +258,10 @@ final Map<String, Pointer<Void> Function()> _addresses = {
             NativeFunction<Pointer<Utf8> Function(Pointer<Utf8>, Pointer<Utf8>)>
           >(_zcashFfiMnemonicToSeed)
           .cast(),
+  'zcash_ffi_read_note_memo': () =>
+      Native.addressOf<NativeFunction<Pointer<Utf8> Function(Pointer<Utf8>)>>(
+        _zcashFfiReadNoteMemo,
+      ).cast(),
   'zcash_ffi_scan_compact_blocks': () =>
       Native.addressOf<
             NativeFunction<

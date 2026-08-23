@@ -28,6 +28,7 @@ export 'src/models/ironwood_build.dart';
 export 'src/models/ironwood_notes.dart';
 export 'src/models/sapling_notes.dart';
 export 'src/models/orchard_notes.dart';
+export 'src/models/note_memo.dart';
 export 'src/models/transparent_coins.dart';
 export 'src/models/transparent_selection.dart';
 export 'src/models/sapling_selection.dart';

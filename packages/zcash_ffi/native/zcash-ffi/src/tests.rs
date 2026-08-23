@@ -2380,6 +2380,283 @@ fn build_ironwood_transaction_accepts_a_declared_empty_tree() {
     assert_eq!(v["ironwood"]["actions"], 2);
 }
 
+fn read_memo_value(request: &str) -> Value {
+    let c = cptr(request);
+    result_value(zcash_ffi_read_note_memo(c.as_ptr()))
+}
+
+#[test]
+fn read_note_memo_refuses_an_unknown_envelope_version() {
+    let ufvk = account_ufvk(&cptr("regtest"));
+    let (tx_hex, _) = build_v5_tx_hex(1, 1);
+    let v = read_memo_value(&format!(
+        r#"{{"memo_read_version":999,"network":"regtest","transaction":"{tx_hex}",
+                 "pool":"sapling","output_index":0,"ufvk":"{ufvk}"}}"#
+    ));
+    assert_eq!(v["status"], "error");
+    assert_eq!(v["category"], "unsupported_memo_read_version");
+}
+
+#[test]
+fn read_note_memo_refuses_an_unknown_pool_without_echoing_it() {
+    let ufvk = account_ufvk(&cptr("regtest"));
+    let (tx_hex, _) = build_v5_tx_hex(1, 1);
+    let v = read_memo_value(&format!(
+        r#"{{"memo_read_version":1,"network":"regtest","transaction":"{tx_hex}",
+                 "pool":"sprout","output_index":0,"ufvk":"{ufvk}"}}"#
+    ));
+    assert_eq!(v["status"], "error");
+    assert_eq!(v["category"], "invalid_pool");
+    assert!(
+        !v.to_string().contains("sprout"),
+        "a failure path reports what was expected, not what it was handed"
+    );
+}
+
+#[test]
+fn read_note_memo_refuses_a_malformed_transaction() {
+    let ufvk = account_ufvk(&cptr("regtest"));
+    let v = read_memo_value(&format!(
+        r#"{{"memo_read_version":1,"network":"regtest","transaction":"zz",
+                 "pool":"sapling","output_index":0,"ufvk":"{ufvk}"}}"#
+    ));
+    assert_eq!(v["status"], "error");
+    assert_eq!(v["category"], "invalid_transaction");
+}
+
+#[test]
+fn read_note_memo_never_echoes_the_viewing_key() {
+    let ufvk = account_ufvk(&cptr("regtest"));
+    let (tx_hex, _) = build_v5_tx_hex(1, 1);
+    let refused = read_memo_value(&format!(
+        r#"{{"memo_read_version":1,"network":"regtest","transaction":"nothex",
+                 "pool":"sapling","output_index":0,"ufvk":"{ufvk}"}}"#
+    ));
+    assert!(!refused.to_string().contains(&ufvk));
+
+    let ok = read_memo_value(&format!(
+        r#"{{"memo_read_version":1,"network":"regtest","transaction":"{tx_hex}",
+                 "pool":"sapling","output_index":0,"ufvk":"{ufvk}"}}"#
+    ));
+    assert!(!ok.to_string().contains(&ufvk));
+}
+
+#[test]
+fn read_note_memo_reports_not_for_this_key_rather_than_an_error() {
+    let ufvk = account_ufvk(&cptr("regtest"));
+    let (tx_hex, _) = build_v5_tx_hex(1, 1);
+    for pool in ["sapling", "orchard", "ironwood"] {
+        let v = read_memo_value(&format!(
+            r#"{{"memo_read_version":1,"network":"regtest","transaction":"{tx_hex}",
+                     "pool":"{pool}","output_index":0,"ufvk":"{ufvk}"}}"#
+        ));
+        assert_eq!(v["status"], "ok", "{v}");
+        assert_eq!(v["outcome"], "not_for_this_key");
+        assert_eq!(v["pool"], pool);
+        assert!(v["memo"].is_null());
+        assert!(
+            v.get("value_zatoshis").is_none(),
+            "a note that was not decrypted has no value to report"
+        );
+    }
+}
+
+#[test]
+fn read_note_memo_refuses_an_invalid_ufvk() {
+    let (tx_hex, _) = build_v5_tx_hex(1, 1);
+    let v = read_memo_value(&format!(
+        r#"{{"memo_read_version":1,"network":"regtest","transaction":"{tx_hex}",
+                 "pool":"sapling","output_index":0,"ufvk":"uview1notakey"}}"#
+    ));
+    assert_eq!(v["status"], "error");
+    assert_eq!(v["category"], "invalid_ufvk");
+}
+
+#[cfg(feature = "ironwood-tx-build")]
+fn ironwood_tx_with_memo(memo_field: &str) -> String {
+    let to = regtest_unified_address();
+    let change = ironwood_build::test_regtest_transparent_address();
+    let (tree_hex, _) = ironwood_build::test_tree_fixture(1);
+    let request = format!(
+        r#"{{"ironwood_build_version":1,"network":"regtest","target_height":10,
+                 "ironwood_tree":"{tree}","fee_zatoshis":12000,
+                 "inputs":[{{"txid":"{txid}","vout":0,"value_zatoshis":100000,"secret_key":"{sk}"}}],
+                 "outputs":[{{"address":"{change}","value_zatoshis":30000}}],
+                 "ironwood_output":{{"address":"{to}","value_zatoshis":58000{memo}}}}}"#,
+        tree = tree_hex,
+        txid = "22".repeat(32),
+        sk = BUILD_TEST_SECRET_KEY,
+        change = change,
+        to = to,
+        memo = memo_field,
+    );
+    let v = build_ironwood_value(&request);
+    assert_eq!(v["status"], "ok", "{v}");
+    v["transaction"]
+        .as_str()
+        .expect("transaction hex")
+        .to_owned()
+}
+
+#[cfg(any(
+    feature = "ironwood-tx-build",
+    feature = "orchard-tx-build",
+    feature = "sapling-spend-build"
+))]
+fn decrypted_memos(pool: &str, tx_hex: &str, ufvk: &str, upto: usize, extra: &str) -> Vec<Value> {
+    (0..upto)
+        .map(|index| {
+            read_memo_value(&format!(
+                r#"{{"memo_read_version":1,"network":"regtest","transaction":"{tx_hex}",
+                         "pool":"{pool}","output_index":{index},"ufvk":"{ufvk}"{extra}}}"#
+            ))
+        })
+        .inspect(|v| assert_eq!(v["status"], "ok", "{v}"))
+        .filter(|v| v["outcome"] == "decrypted")
+        .collect()
+}
+
+#[cfg(feature = "ironwood-tx-build")]
+fn ironwood_memos(tx_hex: &str, ufvk: &str) -> Vec<Value> {
+    decrypted_memos("ironwood", tx_hex, ufvk, 6, "")
+}
+
+#[test]
+#[cfg(feature = "ironwood-tx-build")]
+fn a_memo_this_repo_wrote_is_a_memo_this_repo_can_read() {
+    let memo = b"a note for you";
+    let tx_hex = ironwood_tx_with_memo(&format!(r#","memo":"{}""#, hex::encode(memo)));
+    let ufvk = account_ufvk(&cptr("regtest"));
+
+    let mine = ironwood_memos(&tx_hex, &ufvk);
+    assert_eq!(
+        mine.len(),
+        1,
+        "one action of this transaction is addressed to this account, and \
+             the padding is not: {mine:?}"
+    );
+    assert_eq!(mine[0]["memo"], hex::encode(memo));
+    assert_eq!(mine[0]["is_empty_memo"], false);
+    assert_eq!(mine[0]["value_zatoshis"], 58000);
+    assert_eq!(mine[0]["pool"], "ironwood");
+    assert!(
+        !mine[0].to_string().contains(&ufvk),
+        "the answer names the output that was asked about, never the key"
+    );
+}
+
+#[test]
+#[cfg(feature = "ironwood-tx-build")]
+fn the_empty_memo_reads_as_no_memo() {
+    let tx_hex = ironwood_tx_with_memo("");
+    let ufvk = account_ufvk(&cptr("regtest"));
+
+    let mine = ironwood_memos(&tx_hex, &ufvk);
+    assert_eq!(mine.len(), 1);
+    assert_eq!(mine[0]["is_empty_memo"], true);
+    assert!(mine[0]["memo"].is_null());
+    assert_eq!(mine[0]["value_zatoshis"], 58000);
+}
+
+#[test]
+#[cfg(feature = "orchard-tx-build")]
+fn an_orchard_memo_this_repo_wrote_is_read_back() {
+    let memo = b"an orchard note";
+    let to = orchard_regtest_unified_address();
+    let change = orchard_build::test_regtest_transparent_address();
+    let (tree_hex, _) = orchard_build::test_tree_fixture(1);
+    let request = format!(
+        r#"{{"orchard_build_version":1,"network":"regtest","target_height":10,
+                 "orchard_tree":"{tree}","fee_zatoshis":12000,"rng_seed":"{seed}",
+                 "inputs":[{{"txid":"{txid}","vout":0,"value_zatoshis":100000,"secret_key":"{sk}"}}],
+                 "outputs":[{{"address":"{change}","value_zatoshis":30000}}],
+                 "orchard_output":{{"address":"{to}","value_zatoshis":58000,"memo":"{memo}"}}}}"#,
+        tree = tree_hex,
+        seed = "09".repeat(32),
+        txid = "22".repeat(32),
+        sk = BUILD_TEST_SECRET_KEY,
+        change = change,
+        to = to,
+        memo = hex::encode(memo),
+    );
+    let v = build_orchard_value(&request);
+    assert_eq!(v["status"], "ok", "{v}");
+    let tx_hex = v["transaction"].as_str().expect("transaction hex");
+
+    let ufvk = account_ufvk(&cptr("regtest"));
+    let mine = decrypted_memos("orchard", tx_hex, &ufvk, 6, "");
+    assert_eq!(
+        mine.len(),
+        1,
+        "one action is addressed to this account and the padding is not: \
+             {mine:?}"
+    );
+    assert_eq!(mine[0]["memo"], hex::encode(memo));
+    assert_eq!(mine[0]["is_empty_memo"], false);
+    assert_eq!(mine[0]["value_zatoshis"], 58000);
+    assert_eq!(mine[0]["pool"], "orchard");
+    assert!(!mine[0].to_string().contains(&ufvk));
+
+    assert!(decrypted_memos("ironwood", tx_hex, &ufvk, 6, "").is_empty());
+}
+
+#[test]
+#[cfg(feature = "sapling-spend-build")]
+fn a_sapling_memo_this_repo_wrote_is_read_back() {
+    let memo = b"a sapling note";
+    let to = regtest_sapling_address();
+    let request = format!(
+        r#"{{"sapling_build_version":1,"network":"regtest","target_height":140,
+                 "regtest_nu63_activation_height":130,
+                 "fee_zatoshis":15000,"seed":"{seed}","account":0,
+                 "inputs":[{{"txid":"{txid}","vout":0,"value_zatoshis":100000,
+                   "secret_key":"{sk}"}}],
+                 "outputs":[{{"address":"{to}","value_zatoshis":85000,"memo":"{memo}"}}]}}"#,
+        seed = TEST_SEED_HEX,
+        txid = "33".repeat(32),
+        sk = BUILD_TEST_SECRET_KEY,
+        to = to,
+        memo = hex::encode(memo),
+    );
+    let v = build_sapling_value(&request);
+    assert_eq!(v["status"], "ok", "{v}");
+    let tx_hex = v["transaction"].as_str().expect("transaction hex");
+
+    let ufvk = account_ufvk(&cptr("regtest"));
+    let extra = r#","mined_height":140,"regtest_nu63_activation_height":130"#;
+    let mine = decrypted_memos("sapling", tx_hex, &ufvk, 4, extra);
+    assert_eq!(
+        mine.len(),
+        1,
+        "one output is this account's; the bundle's padding output is a \
+             dummy addressed to nobody: {mine:?}"
+    );
+    assert_eq!(mine[0]["memo"], hex::encode(memo));
+    assert_eq!(mine[0]["is_empty_memo"], false);
+    assert_eq!(mine[0]["value_zatoshis"], 85000);
+    assert_eq!(mine[0]["pool"], "sapling");
+    assert!(!mine[0].to_string().contains(&ufvk));
+    assert!(!mine[0].to_string().contains(TEST_SEED_HEX));
+
+    assert!(decrypted_memos("orchard", tx_hex, &ufvk, 4, extra).is_empty());
+}
+
+#[test]
+#[cfg(feature = "ironwood-tx-build")]
+fn the_same_note_read_under_the_wrong_pool_is_not_found() {
+    let tx_hex = ironwood_tx_with_memo(&format!(r#","memo":"{}""#, hex::encode(b"hello")));
+    let ufvk = account_ufvk(&cptr("regtest"));
+
+    for index in 0..6 {
+        let v = read_memo_value(&format!(
+            r#"{{"memo_read_version":1,"network":"regtest","transaction":"{tx_hex}",
+                     "pool":"orchard","output_index":{index},"ufvk":"{ufvk}"}}"#
+        ));
+        assert_eq!(v["status"], "ok", "{v}");
+        assert_eq!(v["outcome"], "not_for_this_key");
+    }
+}
+
 #[test]
 #[cfg(feature = "ironwood-tx-build")]
 fn build_ironwood_transaction_pays_transparent_change_with_a_fixed_fee() {

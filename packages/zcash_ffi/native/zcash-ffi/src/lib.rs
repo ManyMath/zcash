@@ -2927,6 +2927,26 @@ pub extern "C" fn zcash_ffi_build_sapling_transaction(request_ptr: *const c_char
     }
 }
 
+/// `mined_height` selects ZIP 212 enforcement and should be given for a mined transaction.
+#[no_mangle]
+pub extern "C" fn zcash_ffi_read_note_memo(request_ptr: *const c_char) -> *mut c_char {
+    let request = match c_str_to_str(request_ptr) {
+        Ok(s) => s,
+        Err(FfiStringError::Null) => return json_err("null_pointer", "null request pointer"),
+        Err(FfiStringError::MalformedUtf8) => {
+            return json_err("malformed_utf8", "request is not valid UTF-8")
+        }
+    };
+    let value: Value = match serde_json::from_str(request) {
+        Ok(v) => v,
+        Err(_) => return json_err("invalid_json", "request is not valid JSON"),
+    };
+    match memo_read::read_note_memo_json(&value) {
+        Ok(v) => json_success(v),
+        Err((category, message)) => json_err(&category, &message),
+    }
+}
+
 #[no_mangle]
 pub extern "C" fn zcash_ffi_build_orchard_transaction(request_ptr: *const c_char) -> *mut c_char {
     let request = match c_str_to_str(request_ptr) {
@@ -3006,6 +3026,8 @@ mod transparent_build;
 
 /// Regtest with a movable NU6.3 height, so pre-activation Orchard notes can exist (ZIP 258).
 mod staged_regtest;
+
+mod memo_read;
 
 #[cfg(feature = "orchard-tx-build")]
 mod orchard_build;

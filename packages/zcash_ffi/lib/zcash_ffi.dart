@@ -7,6 +7,7 @@ export 'src/ffi/consensus_utils.dart';
 export 'src/ffi/ironwood_build_request.dart';
 export 'src/ffi/ironwood_send.dart';
 export 'src/ffi/mnemonic.dart';
+export 'src/ffi/note_memo_read.dart';
 export 'src/ffi/orchard_build_request.dart';
 export 'src/ffi/mining_utils.dart';
 export 'src/ffi/sapling_build_request.dart';

@@ -177,6 +177,11 @@ class ZcashFfiBindings {
         'zcash_ffi_build_sapling_transaction',
       ).asFunction<Pointer<Utf8> Function(Pointer<Utf8>)>();
 
+  late final _readNoteMemo =
+      _symbol<NativeFunction<Pointer<Utf8> Function(Pointer<Utf8>)>>(
+        'zcash_ffi_read_note_memo',
+      ).asFunction<Pointer<Utf8> Function(Pointer<Utf8>)>();
+
   late final _buildOrchardTransaction =
       _symbol<NativeFunction<Pointer<Utf8> Function(Pointer<Utf8>)>>(
         'zcash_ffi_build_orchard_transaction',
@@ -413,6 +418,15 @@ class ZcashFfiBindings {
     final requestPtr = requestJson.toNativeUtf8();
     try {
       return _takeString(_buildSaplingTransaction(requestPtr));
+    } finally {
+      calloc.free(requestPtr);
+    }
+  }
+
+  String readNoteMemo(String requestJson) {
+    final requestPtr = requestJson.toNativeUtf8();
+    try {
+      return _takeString(_readNoteMemo(requestPtr));
     } finally {
       calloc.free(requestPtr);
     }
