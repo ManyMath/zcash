@@ -1,6 +1,8 @@
 import 'dart:async';
 
 import 'package:zcash/zcash.dart';
+
+import 'compact_block_request.dart';
 import 'ironwood_build_request.dart';
 import 'native_result.dart';
 import 'orchard_build_request.dart';
@@ -466,6 +468,33 @@ SaplingFeeQuote quoteNativeSaplingFee({
     redactSensitive: [seedHex, for (final input in inputs) input.secretKeyHex],
   );
   return SaplingFeeQuote.fromJson(json);
+}
+
+ZcashCompactBlockConversion convertNativeRawBlocks({
+  required String network,
+  required Iterable<String> rawBlockHex,
+  int priorSaplingSize = 0,
+  int priorOrchardSize = 0,
+  int priorIronwoodSize = 0,
+  int? regtestNu63ActivationHeight,
+  ZcashFfiBindings? bindings,
+}) {
+  final ffi = bindings ?? ZcashFfiBindings.instance;
+  final raw = ffi.compactBlocksFromRawBlocks(
+    encodeCompactBlockRequest(
+      network: network,
+      rawBlockHex: rawBlockHex,
+      priorSaplingSize: priorSaplingSize,
+      priorOrchardSize: priorOrchardSize,
+      priorIronwoodSize: priorIronwoodSize,
+      regtestNu63ActivationHeight: regtestNu63ActivationHeight,
+    ),
+  );
+  final json = parseNativeJsonObject(
+    raw,
+    context: 'compact_blocks_from_raw_blocks/DynamicLibrary',
+  );
+  return ZcashCompactBlockConversion.fromJson(json);
 }
 
 OrchardBuildResult buildNativeOrchardTransaction({

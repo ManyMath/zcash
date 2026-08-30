@@ -41,6 +41,11 @@ external Pointer<Utf8> _zcashFfiClassifyTransparentAddress(
 )
 external Pointer<Utf8> _zcashFfiClassifyTransparentScript(Pointer<Utf8> p0);
 
+@Native<Pointer<Utf8> Function(Pointer<Utf8>)>(
+  symbol: 'zcash_ffi_compact_blocks_from_raw_blocks',
+)
+external Pointer<Utf8> _zcashFfiCompactBlocksFromRawBlocks(Pointer<Utf8> p0);
+
 @Native<Pointer<Utf8> Function(Pointer<Utf8>, Pointer<Utf8>)>(
   symbol: 'zcash_ffi_decode_address',
 )
@@ -222,6 +227,10 @@ final Map<String, Pointer<Void> Function()> _addresses = {
   'zcash_ffi_classify_transparent_script': () =>
       Native.addressOf<NativeFunction<Pointer<Utf8> Function(Pointer<Utf8>)>>(
         _zcashFfiClassifyTransparentScript,
+      ).cast(),
+  'zcash_ffi_compact_blocks_from_raw_blocks': () =>
+      Native.addressOf<NativeFunction<Pointer<Utf8> Function(Pointer<Utf8>)>>(
+        _zcashFfiCompactBlocksFromRawBlocks,
       ).cast(),
   'zcash_ffi_decode_address': () =>
       Native.addressOf<

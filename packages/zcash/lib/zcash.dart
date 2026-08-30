@@ -23,6 +23,7 @@ export 'src/models/spend.dart';
 export 'src/models/proposal.dart';
 export 'src/models/transparent_build.dart';
 export 'src/models/sapling_build.dart';
+export 'src/models/compact_block_conversion.dart';
 export 'src/models/orchard_build.dart';
 export 'src/models/ironwood_build.dart';
 export 'src/models/ironwood_notes.dart';

@@ -2948,6 +2948,27 @@ pub extern "C" fn zcash_ffi_read_note_memo(request_ptr: *const c_char) -> *mut c
 }
 
 #[no_mangle]
+pub extern "C" fn zcash_ffi_compact_blocks_from_raw_blocks(
+    request_ptr: *const c_char,
+) -> *mut c_char {
+    let request = match c_str_to_str(request_ptr) {
+        Ok(s) => s,
+        Err(FfiStringError::Null) => return json_err("null_pointer", "null request pointer"),
+        Err(FfiStringError::MalformedUtf8) => {
+            return json_err("malformed_utf8", "request is not valid UTF-8")
+        }
+    };
+    let value: Value = match serde_json::from_str(request) {
+        Ok(v) => v,
+        Err(_) => return json_err("invalid_json", "request is not valid JSON"),
+    };
+    match compact_block_adapter::compact_blocks_from_raw_blocks_json(&value) {
+        Ok(v) => json_success(v),
+        Err((category, message)) => json_err(&category, &message),
+    }
+}
+
+#[no_mangle]
 pub extern "C" fn zcash_ffi_build_orchard_transaction(request_ptr: *const c_char) -> *mut c_char {
     let request = match c_str_to_str(request_ptr) {
         Ok(s) => s,
@@ -3028,6 +3049,8 @@ mod transparent_build;
 mod staged_regtest;
 
 mod memo_read;
+
+mod compact_block_adapter;
 
 #[cfg(feature = "orchard-tx-build")]
 mod orchard_build;

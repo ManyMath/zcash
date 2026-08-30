@@ -1052,6 +1052,40 @@ void main() {
     },
   );
 
+  group('Compact-block conversion request shape (no FFI)', () {
+    Map<String, Object?> decode(String json) =>
+        (jsonDecode(json) as Map).cast<String, Object?>();
+
+    test('carries the prior tree sizes a mid-chain range needs', () {
+      final request = decode(
+        encodeCompactBlockRequest(
+          network: 'regtest',
+          rawBlockHex: const ['00aa'],
+          priorSaplingSize: 7,
+          priorOrchardSize: 9,
+          priorIronwoodSize: 3,
+          regtestNu63ActivationHeight: 130,
+        ),
+      );
+      expect(request['compact_block_version'], compactBlockRequestVersion);
+      expect(request['network'], 'regtest');
+      expect(request['prior_sapling_size'], 7);
+      expect(request['prior_orchard_size'], 9);
+      expect(request['prior_ironwood_size'], 3);
+      expect(request['regtest_nu63_activation_height'], 130);
+      expect(request['blocks'], ['00aa']);
+    });
+
+    test('omits the activation height when the chain is not staged', () {
+      final request = decode(
+        encodeCompactBlockRequest(network: 'main', rawBlockHex: const []),
+      );
+      expect(request.containsKey('regtest_nu63_activation_height'), isFalse);
+      expect(request['prior_orchard_size'], 0);
+      expect(request['blocks'], isEmpty);
+    });
+  });
+
   group('Orchard build request shape (pre-NU6.3 setup path, no FFI)', () {
     final inputs = [
       TransparentBuildInput(
