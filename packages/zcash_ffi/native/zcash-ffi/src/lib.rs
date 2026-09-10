@@ -49,6 +49,57 @@ pub extern "C" fn zcash_ffi_version() -> *mut c_char {
     CString::new(VERSION).unwrap().into_raw()
 }
 
+#[no_mangle]
+pub extern "C" fn zcash_ffi_capabilities() -> *mut c_char {
+    json_success(json!({
+        "capabilities": {
+            "unified_address_derivation": "supported",
+            "transparent_address_derivation": "supported",
+            "sapling_scan": "supported",
+            "equihash_solver": "supported",
+            "orchard_receiver_exposure": "exposed",
+            "orchard_compact_block_parsing": "parsedOnly",
+            "orchard_note_discovery": ORCHARD_NOTE_DISCOVERY_STATUS,
+            "transparent_transaction_build": TRANSPARENT_TX_BUILD_STATUS,
+            "sapling_transaction_build": SAPLING_TX_BUILD_STATUS,
+            "orchard_transaction_build": ORCHARD_TX_BUILD_STATUS,
+            "ironwood_note_discovery": IRONWOOD_NOTE_DISCOVERY_STATUS,
+            "ironwood_transaction_build": IRONWOOD_TX_BUILD_STATUS,
+            "memo_read": "supported",
+        }
+    }))
+}
+
+#[cfg(not(feature = "ironwood-note-discovery"))]
+const IRONWOOD_NOTE_DISCOVERY_STATUS: &str = "unsupported";
+#[cfg(feature = "ironwood-note-discovery")]
+const IRONWOOD_NOTE_DISCOVERY_STATUS: &str = "supported";
+
+#[cfg(not(feature = "ironwood-tx-build"))]
+const IRONWOOD_TX_BUILD_STATUS: &str = "unsupported";
+#[cfg(feature = "ironwood-tx-build")]
+const IRONWOOD_TX_BUILD_STATUS: &str = "supported";
+
+#[cfg(not(feature = "sapling-spend-build"))]
+const SAPLING_TX_BUILD_STATUS: &str = "unsupported";
+#[cfg(feature = "sapling-spend-build")]
+const SAPLING_TX_BUILD_STATUS: &str = "experimental";
+
+#[cfg(not(feature = "transparent-tx-build"))]
+const TRANSPARENT_TX_BUILD_STATUS: &str = "unsupported";
+#[cfg(feature = "transparent-tx-build")]
+const TRANSPARENT_TX_BUILD_STATUS: &str = "experimental";
+
+#[cfg(not(feature = "orchard-tx-build"))]
+const ORCHARD_TX_BUILD_STATUS: &str = "unsupported";
+#[cfg(feature = "orchard-tx-build")]
+const ORCHARD_TX_BUILD_STATUS: &str = "experimental";
+
+#[cfg(not(feature = "orchard-note-discovery"))]
+const ORCHARD_NOTE_DISCOVERY_STATUS: &str = "unsupported";
+#[cfg(feature = "orchard-note-discovery")]
+const ORCHARD_NOTE_DISCOVERY_STATUS: &str = "experimental";
+
 /// # Safety
 ///
 /// `ptr` is null or an unfreed string from a `zcash_ffi_*` export.

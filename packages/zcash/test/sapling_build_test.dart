@@ -108,6 +108,50 @@ void main() {
     });
   });
 
+  group('capability matrix', () {
+    test('documents sapling transaction build as unsupported by default', () {
+      expect(
+        NativeCapabilitySnapshot.documented.statusFor(
+          NativeCapability.saplingTransactionBuild,
+        ),
+        CapabilityStatus.unsupported,
+      );
+    });
+
+    test('round-trips the sapling build capability key through JSON', () {
+      final snapshot = NativeCapabilitySnapshot.fromJson({
+        'capabilities': {
+          'unified_address_derivation': 'supported',
+          'transparent_address_derivation': 'supported',
+          'sapling_scan': 'supported',
+          'equihash_solver': 'supported',
+          'orchard_receiver_exposure': 'exposed',
+          'orchard_compact_block_parsing': 'parsedOnly',
+          'orchard_note_discovery': 'unsupported',
+          'transparent_transaction_build': 'unsupported',
+          'sapling_transaction_build': 'experimental',
+        },
+      });
+      expect(
+        snapshot.statusFor(NativeCapability.saplingTransactionBuild),
+        CapabilityStatus.experimental,
+      );
+    });
+
+    test(
+      'reports sapling nativeTransactionBuild as unsupported in the matrix',
+      () {
+        expect(
+          ShieldedCapabilityMatrix.current.statusFor(
+            ShieldedPool.sapling,
+            CapabilitySurface.nativeTransactionBuild,
+          ),
+          CapabilityStatus.unsupported,
+        );
+      },
+    );
+  });
+
   group('SaplingFeeQuote', () {
     Map<String, Object?> validQuote() => {
       'quote_only': true,

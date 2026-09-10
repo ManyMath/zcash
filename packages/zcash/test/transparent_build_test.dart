@@ -53,4 +53,47 @@ void main() {
       );
     });
   });
+
+  group('capability matrix', () {
+    test(
+      'documents transparent transaction build as unsupported by default',
+      () {
+        expect(
+          NativeCapabilitySnapshot.documented.statusFor(
+            NativeCapability.transparentTransactionBuild,
+          ),
+          CapabilityStatus.unsupported,
+        );
+      },
+    );
+
+    test('round-trips the new native capability key through JSON', () {
+      final snapshot = NativeCapabilitySnapshot.fromJson({
+        'capabilities': {
+          'unified_address_derivation': 'supported',
+          'transparent_address_derivation': 'supported',
+          'sapling_scan': 'supported',
+          'equihash_solver': 'supported',
+          'orchard_receiver_exposure': 'exposed',
+          'orchard_compact_block_parsing': 'parsedOnly',
+          'orchard_note_discovery': 'unsupported',
+          'transparent_transaction_build': 'experimental',
+        },
+      });
+      expect(
+        snapshot.statusFor(NativeCapability.transparentTransactionBuild),
+        CapabilityStatus.experimental,
+      );
+    });
+
+    test('reports transparent walletSend as unsupported in the matrix', () {
+      expect(
+        ShieldedCapabilityMatrix.current.statusFor(
+          ShieldedPool.transparent,
+          CapabilitySurface.walletSend,
+        ),
+        CapabilityStatus.unsupported,
+      );
+    });
+  });
 }

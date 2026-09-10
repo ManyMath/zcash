@@ -28,6 +28,9 @@ external Pointer<Utf8> _zcashFfiBuildSaplingTransaction(Pointer<Utf8> p0);
 )
 external Pointer<Utf8> _zcashFfiBuildTransparentTransaction(Pointer<Utf8> p0);
 
+@Native<Pointer<Utf8> Function()>(symbol: 'zcash_ffi_capabilities')
+external Pointer<Utf8> _zcashFfiCapabilities();
+
 @Native<Pointer<Utf8> Function(Pointer<Utf8>, Pointer<Utf8>)>(
   symbol: 'zcash_ffi_classify_transparent_address',
 )
@@ -218,6 +221,10 @@ final Map<String, Pointer<Void> Function()> _addresses = {
   'zcash_ffi_build_transparent_transaction': () =>
       Native.addressOf<NativeFunction<Pointer<Utf8> Function(Pointer<Utf8>)>>(
         _zcashFfiBuildTransparentTransaction,
+      ).cast(),
+  'zcash_ffi_capabilities': () =>
+      Native.addressOf<NativeFunction<Pointer<Utf8> Function()>>(
+        _zcashFfiCapabilities,
       ).cast(),
   'zcash_ffi_classify_transparent_address': () =>
       Native.addressOf<

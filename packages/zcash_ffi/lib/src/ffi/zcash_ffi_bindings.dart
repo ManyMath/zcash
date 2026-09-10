@@ -28,6 +28,10 @@ class ZcashFfiBindings {
     'zcash_ffi_version',
   ).asFunction<Pointer<Utf8> Function()>();
 
+  late final _capabilities = _symbol<NativeFunction<Pointer<Utf8> Function()>>(
+    'zcash_ffi_capabilities',
+  ).asFunction<Pointer<Utf8> Function()>();
+
   late final _networkConstants =
       _symbol<NativeFunction<Pointer<Utf8> Function(Pointer<Utf8>)>>(
         'zcash_ffi_network_constants',
@@ -255,6 +259,11 @@ class ZcashFfiBindings {
 
   String version() {
     final ptr = _version();
+    return _takeString(ptr);
+  }
+
+  String capabilitiesRaw() {
+    final ptr = _capabilities();
     return _takeString(ptr);
   }
 
@@ -581,6 +590,16 @@ class ZcashFfiBindings {
     if (Platform.isWindows) return ZcashFfiBindings.open('zcash_ffi.dll');
     throw UnsupportedError('Unsupported platform: ${Platform.operatingSystem}');
   }
+}
+
+NativeCapabilitySnapshot nativeCapabilities({ZcashFfiBindings? bindings}) {
+  final ffi = bindings ?? ZcashFfiBindings.instance;
+  final raw = ffi.capabilitiesRaw();
+  final json = parseNativeJsonObject(
+    raw,
+    context: 'native_capabilities/DynamicLibrary',
+  );
+  return NativeCapabilitySnapshot.fromJson(json);
 }
 
 ZcashScanResult scanCompactBlocks({

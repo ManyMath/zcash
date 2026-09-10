@@ -301,6 +301,57 @@ void main() {
     });
   });
 
+  group('capability matrix', () {
+    test('documents Ironwood transaction build as supported by default', () {
+      expect(
+        NativeCapabilitySnapshot.documented.statusFor(
+          NativeCapability.ironwoodTransactionBuild,
+        ),
+        CapabilityStatus.supported,
+      );
+    });
+
+    test('round-trips the experimental Ironwood build status through JSON', () {
+      final snapshot = NativeCapabilitySnapshot.fromJson({
+        'capabilities': {
+          'unified_address_derivation': 'supported',
+          'transparent_address_derivation': 'supported',
+          'sapling_scan': 'supported',
+          'equihash_solver': 'supported',
+          'orchard_receiver_exposure': 'exposed',
+          'orchard_compact_block_parsing': 'parsedOnly',
+          'orchard_note_discovery': 'unsupported',
+          'ironwood_note_discovery': 'unsupported',
+          'ironwood_transaction_build': 'experimental',
+        },
+      });
+      expect(
+        snapshot.statusFor(NativeCapability.ironwoodTransactionBuild),
+        CapabilityStatus.experimental,
+      );
+    });
+
+    test('reports Ironwood walletSend as supported in the matrix', () {
+      expect(
+        ShieldedCapabilityMatrix.current.statusFor(
+          ShieldedPool.ironwood,
+          CapabilitySurface.walletSend,
+        ),
+        CapabilityStatus.supported,
+      );
+    });
+
+    test('documents the anchor precondition on the Ironwood build entry', () {
+      final capability = ShieldedCapabilityMatrix.current.capabilityFor(
+        ShieldedPool.ironwood,
+        CapabilitySurface.nativeTransactionBuild,
+      );
+      expect(capability.status, CapabilityStatus.supported);
+      expect(capability.boundary, contains('anchor'));
+      expect(capability.boundary, contains('rng_seed_not_permitted'));
+    });
+  });
+
   group('IronwoodFeeQuote', () {
     Map<String, Object?> quote({Object? maxOutput = 85000}) => {
       'quote_only': true,

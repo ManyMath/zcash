@@ -74,6 +74,194 @@ void main() {
     });
   });
 
+  group('LightwalletdClient Orchard parsed-only fields', () {
+    setUp(
+      () => _startServer(
+        _FakeStreamer(
+          treeState: lwd.TreeState()
+            ..height = Int64(123)
+            ..hash = 'tree-hash'
+            ..saplingTree = 'sapling-tree'
+            ..orchardTree = 'orchard-tree',
+        ),
+      ),
+    );
+
+    tearDown(_stopServer);
+
+    test('getTreeState returns Orchard tree data as parsed-only', () async {
+      final state = await _client!.getTreeState(BlockID()..height = Int64(123));
+      final classification = OrchardDataClassifier.lightwalletdTreeState(state);
+
+      expect(state.orchardTree, 'orchard-tree');
+      expect(classification.status, CapabilityStatus.parsedOnly);
+      expect(classification.present, isTrue);
+      expect(classification.impliesWalletSupport, isFalse);
+    });
+
+    test(
+      'getLatestTreeState returns Orchard tree data as parsed-only',
+      () async {
+        await _stopServer();
+        await _startServer(
+          _FakeStreamer(
+            latestTreeState: lwd.TreeState()
+              ..height = Int64(124)
+              ..hash = 'latest-tree-hash'
+              ..orchardTree = 'latest-orchard-tree',
+          ),
+        );
+
+        final state = await _client!.getLatestTreeState();
+        final classification = OrchardDataClassifier.lightwalletdTreeState(
+          state,
+        );
+
+        expect(state.height, Int64(124));
+        expect(state.orchardTree, 'latest-orchard-tree');
+        expect(classification.status, CapabilityStatus.parsedOnly);
+        expect(classification.present, isTrue);
+        expect(classification.impliesWalletSupport, isFalse);
+      },
+    );
+
+    test(
+      'getSubtreeRoots streams Orchard root shapes as parsed-only',
+      () async {
+        await _stopServer();
+        await _startServer(
+          _FakeStreamer(
+            subtreeRoots: [
+              SubtreeRoot()
+                ..rootHash = [1, 2, 3, 4]
+                ..completingBlockHash = [5, 6, 7, 8]
+                ..completingBlockHeight = Int64(125),
+            ],
+          ),
+        );
+        final arg = GetSubtreeRootsArg()
+          ..shieldedProtocol = ShieldedProtocol.orchard
+          ..startIndex = 2
+          ..maxEntries = 1;
+
+        final roots = await _client!.getSubtreeRoots(arg).toList();
+        final argClassification = OrchardDataClassifier.subtreeRootsArg(arg);
+        final rootClassification = OrchardDataClassifier.subtreeRoot(
+          roots.single,
+        );
+
+        expect(roots, hasLength(1));
+        expect(roots.single.rootHash, [1, 2, 3, 4]);
+        expect(argClassification.status, CapabilityStatus.parsedOnly);
+        expect(argClassification.present, isTrue);
+        expect(rootClassification.status, CapabilityStatus.parsedOnly);
+        expect(rootClassification.present, isTrue);
+        expect(rootClassification.impliesWalletSupport, isFalse);
+      },
+    );
+
+    test(
+      'getBlockRange preserves Orchard actions and metadata as parsed-only',
+      () async {
+        await _stopServer();
+        await _startServer(
+          _FakeStreamer(
+            blocks: [
+              CompactBlock()
+                ..height = Int64(200)
+                ..chainMetadata = (ChainMetadata()
+                  ..orchardCommitmentTreeSize = 88)
+                ..vtx.add(
+                  CompactTx()
+                    ..actions.add(
+                      CompactOrchardAction()
+                        ..nullifier = [9]
+                        ..cmx = [10]
+                        ..ephemeralKey = [11]
+                        ..ciphertext = [12],
+                    ),
+                ),
+            ],
+          ),
+        );
+        final range = BlockRange()
+          ..start = (BlockID()..height = Int64(200))
+          ..end = (BlockID()..height = Int64(200));
+
+        final blocks = await _client!.getBlockRange(range).toList();
+        final actions = OrchardDataClassifier.compactBlockActions(
+          blocks.single,
+        );
+        final metadata = OrchardDataClassifier.chainMetadata(
+          blocks.single.chainMetadata,
+        );
+
+        expect(blocks.single.height, Int64(200));
+        expect(blocks.single.vtx.single.actions, hasLength(1));
+        expect(blocks.single.chainMetadata.orchardCommitmentTreeSize, 88);
+        expect(actions.status, CapabilityStatus.parsedOnly);
+        expect(actions.present, isTrue);
+        expect(actions.count, 1);
+        expect(metadata.status, CapabilityStatus.parsedOnly);
+        expect(metadata.present, isTrue);
+        expect(metadata.impliesWalletSupport, isFalse);
+      },
+    );
+
+    test(
+      'missing Orchard fields remain parsed-only absence, not wallet support',
+      () async {
+        await _stopServer();
+        await _startServer(
+          _FakeStreamer(
+            latestTreeState: lwd.TreeState()..saplingTree = 'sapling-only-tree',
+            blocks: [
+              CompactBlock()
+                ..height = Int64(201)
+                ..vtx.add(CompactTx()),
+            ],
+          ),
+        );
+        final range = BlockRange()
+          ..start = (BlockID()..height = Int64(201))
+          ..end = (BlockID()..height = Int64(201));
+        final saplingArg = GetSubtreeRootsArg()
+          ..shieldedProtocol = ShieldedProtocol.sapling
+          ..startIndex = 0
+          ..maxEntries = 1;
+
+        final state = await _client!.getLatestTreeState();
+        final blocks = await _client!.getBlockRange(range).toList();
+        final roots = await _client!.getSubtreeRoots(saplingArg).toList();
+        final classifications = [
+          OrchardDataClassifier.lightwalletdTreeState(state),
+          OrchardDataClassifier.compactBlockActions(blocks.single),
+          OrchardDataClassifier.chainMetadata(
+            blocks.single.hasChainMetadata()
+                ? blocks.single.chainMetadata
+                : null,
+          ),
+          OrchardDataClassifier.subtreeRootsArg(saplingArg),
+        ];
+
+        expect(roots, isEmpty);
+        for (final classification in classifications) {
+          expect(classification.status, CapabilityStatus.parsedOnly);
+          expect(classification.present, isFalse);
+          expect(classification.count, 0);
+          expect(classification.impliesWalletSupport, isFalse);
+        }
+        expect(
+          ShieldedCapabilityMatrix.current.statusFor(
+            ShieldedPool.orchard,
+            CapabilitySurface.compactBlockNoteDiscovery,
+          ),
+          CapabilityStatus.unsupported,
+        );
+      },
+    );
+  });
+
   group('LightwalletdClient Ironwood (NU6.3) wire fields', () {
     setUp(
       () => _startServer(

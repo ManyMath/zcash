@@ -94,9 +94,166 @@ fn version_is_semver() {
 }
 
 #[test]
+fn capabilities_report_compiled_native_feature_statuses() {
+    let v = result_value(zcash_ffi_capabilities());
+
+    assert_eq!(v[FFI_RESULT_VERSION_KEY], FFI_RESULT_VERSION);
+    assert_eq!(v[FFI_RESULT_STATUS_KEY], FFI_RESULT_OK_STATUS);
+    let capabilities = v["capabilities"].as_object().unwrap();
+    assert_eq!(capabilities["unified_address_derivation"], "supported");
+    assert_eq!(capabilities["transparent_address_derivation"], "supported");
+    assert_eq!(capabilities["sapling_scan"], "supported");
+    assert_eq!(capabilities["equihash_solver"], "supported");
+    assert_eq!(capabilities["orchard_receiver_exposure"], "exposed");
+    assert_eq!(capabilities["orchard_compact_block_parsing"], "parsedOnly");
+    assert_eq!(
+        capabilities["orchard_note_discovery"],
+        ORCHARD_NOTE_DISCOVERY_STATUS
+    );
+    assert_eq!(
+        capabilities["transparent_transaction_build"],
+        TRANSPARENT_TX_BUILD_STATUS
+    );
+    assert_eq!(
+        capabilities["sapling_transaction_build"],
+        SAPLING_TX_BUILD_STATUS
+    );
+    assert_eq!(
+        capabilities["ironwood_note_discovery"],
+        IRONWOOD_NOTE_DISCOVERY_STATUS
+    );
+    assert_eq!(
+        capabilities["ironwood_transaction_build"],
+        IRONWOOD_TX_BUILD_STATUS
+    );
+    #[cfg(not(any(
+        feature = "orchard-note-discovery",
+        feature = "ironwood-note-discovery",
+        feature = "transparent-tx-build",
+        feature = "sapling-spend-build",
+        feature = "ironwood-tx-build"
+    )))]
+    {
+        assert_eq!(capabilities["orchard_note_discovery"], "unsupported");
+        assert_eq!(capabilities["ironwood_note_discovery"], "unsupported");
+        assert_eq!(capabilities["transparent_transaction_build"], "unsupported");
+        assert_eq!(capabilities["sapling_transaction_build"], "unsupported");
+        assert_eq!(capabilities["ironwood_transaction_build"], "unsupported");
+    }
+    #[cfg(all(
+        feature = "ironwood-note-discovery",
+        feature = "ironwood-tx-build",
+        not(any(
+            feature = "orchard-note-discovery",
+            feature = "transparent-tx-build",
+            feature = "sapling-spend-build",
+            feature = "orchard-tx-build"
+        ))
+    ))]
+    {
+        assert_eq!(capabilities["ironwood_note_discovery"], "supported");
+        assert_eq!(capabilities["ironwood_transaction_build"], "supported");
+        assert_eq!(capabilities["orchard_note_discovery"], "unsupported");
+        assert_eq!(capabilities["transparent_transaction_build"], "unsupported");
+        assert_eq!(capabilities["sapling_transaction_build"], "unsupported");
+        assert_eq!(capabilities["orchard_transaction_build"], "unsupported");
+    }
+    assert!(v.get("error").is_none(), "capabilities should not error");
+}
+
+#[test]
 fn free_string_accepts_null_pointer() {
     unsafe {
         zcash_ffi_free_string(std::ptr::null_mut());
+    }
+}
+
+#[test]
+fn string_returning_exports_can_be_called_repeatedly_after_free() {
+    let seed = cptr(TEST_SEED_HEX);
+    let test = cptr("test");
+    let ufvk = account_ufvk(&test);
+    let ufvk_c = cptr(&ufvk);
+    let xpub = {
+        let v = result_value(zcash_ffi_seed_to_transparent_xpub(
+            seed.as_ptr(),
+            test.as_ptr(),
+            0,
+        ));
+        v["xpub"].as_str().unwrap().to_owned()
+    };
+    let xpub_c = cptr(&xpub);
+
+    for _ in 0..3 {
+        assert!(result_str(zcash_ffi_version()).contains('.'));
+        let capability_value = result_value(zcash_ffi_capabilities());
+        assert_eq!(
+            capability_value["capabilities"]["sapling_scan"],
+            "supported"
+        );
+
+        let constants_value = result_value(zcash_ffi_network_constants(test.as_ptr()));
+        assert_eq!(constants_value["network"], "testnet");
+        assert_eq!(constants_value["coin_type"], 1);
+
+        let ufvk_value = result_value(zcash_ffi_seed_to_account_ufvk(
+            seed.as_ptr(),
+            test.as_ptr(),
+            0,
+        ));
+        assert!(ufvk_value["ufvk"]
+            .as_str()
+            .unwrap()
+            .starts_with("uviewtest"));
+
+        let account_metadata_value = result_value(zcash_ffi_seed_to_account_metadata(
+            seed.as_ptr(),
+            test.as_ptr(),
+            0,
+        ));
+        assert_eq!(account_metadata_value["account_index"], 0);
+        assert!(account_metadata_value["ufvk"]
+            .as_str()
+            .unwrap()
+            .starts_with("uviewtest"));
+
+        let sk_value = result_value(zcash_ffi_seed_to_sapling_spending_key(
+            seed.as_ptr(),
+            test.as_ptr(),
+            0,
+        ));
+        assert!(sk_value["sapling_spending_key"]
+            .as_str()
+            .unwrap()
+            .starts_with("secret-extended-key-test"));
+
+        let xpub_value = result_value(zcash_ffi_seed_to_transparent_xpub(
+            seed.as_ptr(),
+            test.as_ptr(),
+            0,
+        ));
+        assert!(xpub_value["xpub"].as_str().unwrap().starts_with("tpub"));
+
+        let addr_value = result_value(zcash_ffi_ufvk_to_address(ufvk_c.as_ptr(), test.as_ptr(), 0));
+        assert!(addr_value["ua"].as_str().unwrap().starts_with("utest"));
+
+        let transparent_value = result_value(zcash_ffi_transparent_address(
+            xpub_c.as_ptr(),
+            test.as_ptr(),
+            0,
+        ));
+        assert!(transparent_value["address"]
+            .as_str()
+            .unwrap()
+            .starts_with("tm"));
+
+        let scan_payload = cptr(r#"{"blocks":[]}"#);
+        let scan_value = result_value(zcash_ffi_scan_compact_blocks(
+            ufvk_c.as_ptr(),
+            test.as_ptr(),
+            scan_payload.as_ptr(),
+        ));
+        assert_eq!(scan_value["scanned_blocks"], 0);
     }
 }
 

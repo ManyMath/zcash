@@ -6,6 +6,7 @@ const EXPECTED_SYMBOLS: &[&str] = &[
     "zcash_ffi_build_orchard_transaction",
     "zcash_ffi_build_sapling_transaction",
     "zcash_ffi_build_transparent_transaction",
+    "zcash_ffi_capabilities",
     "zcash_ffi_classify_transparent_address",
     "zcash_ffi_classify_transparent_script",
     "zcash_ffi_compact_blocks_from_raw_blocks",

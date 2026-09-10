@@ -19,6 +19,8 @@ export 'src/models/network.dart';
 export 'src/models/validation.dart';
 export 'src/models/mining.dart';
 export 'src/models/scan.dart';
+export 'src/models/shielded_capability.dart';
+export 'src/models/orchard_data_classification.dart';
 export 'src/models/spend.dart';
 export 'src/models/proposal.dart';
 export 'src/models/transparent_build.dart';

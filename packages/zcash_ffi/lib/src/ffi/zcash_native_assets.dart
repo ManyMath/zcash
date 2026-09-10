@@ -13,6 +13,9 @@ import 'transparent_build_request.dart';
 @Native<Pointer<Utf8> Function()>(symbol: 'zcash_ffi_version')
 external Pointer<Utf8> _zcashFfiVersion();
 
+@Native<Pointer<Utf8> Function()>(symbol: 'zcash_ffi_capabilities')
+external Pointer<Utf8> _zcashFfiCapabilities();
+
 @Native<Void Function(Pointer<Utf8>)>(symbol: 'zcash_ffi_free_string')
 external void _zcashFfiFreeString(Pointer<Utf8> ptr);
 
@@ -164,6 +167,12 @@ class ZcashNativeAddressSet {
 }
 
 String zcashNativeVersion() => _takeString(_zcashFfiVersion());
+
+NativeCapabilitySnapshot zcashNativeCapabilities() {
+  final raw = _takeString(_zcashFfiCapabilities());
+  final json = parseNativeJsonObject(raw, context: 'native_capabilities');
+  return NativeCapabilitySnapshot.fromJson(json);
+}
 
 String zcashNativeSeedToAccountUfvk({
   required String seedHex,

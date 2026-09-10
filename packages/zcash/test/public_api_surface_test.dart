@@ -4,6 +4,7 @@ library;
 import 'dart:io';
 
 import 'package:test/test.dart';
+import 'package:zcash/zcash.dart';
 
 Directory _resolveLibDir() {
   final candidates = <String>['lib', 'packages/zcash/lib'];
@@ -87,5 +88,79 @@ void main() {
         );
       }
     });
+  });
+
+  group('public API smoke test', () {
+    test('core model types are exported and resolvable', () {
+      final types = <Type>[
+        ZcashAddressMetadata,
+        ZcashAddressReceiverPresence,
+        ZcashKeyType,
+        ZcashKeyValidation,
+        ZcashScanResult,
+        ZcashScannedNote,
+        ZcashScanBlockDiagnostic,
+        ZcashObservedSpend,
+        ZcashWatchedNullifiers,
+        IronwoodNoteSet,
+        TrackedIronwoodNote,
+        IronwoodInputSelection,
+        IronwoodFeeQuote,
+        IronwoodSendPlan,
+        IronwoodPreparedSend,
+        IronwoodBroadcastReceipt,
+        NativeCapability,
+        CapabilityStatus,
+        ZcashTransactionSummary,
+        ZcashTransactionId,
+        ProposalRequest,
+        ProposalRecipient,
+        TransparentBuildResult,
+        SaplingBuildResult,
+        SaplingFeeQuote,
+        SaplingNoteSet,
+        TrackedSaplingNote,
+        SaplingInputSelection,
+        SaplingSendPlan,
+        SaplingPreparedSend,
+        SaplingBroadcastReceipt,
+        OrchardNoteSet,
+        TrackedOrchardNote,
+        ZcashAccountBalance,
+        TransparentCoinSet,
+        TrackedTransparentCoin,
+        TransparentInputSelection,
+        SaplingNoteStore,
+        OrchardNoteStore,
+        IronwoodNoteStore,
+        ZcashNoteMemo,
+        ZcashMemoPool,
+      ];
+
+      for (final t in types) {
+        expect(t, isNotNull);
+      }
+      expect(
+        types.toSet().length,
+        types.length,
+        reason: 'public type list should have no duplicates',
+      );
+    });
+
+    test(
+      'capability statuses use stable enum names matching native contract',
+      () {
+        final names = CapabilityStatus.values.map((v) => v.name).toSet();
+        expect(
+          names,
+          containsAll(<String>[
+            'supported',
+            'unsupported',
+            'parsedOnly',
+            'experimental',
+          ]),
+        );
+      },
+    );
   });
 }
