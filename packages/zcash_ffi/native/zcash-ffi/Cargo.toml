@@ -26,7 +26,7 @@ zcash_client_backend = { version = "0.24.0", features = ["orchard"] }
 zcash_keys = { version = "0.16.1", features = ["sapling", "orchard", "transparent-inputs"] }
 zcash_primitives = "0.30.1"
 zcash_address = "0.13"
-zcash_protocol = { version = "0.10.0", features = ["std", "local-consensus"] }
+zcash_protocol = { version = "0.10.6", features = ["std", "local-consensus"] }
 zcash_script = "0.4.5"
 zcash_transparent = { version = "0.10", features = ["transparent-inputs"] }
 zip32 = "0.2.1"
