@@ -1,31 +1,31 @@
 # zcash
 
-Dart clients for the [Zebra](https://github.com/ZcashFoundation/zebra) 3.0
-JSON-RPC API and the [lightwalletd](https://github.com/zcash/lightwalletd) gRPC
-API.
+Pure Dart Zcash models and node clients: `ZebraClient` (JSON-RPC),
+`ZcashdWalletClient` (JSON-RPC) and `LightwalletdClient` (gRPC), plus the value
+objects the native layer in `zcash_ffi` produces and consumes. No `dart:ffi`.
 
 ```dart
-final zebra = ZebraClient(); // localhost:8232
-final chain = await zebra.getBlockchainInfo();
-print('${chain.chain} at ${chain.blocks}');
-zebra.close();
+import 'package:zcash/zcash.dart';
 
-final lwd = LightwalletdClient(host: 'mainnet.lightwalletd.com', port: 9067);
-print((await lwd.getLatestBlock()).height);
-await lwd.close();
+Future<void> main() async {
+  final zebra = ZebraClient(); // localhost:8232
+  final info = await zebra.getBlockchainInfo();
+  print('${info.chain} ${info.blocks}');
+  zebra.close();
+}
 ```
 
-Zebra serves RPC once `listen_addr` is set under `[rpc]` in `zebra.toml`.
-`example/zcash_example.dart` takes an optional host and port.
+`proto/` holds the lightwalletd protocol from
+[zcash/lightwallet-protocol](https://github.com/zcash/lightwallet-protocol) at
+`dd0ea2c3c5827a433e62c2f936b89efa2dec5a9a` (v0.4.1), plus the NU6.3 Ironwood
+fields (`PoolType.IRONWOOD`, `TreeState.ironwoodTree`,
+`ShieldedProtocol.ironwood`, `ChainMetadata.ironwoodCommitmentTreeSize`,
+`CompactTx.ironwoodActions`) numbered as in `zcash_client_backend` 0.24.
 
-The protos in `proto/` come from
-[zcash/lightwallet-protocol](https://github.com/zcash/lightwallet-protocol).
-To regenerate `lib/src/grpc/`:
+`lib/src/grpc` is generated from `proto/`; do not edit it. Regenerate from the
+repository root with `protoc_plugin` activated:
 
 ```sh
-protoc --dart_out=grpc:lib/src/grpc/ --proto_path=proto/ \
-  proto/compact_formats.proto proto/service.proto
+protoc --dart_out=grpc:packages/zcash/lib/src/grpc \
+  --proto_path=packages/zcash/proto compact_formats.proto service.proto
 ```
-
-`LIGHTWALLETD_INTEGRATION=1 LIGHTWALLETD_ADDR=localhost:9067 dart test` adds
-the live lightwalletd tests.
