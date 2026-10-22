@@ -102,7 +102,7 @@ fn push_orchard_actions(block: &mut CompactBlock, count: u32) {
 #[test]
 fn scan_reports_zero_orchard_actions_for_sapling_only_block() {
     let ufvk = test_ufvk();
-    let ufvk_str = ufvk.encode(&TestNetwork);
+    let ufvk_str = ufvk.encode(&TestNetwork).unwrap();
     let sapling_dfvk = ufvk.sapling().expect("test UFVK has Sapling");
     let block = fake_compact_block(
         BlockHeight::from_u32(1),
@@ -132,7 +132,7 @@ fn scan_reports_zero_orchard_actions_for_sapling_only_block() {
 #[test]
 fn scan_reports_parsed_orchard_action_counts_without_discovery() {
     let ufvk = test_ufvk();
-    let ufvk_str = ufvk.encode(&TestNetwork);
+    let ufvk_str = ufvk.encode(&TestNetwork).unwrap();
     let sapling_dfvk = ufvk.sapling().expect("test UFVK has Sapling");
     let mut block = fake_compact_block(
         BlockHeight::from_u32(1),
@@ -167,7 +167,7 @@ fn scan_reports_parsed_orchard_action_counts_without_discovery() {
 #[test]
 fn scan_aggregates_orchard_actions_across_mixed_blocks() {
     let ufvk = test_ufvk();
-    let ufvk_str = ufvk.encode(&TestNetwork);
+    let ufvk_str = ufvk.encode(&TestNetwork).unwrap();
     let sapling_dfvk = ufvk.sapling().expect("test UFVK has Sapling");
 
     let block_one = fake_compact_block(
@@ -245,15 +245,15 @@ fn push_discoverable_orchard_action(
     use orchard::note_encryption::testing::fake_compact_action;
     use orchard::note_encryption::{NoteEncryptionDomain, OrchardVersion};
     use orchard::value::NoteValue;
-    use rand::rngs::OsRng;
-    use zcash_note_encryption::{ShieldedOutput, COMPACT_NOTE_SIZE};
+    use rand::rngs::SysRng;
+    use rand::rand_core::UnwrapErr;
+    use zcash_note_encryption::ShieldedOutput;
 
-    type OrchardCompact =
-        dyn ShieldedOutput<NoteEncryptionDomain<OrchardVersion>, COMPACT_NOTE_SIZE>;
+    type OrchardCompact = dyn ShieldedOutput<NoteEncryptionDomain<OrchardVersion>>;
 
     let ofvk = ufvk.orchard().expect("test UFVK has an Orchard component");
     let recipient = ofvk.address_at(0u32, Scope::External);
-    let mut rng = OsRng;
+    let mut rng = UnwrapErr(SysRng);
     let nf_old = Nullifier::from_bytes(&{
         let mut bytes = [0u8; 32];
         bytes[0] = 1;
@@ -273,7 +273,9 @@ fn push_discoverable_orchard_action(
         nullifier: action.nullifier().to_bytes().to_vec(),
         cmx: action.cmx().to_bytes().to_vec(),
         ephemeral_key: <OrchardCompact>::ephemeral_key(&action).0.to_vec(),
-        ciphertext: <OrchardCompact>::enc_ciphertext(&action).to_vec(),
+        ciphertext: <OrchardCompact>::enc_ciphertext_compact(&action)
+            .as_ref()
+            .to_vec(),
     });
     if let Some(meta) = block.chain_metadata.as_mut() {
         meta.orchard_commitment_tree_size += 1;
@@ -291,13 +293,14 @@ fn push_discoverable_ironwood_action(
     use orchard::note::{ExtractedNoteCommitment, Note, NoteVersion, Nullifier, RandomSeed, Rho};
     use orchard::note_encryption::{IronwoodDomain, IronwoodNoteEncryption};
     use orchard::value::NoteValue;
-    use rand::rngs::OsRng;
-    use rand::RngCore;
+    use rand::rand_core::UnwrapErr;
+    use rand::rngs::SysRng;
+    use rand::Rng;
     use zcash_note_encryption::Domain;
 
     let ofvk = ufvk.orchard().expect("test UFVK has an Orchard component");
     let recipient = ofvk.address_at(0u32, Scope::External);
-    let mut rng = OsRng;
+    let mut rng = UnwrapErr(SysRng);
 
     let nf_old = Nullifier::from_bytes(&{
         let mut bytes = [0u8; 32];
@@ -331,7 +334,7 @@ fn push_discoverable_ironwood_action(
         nullifier: nf_old.to_bytes().to_vec(),
         cmx: cmx.to_bytes().to_vec(),
         ephemeral_key: ephemeral_key.0.to_vec(),
-        ciphertext: enc_ciphertext[..52].to_vec(),
+        ciphertext: enc_ciphertext.as_ref()[..52].to_vec(),
     });
     if let Some(meta) = block.chain_metadata.as_mut() {
         meta.ironwood_commitment_tree_size += 1;
@@ -342,7 +345,7 @@ fn push_discoverable_ironwood_action(
 #[test]
 fn scan_discovers_ironwood_note_with_experimental_feature() {
     let ufvk = test_ufvk();
-    let ufvk_str = ufvk.encode(&TestNetwork);
+    let ufvk_str = ufvk.encode(&TestNetwork).unwrap();
     let sapling_dfvk = ufvk.sapling().expect("test UFVK has Sapling");
     let ironwood_value = 12_345;
     let mut block = fake_compact_block(
@@ -404,7 +407,7 @@ fn scan_discovers_ironwood_note_with_experimental_feature() {
 #[test]
 fn scan_discovers_orchard_note_with_experimental_feature() {
     let ufvk = test_ufvk();
-    let ufvk_str = ufvk.encode(&TestNetwork);
+    let ufvk_str = ufvk.encode(&TestNetwork).unwrap();
     let sapling_dfvk = ufvk.sapling().expect("test UFVK has Sapling");
     let orchard_value = 54_321;
     let mut block = fake_compact_block(
@@ -487,7 +490,7 @@ fn scan_exports_orchard_witness_anchor_and_plaintext() {
     const DEPTH: u8 = orchard::NOTE_COMMITMENT_TREE_DEPTH as u8;
 
     let ufvk = test_ufvk();
-    let ufvk_str = ufvk.encode(&TestNetwork);
+    let ufvk_str = ufvk.encode(&TestNetwork).unwrap();
     let sapling_dfvk = ufvk.sapling().expect("test UFVK has Sapling");
     let orchard_value = 54_321;
     let mut block = fake_compact_block(
@@ -576,7 +579,7 @@ fn scan_exports_mid_chain_orchard_witness_with_prior_frontier() {
     write_commitment_tree(&prior, &mut prior_bytes).expect("serialize prior tree");
 
     let ufvk = test_ufvk();
-    let ufvk_str = ufvk.encode(&TestNetwork);
+    let ufvk_str = ufvk.encode(&TestNetwork).unwrap();
     let sapling_dfvk = ufvk.sapling().expect("test UFVK has Sapling");
     let mut block = fake_compact_block(
         BlockHeight::from_u32(1),
@@ -653,7 +656,7 @@ fn scan_exports_ironwood_witness_against_its_own_tree() {
     const DEPTH: u8 = orchard::NOTE_COMMITMENT_TREE_DEPTH as u8;
 
     let ufvk = test_ufvk();
-    let ufvk_str = ufvk.encode(&TestNetwork);
+    let ufvk_str = ufvk.encode(&TestNetwork).unwrap();
     let sapling_dfvk = ufvk.sapling().expect("test UFVK has Sapling");
     let mut block = fake_compact_block(
         BlockHeight::from_u32(1),
@@ -733,7 +736,7 @@ fn exported_orchard_note_plaintext_rebuilds_the_same_note() {
     use orchard::value::NoteValue;
 
     let ufvk = test_ufvk();
-    let ufvk_str = ufvk.encode(&TestNetwork);
+    let ufvk_str = ufvk.encode(&TestNetwork).unwrap();
     let sapling_dfvk = ufvk.sapling().expect("test UFVK has Sapling");
     let value = 54_321;
     let mut block = fake_compact_block(
@@ -822,7 +825,7 @@ fn exported_orchard_note_plaintext_rebuilds_the_same_note() {
 #[cfg(feature = "orchard-note-discovery")]
 fn scan_rejects_a_malformed_prior_orchard_frontier() {
     let ufvk = test_ufvk();
-    let ufvk_str = ufvk.encode(&TestNetwork);
+    let ufvk_str = ufvk.encode(&TestNetwork).unwrap();
     let sapling_dfvk = ufvk.sapling().expect("test UFVK has Sapling");
     let block = fake_compact_block(
         BlockHeight::from_u32(1),
@@ -853,7 +856,7 @@ fn scan_rejects_a_malformed_prior_orchard_frontier() {
 )))]
 fn scan_rejects_orchard_witness_request_without_a_discovery_feature() {
     let ufvk = test_ufvk();
-    let ufvk_str = ufvk.encode(&TestNetwork);
+    let ufvk_str = ufvk.encode(&TestNetwork).unwrap();
     let payload = serde_json::json!({
         "include_orchard_witnesses": true,
         "blocks": []
@@ -867,7 +870,7 @@ fn scan_rejects_orchard_witness_request_without_a_discovery_feature() {
 #[test]
 fn scan_omits_orchard_witness_and_anchors_without_opt_in() {
     let ufvk = test_ufvk();
-    let ufvk_str = ufvk.encode(&TestNetwork);
+    let ufvk_str = ufvk.encode(&TestNetwork).unwrap();
     let sapling_dfvk = ufvk.sapling().expect("test UFVK has Sapling");
     let block = fake_compact_block(
         BlockHeight::from_u32(1),
@@ -894,7 +897,7 @@ fn scan_omits_orchard_witness_and_anchors_without_opt_in() {
 #[test]
 fn scan_discovers_sapling_note_from_compact_block() {
     let ufvk = test_ufvk();
-    let ufvk_str = ufvk.encode(&TestNetwork);
+    let ufvk_str = ufvk.encode(&TestNetwork).unwrap();
     let sapling_dfvk = ufvk.sapling().expect("test UFVK has Sapling");
     let value = 12_345;
     let block = fake_compact_block(
@@ -952,7 +955,7 @@ fn scan_discovers_sapling_note_from_compact_block() {
 #[test]
 fn scan_scans_ordered_range_and_reports_note_in_later_block() {
     let scan_ufvk = test_ufvk();
-    let scan_ufvk_str = scan_ufvk.encode(&TestNetwork);
+    let scan_ufvk_str = scan_ufvk.encode(&TestNetwork).unwrap();
     let sapling_dfvk = scan_ufvk.sapling().expect("test UFVK has Sapling");
     let mut other_seed = TEST_SEED;
     other_seed[0] = 88;
@@ -1036,7 +1039,7 @@ fn scan_rejects_malformed_ufvk_without_echoing_key() {
 
 #[test]
 fn scan_rejects_unsupported_network() {
-    let ufvk = test_ufvk().encode(&TestNetwork);
+    let ufvk = test_ufvk().encode(&TestNetwork).unwrap();
     let out = scan_json(&ufvk, "devnet", r#"{"blocks":[]}"#);
 
     assert_eq!(out["category"], "unsupported_network");
@@ -1045,7 +1048,7 @@ fn scan_rejects_unsupported_network() {
 
 #[test]
 fn scan_rejects_invalid_base64_with_block_context() {
-    let ufvk = test_ufvk().encode(&TestNetwork);
+    let ufvk = test_ufvk().encode(&TestNetwork).unwrap();
     let out = scan_json(&ufvk, "test", r#"{"blocks":[{"height":7,"data":"%%"}]}"#);
 
     assert_eq!(out["category"], "invalid_base64");
@@ -1056,7 +1059,7 @@ fn scan_rejects_invalid_base64_with_block_context() {
 
 #[test]
 fn scan_rejects_invalid_protobuf_with_block_context() {
-    let ufvk = test_ufvk().encode(&TestNetwork);
+    let ufvk = test_ufvk().encode(&TestNetwork).unwrap();
     let invalid = STANDARD.encode([0xff, 0xff, 0xff]);
     let payload = serde_json::json!({"blocks":[{"height":8,"data":invalid}]}).to_string();
     let out = scan_json(&ufvk, "test", &payload);
@@ -1068,7 +1071,7 @@ fn scan_rejects_invalid_protobuf_with_block_context() {
 
 #[test]
 fn scan_accepts_empty_block_list() {
-    let ufvk = test_ufvk().encode(&TestNetwork);
+    let ufvk = test_ufvk().encode(&TestNetwork).unwrap();
     let out = scan_json(&ufvk, "test", r#"{"blocks":[]}"#);
 
     assert!(
@@ -1087,7 +1090,7 @@ fn scan_accepts_empty_block_list() {
 
 #[test]
 fn scan_reports_no_matching_notes() {
-    let scan_ufvk = test_ufvk().encode(&TestNetwork);
+    let scan_ufvk = test_ufvk().encode(&TestNetwork).unwrap();
     let mut other_seed = TEST_SEED;
     other_seed[0] = 99;
     let other_ufvk = ufvk_from_seed(other_seed);
@@ -1124,7 +1127,7 @@ fn scan_reports_no_matching_notes() {
 #[test]
 fn scan_rejects_out_of_order_heights_with_context() {
     let ufvk = test_ufvk();
-    let ufvk_str = ufvk.encode(&TestNetwork);
+    let ufvk_str = ufvk.encode(&TestNetwork).unwrap();
     let sapling_dfvk = ufvk.sapling().expect("test UFVK has Sapling");
     let block_two = fake_compact_block(
         BlockHeight::from_u32(2),
@@ -1163,7 +1166,7 @@ fn scan_rejects_out_of_order_heights_with_context() {
 #[test]
 fn scan_omits_sapling_witness_without_opt_in() {
     let ufvk = test_ufvk();
-    let ufvk_str = ufvk.encode(&TestNetwork);
+    let ufvk_str = ufvk.encode(&TestNetwork).unwrap();
     let sapling_dfvk = ufvk.sapling().expect("test UFVK has Sapling");
     let block = fake_compact_block(
         BlockHeight::from_u32(1),
@@ -1200,7 +1203,7 @@ fn scan_omits_sapling_witness_without_opt_in() {
 #[test]
 fn scan_rejects_witness_request_without_feature() {
     let ufvk = test_ufvk();
-    let ufvk_str = ufvk.encode(&TestNetwork);
+    let ufvk_str = ufvk.encode(&TestNetwork).unwrap();
     let sapling_dfvk = ufvk.sapling().expect("test UFVK has Sapling");
     let block = fake_compact_block(
         BlockHeight::from_u32(1),
@@ -1231,7 +1234,7 @@ fn scan_exports_sapling_witness_and_anchor_with_feature() {
     use zcash_primitives::merkle_tree::read_incremental_witness;
 
     let ufvk = test_ufvk();
-    let ufvk_str = ufvk.encode(&TestNetwork);
+    let ufvk_str = ufvk.encode(&TestNetwork).unwrap();
     let sapling_dfvk = ufvk.sapling().expect("test UFVK has Sapling");
     let value = 54_321;
     let block = fake_compact_block(
@@ -1312,7 +1315,7 @@ fn scan_exports_mid_chain_witness_with_prior_frontier() {
     }
 
     let ufvk = test_ufvk();
-    let ufvk_str = ufvk.encode(&TestNetwork);
+    let ufvk_str = ufvk.encode(&TestNetwork).unwrap();
     let sapling_dfvk = ufvk.sapling().expect("test UFVK has Sapling");
 
     let prior_block = fake_compact_block(
@@ -1401,7 +1404,7 @@ fn scan_exports_mid_chain_witness_with_prior_frontier() {
 #[test]
 fn scan_rejects_malformed_prior_frontier() {
     let ufvk = test_ufvk();
-    let ufvk_str = ufvk.encode(&TestNetwork);
+    let ufvk_str = ufvk.encode(&TestNetwork).unwrap();
     let sapling_dfvk = ufvk.sapling().expect("test UFVK has Sapling");
     let block = fake_compact_block(
         BlockHeight::from_u32(1),
@@ -1444,7 +1447,7 @@ fn build_json(request: &str) -> Value {
 #[test]
 fn scan_exports_recipient_and_rseed_for_discovered_note() {
     let ufvk = test_ufvk();
-    let ufvk_str = ufvk.encode(&TestNetwork);
+    let ufvk_str = ufvk.encode(&TestNetwork).unwrap();
     let sapling_dfvk = ufvk.sapling().expect("test UFVK has Sapling");
     // Post-Canopy testnet height, so the note is ZIP 212 (AfterZip212).
     let block = fake_compact_block(
@@ -1482,7 +1485,7 @@ fn scanned_sapling_note_is_directly_buildable() {
     let fee: u64 = 10_000;
 
     let ufvk = test_ufvk();
-    let ufvk_str = ufvk.encode(&TestNetwork);
+    let ufvk_str = ufvk.encode(&TestNetwork).unwrap();
     let sapling_dfvk = ufvk.sapling().expect("test UFVK has Sapling");
     let block = fake_compact_block(
         BlockHeight::from_u32(1_500_000),
@@ -1551,7 +1554,7 @@ fn scanned_orchard_note_is_directly_migratable_into_ironwood() {
     const CANONICAL_EXPIRY: u64 = 2 * 34_560;
 
     let ufvk = test_ufvk();
-    let ufvk_str = ufvk.encode(&TestNetwork);
+    let ufvk_str = ufvk.encode(&TestNetwork).unwrap();
     let sapling_dfvk = ufvk.sapling().expect("test UFVK has Sapling");
     let value = 1_000_000u64;
     let mut block = fake_compact_block(
@@ -1684,7 +1687,7 @@ fn a_live_staged_chain_block_converts_and_scans() {
         }],
     })
     .to_string();
-    let scanned = scan_json(&ufvk.encode(&TestNetwork), "regtest", &payload);
+    let scanned = scan_json(&ufvk.encode(&TestNetwork).unwrap(), "regtest", &payload);
     assert_eq!(scanned["status"], "ok", "scan failed: {scanned}");
 
     let notes = scanned["notes"].as_array().unwrap();
@@ -1769,7 +1772,7 @@ fn the_compact_block_adapter_rejects_malformed_requests() {
 #[cfg(all(feature = "ironwood-note-discovery", feature = "ironwood-tx-build"))]
 fn scanned_ironwood_note_is_directly_spendable() {
     let ufvk = test_ufvk();
-    let ufvk_str = ufvk.encode(&TestNetwork);
+    let ufvk_str = ufvk.encode(&TestNetwork).unwrap();
     let sapling_dfvk = ufvk.sapling().expect("test UFVK has Sapling");
     let value = 1_000_000u64;
     let mut block = fake_compact_block(
@@ -1954,7 +1957,7 @@ fn sapling_block(
 
 #[test]
 fn scan_reports_no_spends_without_watched_nullifiers() {
-    let ufvk_str = test_ufvk().encode(&TestNetwork);
+    let ufvk_str = test_ufvk().encode(&TestNetwork).unwrap();
     let block = sapling_block(1, BlockHash([0; 32]), [7; 32], 12_345, 0);
     let payload = serde_json::json!({
         "blocks": [{"height": 1, "data": encode_block(&block)}]
@@ -1977,7 +1980,7 @@ fn scan_reports_no_spends_without_watched_nullifiers() {
 
 #[test]
 fn scan_reports_a_watched_sapling_nullifier_as_spent() {
-    let ufvk_str = test_ufvk().encode(&TestNetwork);
+    let ufvk_str = test_ufvk().encode(&TestNetwork).unwrap();
     let block = sapling_block(1, BlockHash([0; 32]), [7; 32], 12_345, 0);
     let spending_tx = hex::encode(&block.vtx[1].txid);
     let payload = serde_json::json!({
@@ -2011,7 +2014,7 @@ fn scan_reports_a_watched_sapling_nullifier_as_spent() {
 
 #[test]
 fn scan_watches_notes_it_discovered_in_the_same_range() {
-    let ufvk_str = test_ufvk().encode(&TestNetwork);
+    let ufvk_str = test_ufvk().encode(&TestNetwork).unwrap();
 
     let first = sapling_block(1, BlockHash([0; 32]), [7; 32], 12_345, 0);
     let first_hash = BlockHash(<[u8; 32]>::try_from(first.hash.as_slice()).unwrap());
@@ -2068,7 +2071,7 @@ fn scan_watches_notes_it_discovered_in_the_same_range() {
 
 #[test]
 fn a_watched_nullifier_matches_only_its_own_pools_actions() {
-    let ufvk_str = test_ufvk().encode(&TestNetwork);
+    let ufvk_str = test_ufvk().encode(&TestNetwork).unwrap();
     let shared = [0x2au8; 32];
 
     let mut block = sapling_block(1, BlockHash([0; 32]), [7; 32], 12_345, 0);
@@ -2118,7 +2121,7 @@ fn a_watched_nullifier_matches_only_its_own_pools_actions() {
 
 #[test]
 fn scan_rejects_malformed_watched_nullifiers() {
-    let ufvk_str = test_ufvk().encode(&TestNetwork);
+    let ufvk_str = test_ufvk().encode(&TestNetwork).unwrap();
 
     let cases = [
         r#""orchard""#,
@@ -2149,7 +2152,8 @@ fn regtest_style_sapling_block(
     dfvk: &sapling::zip32::DiversifiableFullViewingKey,
     value: u64,
 ) -> CompactBlock {
-    use rand::rngs::OsRng;
+    use rand::rand_core::UnwrapErr;
+    use rand::rngs::SysRng;
     use sapling::note_encryption::{sapling_note_encryption, SaplingDomain};
     use sapling::value::NoteValue;
     use sapling::Rseed;
@@ -2165,7 +2169,7 @@ fn regtest_style_sapling_block(
         NoteValue::from_raw(value),
         Rseed::AfterZip212([9u8; 32]),
     );
-    let mut rng = OsRng;
+    let mut rng = UnwrapErr(SysRng);
     let encryptor = sapling_note_encryption(
         Some(dfvk.fvk().ovk),
         note.clone(),
@@ -2176,7 +2180,7 @@ fn regtest_style_sapling_block(
     let output = CompactSaplingOutput {
         cmu: note.cmu().to_bytes().to_vec(),
         ephemeral_key: SaplingDomain::epk_bytes(encryptor.epk()).0.to_vec(),
-        ciphertext: enc_ciphertext[..52].to_vec(),
+        ciphertext: enc_ciphertext.as_ref()[..52].to_vec(),
     };
     let tx = CompactTx {
         index: 0,
@@ -2207,7 +2211,7 @@ fn regtest_style_sapling_block(
 #[test]
 fn scan_reads_a_regtest_chain_under_regtest_parameters() {
     let ufvk = test_ufvk();
-    let ufvk_str = ufvk.encode(&TestNetwork);
+    let ufvk_str = ufvk.encode(&TestNetwork).unwrap();
     let dfvk = ufvk.sapling().expect("test UFVK has Sapling");
     let value = 42_000u64;
     let block = regtest_style_sapling_block(133, dfvk, value);

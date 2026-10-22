@@ -21,7 +21,8 @@ macro_rules! compact_action {
             nullifier: $action.nullifier().to_bytes().to_vec(),
             cmx: $action.cmx().to_bytes().to_vec(),
             ephemeral_key: $action.encrypted_note().epk_bytes.to_vec(),
-            ciphertext: $action.encrypted_note().enc_ciphertext[..COMPACT_NOTE_SIZE].to_vec(),
+            ciphertext: $action.encrypted_note().enc_ciphertext.as_ref()[..COMPACT_NOTE_SIZE]
+                .to_vec(),
         }
     };
 }

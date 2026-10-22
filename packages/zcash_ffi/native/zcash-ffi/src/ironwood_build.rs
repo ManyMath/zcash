@@ -389,7 +389,7 @@ fn parse_request(request: &Value) -> Result<ParsedRequest, BuildError> {
             ));
         }
         let sk_bytes = read_hex_32(input, "secret_key", "invalid_secret_key")?;
-        let secret_key = SecretKey::from_slice(&sk_bytes).map_err(|_| {
+        let secret_key = SecretKey::from_secret_bytes(sk_bytes).map_err(|_| {
             err(
                 "invalid_secret_key",
                 "secret_key is not a valid secp256k1 key",
@@ -990,7 +990,7 @@ fn decode_sapling_spends<P: Parameters + Copy>(
                 ))
             }
         };
-        if fvk.vk.to_payment_address(*pa.diversifier()) != Some(pa) {
+        if fvk.vk.to_payment_address(*pa.diversifier()) != Some(*pa) {
             return Err(err(
                 "note_not_spendable",
                 "sapling spend recipient is not spendable by the account viewing key",
@@ -1509,7 +1509,7 @@ where
         populate(params, req, zatoshis(ironwood_value, "value_zatoshis")?)?;
     let rng = match req.rng_seed {
         Some(seed) => BuildRng::Deterministic(Box::new(ChaCha20Rng::from_seed(seed))),
-        None => BuildRng::Os(rand_core::OsRng),
+        None => BuildRng::os(),
     };
 
     let result = match &req.sapling_params {
@@ -1643,7 +1643,7 @@ fn decode_output_address<P: Parameters>(
         Some(Address::Tex(hash)) => Ok(OutputDestination::Transparent(
             TransparentAddress::PublicKeyHash(hash),
         )),
-        Some(Address::Sapling(pa)) => Ok(OutputDestination::Sapling(pa)),
+        Some(Address::Sapling(pa)) => Ok(OutputDestination::Sapling(*pa)),
         Some(Address::Unified(_)) => Err(err(
             "unsupported_shielded_output",
             "the outputs array accepts transparent and Sapling destinations; the \
@@ -1713,9 +1713,8 @@ pub(crate) fn test_regtest_unified_address(seed: &[u8]) -> String {
 
 #[cfg(test)]
 pub(crate) fn test_regtest_transparent_address() -> String {
-    use secp256k1::Secp256k1;
-    let sk = SecretKey::from_slice(&[0x11u8; 32]).expect("test key");
-    let pk = PublicKey::from_secret_key(&Secp256k1::new(), &sk);
+    let sk = SecretKey::from_secret_bytes([0x11u8; 32]).expect("test key");
+    let pk = PublicKey::from_secret_key(&sk);
     Address::Transparent(TransparentAddress::from_pubkey(&pk)).encode(&regtest_params(None))
 }
 
@@ -1740,7 +1739,7 @@ pub(crate) fn test_sapling_note_fixture(
     let mut witness_bytes = Vec::new();
     write_incremental_witness(&witness, &mut witness_bytes).expect("serialize witness");
     (
-        Address::Sapling(to).encode(&params),
+        Address::Sapling(Box::new(to)).encode(&params),
         hex::encode(rseed),
         hex::encode(witness_bytes),
         hex::encode(anchor),
@@ -1758,7 +1757,7 @@ pub(crate) fn test_orchard_note_fixture(
     use orchard::keys::{FullViewingKey, Scope};
     use orchard::note::{ExtractedNoteCommitment, Note, NoteVersion, RandomSeed, Rho};
     use orchard::value::NoteValue as OrchardNoteValue;
-    use zcash_address::unified::{Encoding, Receiver};
+    use zcash_address::unified::{Encoding, Receiver, Revision, Uitem};
     use zcash_primitives::merkle_tree::write_incremental_witness;
 
     let params = regtest_params(None);
@@ -1805,9 +1804,12 @@ pub(crate) fn test_orchard_note_fixture(
     let mut witness_bytes = Vec::new();
     write_incremental_witness(&witness, &mut witness_bytes).expect("serialize witness");
 
-    let recipient_ua = zcash_address::unified::Address::try_from_items(vec![Receiver::Orchard(
-        recipient.to_raw_address_bytes(),
-    )])
+    let recipient_ua = zcash_address::unified::Address::try_from_items(
+        Revision::R0,
+        vec![Uitem::Data(Receiver::Orchard(
+            recipient.to_raw_address_bytes(),
+        ))],
+    )
     .expect("a single Orchard receiver is a valid Unified Address")
     .encode(&NetworkType::Regtest);
 

@@ -460,9 +460,7 @@ fn transparent_classification_reports_p2pkh_and_p2sh_addresses() {
     assert_eq!(p2pkh["transparent"], true);
     assert_eq!(p2pkh["script_size"], 25);
 
-    let p2sh_addr = TransparentAddress::ScriptHash([7; 20])
-        .to_zcash_address(NetworkType::Main)
-        .encode();
+    let p2sh_addr = ZcashAddress::from_transparent_p2sh(NetworkType::Main, [7; 20]).encode();
     let p2sh = transparent_address_classification_value(&p2sh_addr, &main);
     assert_eq!(p2sh[FFI_RESULT_STATUS_KEY], FFI_RESULT_OK_STATUS);
     assert_eq!(p2sh["network"], "mainnet");
@@ -961,7 +959,8 @@ fn validate_key_accepts_valid_keys_for_each_type() {
     assert_eq!(extsk_v["valid"], true);
     assert!(!extsk_v.to_string().contains(&extsk));
 
-    let extfvk = sapling_extfvk(constants::mainnet::HRP_SAPLING_EXTENDED_FULL_VIEWING_KEY);
+    let extfvk =
+        sapling_extfvk(zcash_keys::constants::mainnet::HRP_SAPLING_EXTENDED_FULL_VIEWING_KEY);
     let extfvk_v = validate_key_value(&extfvk, &main, "sapling_extended_full_viewing_key");
     assert_eq!(extfvk_v["key_type"], "sapling_extended_full_viewing_key");
     assert_eq!(extfvk_v["valid"], true);
@@ -1651,10 +1650,9 @@ fn build_transparent_transaction_disabled_rejects_null_pointer() {
 
 #[cfg(feature = "transparent-tx-build")]
 fn regtest_transparent_address() -> String {
-    use secp256k1::{PublicKey, Secp256k1, SecretKey};
-    let sk = SecretKey::from_slice(&[0x11u8; 32]).unwrap();
-    let secp = Secp256k1::new();
-    let pk = PublicKey::from_secret_key(&secp, &sk);
+    use secp256k1::{PublicKey, SecretKey};
+    let sk = SecretKey::from_secret_bytes([0x11u8; 32]).unwrap();
+    let pk = PublicKey::from_secret_key(&sk);
     let addr = TransparentAddress::from_pubkey(&pk);
     Address::Transparent(addr).encode(&transparent_build::regtest_params())
 }
@@ -1708,9 +1706,9 @@ fn build_transparent_transaction_builds_signed_regtest_vector() {
 fn decode_reads_v6_transaction_despite_fixed_branch_id_in_reader() {
     let params = transparent_build::regtest_nu63_params();
     let to = Address::Transparent(TransparentAddress::from_pubkey(&{
-        use secp256k1::{PublicKey, Secp256k1, SecretKey};
-        let sk = SecretKey::from_slice(&[0x11u8; 32]).unwrap();
-        PublicKey::from_secret_key(&Secp256k1::new(), &sk)
+        use secp256k1::{PublicKey, SecretKey};
+        let sk = SecretKey::from_secret_bytes([0x11u8; 32]).unwrap();
+        PublicKey::from_secret_key(&sk)
     }))
     .encode(&params);
 

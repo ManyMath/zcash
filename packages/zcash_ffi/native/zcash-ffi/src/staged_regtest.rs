@@ -13,6 +13,7 @@ pub(crate) fn params(nu6_3: Option<u32>) -> LocalNetwork {
         nu6_1: Some(BlockHeight::from_u32(1)),
         nu6_2: Some(BlockHeight::from_u32(1)),
         nu6_3: nu6_3.map(BlockHeight::from_u32),
+        nu7: None,
     }
 }
 

@@ -279,7 +279,7 @@ fn parse_request(request: &Value) -> Result<ParsedRequest, BuildError> {
             ));
         }
         let sk_bytes = read_hex_32(input, "secret_key", "invalid_secret_key")?;
-        let secret_key = SecretKey::from_slice(&sk_bytes).map_err(|_| {
+        let secret_key = SecretKey::from_secret_bytes(sk_bytes).map_err(|_| {
             err(
                 "invalid_secret_key",
                 "secret_key is not a valid secp256k1 key",
@@ -534,7 +534,7 @@ where
     let (builder, signing_set) = populate(params, req, zatoshis(orchard_value, "value_zatoshis")?)?;
     let rng = match req.rng_seed {
         Some(seed) => BuildRng::Deterministic(Box::new(ChaCha20Rng::from_seed(seed))),
-        None => BuildRng::Os(rand_core::OsRng),
+        None => BuildRng::os(),
     };
 
     let result = builder
@@ -687,9 +687,8 @@ pub(crate) fn test_regtest_unified_address(seed: &[u8]) -> String {
 
 #[cfg(test)]
 pub(crate) fn test_regtest_transparent_address() -> String {
-    use secp256k1::Secp256k1;
-    let sk = SecretKey::from_slice(&[0x11u8; 32]).expect("test key");
-    let pk = PublicKey::from_secret_key(&Secp256k1::new(), &sk);
+    let sk = SecretKey::from_secret_bytes([0x11u8; 32]).expect("test key");
+    let pk = PublicKey::from_secret_key(&sk);
     Address::Transparent(TransparentAddress::from_pubkey(&pk)).encode(&regtest_params(None))
 }
 

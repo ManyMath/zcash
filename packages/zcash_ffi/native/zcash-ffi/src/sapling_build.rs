@@ -176,7 +176,7 @@ fn parse_inputs(request: &Value) -> Result<Vec<ParsedInput>, BuildError> {
             ));
         }
         let sk_bytes = read_hex32_as(input, "secret_key", "invalid_secret_key")?;
-        let secret_key = SecretKey::from_slice(&sk_bytes).map_err(|_| {
+        let secret_key = SecretKey::from_secret_bytes(sk_bytes).map_err(|_| {
             err(
                 "invalid_secret_key",
                 "secret_key is not a valid secp256k1 key",
@@ -262,7 +262,7 @@ fn populate<P: Parameters + Copy>(
             }
             Some(Address::Sapling(pa)) => {
                 builder
-                    .add_sapling_output::<Infallible>(Some(ovk), pa, value, output.memo.clone())
+                    .add_sapling_output::<Infallible>(Some(ovk), *pa, value, output.memo.clone())
                     .map_err(|_| err("invalid_output", "could not add Sapling output"))?;
             }
             Some(Address::Unified(_)) => {
@@ -506,7 +506,7 @@ fn build_generic<P: Parameters + Copy>(
                     ))
                 }
             };
-            if fvk.vk.to_payment_address(*pa.diversifier()) != Some(pa) {
+            if fvk.vk.to_payment_address(*pa.diversifier()) != Some(*pa) {
                 return Err(err(
                     "note_not_spendable",
                     "spend note recipient is not spendable by the account viewing key",
@@ -742,7 +742,7 @@ fn build_generic<P: Parameters + Copy>(
     let fee_rule = FixedFeeRule::non_standard(zatoshis(fee_zatoshis, "fee_zatoshis")?);
     let rng = match rng_seed {
         Some(seed) => BuildRng::Deterministic(Box::new(ChaCha20Rng::from_seed(seed))),
-        None => BuildRng::Os(rand_core::OsRng),
+        None => BuildRng::os(),
     };
 
     let (result, proof_validity) = match &proving.real {
@@ -888,7 +888,7 @@ pub(crate) fn real_note_fixture(
     let anchor = witness.root().to_bytes();
     let mut witness_bytes = Vec::new();
     write_incremental_witness(&witness, &mut witness_bytes).expect("serialize witness");
-    let recipient = Address::Sapling(to).encode(&params);
+    let recipient = Address::Sapling(Box::new(to)).encode(&params);
     (
         recipient,
         hex::encode(rseed),

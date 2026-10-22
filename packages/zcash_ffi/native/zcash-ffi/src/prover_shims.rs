@@ -4,7 +4,7 @@
     feature = "sapling-spend-build"
 ))]
 pub enum BuildRng {
-    Os(rand_core::OsRng),
+    Os(rand_core::UnwrapErr<rand::rngs::SysRng>),
     Deterministic(Box<rand_chacha::ChaCha20Rng>),
 }
 
@@ -13,26 +13,33 @@ pub enum BuildRng {
     feature = "ironwood-tx-build",
     feature = "sapling-spend-build"
 ))]
-impl rand_core::RngCore for BuildRng {
-    fn next_u32(&mut self) -> u32 {
+impl BuildRng {
+    pub fn os() -> Self {
+        Self::Os(rand_core::UnwrapErr(rand::rngs::SysRng))
+    }
+}
+
+#[cfg(any(
+    feature = "orchard-tx-build",
+    feature = "ironwood-tx-build",
+    feature = "sapling-spend-build"
+))]
+impl rand_core::TryRng for BuildRng {
+    type Error = core::convert::Infallible;
+
+    fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
         match self {
-            BuildRng::Os(r) => r.next_u32(),
-            BuildRng::Deterministic(r) => r.next_u32(),
+            BuildRng::Os(r) => r.try_next_u32(),
+            BuildRng::Deterministic(r) => r.try_next_u32(),
         }
     }
-    fn next_u64(&mut self) -> u64 {
+    fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
         match self {
-            BuildRng::Os(r) => r.next_u64(),
-            BuildRng::Deterministic(r) => r.next_u64(),
+            BuildRng::Os(r) => r.try_next_u64(),
+            BuildRng::Deterministic(r) => r.try_next_u64(),
         }
     }
-    fn fill_bytes(&mut self, dest: &mut [u8]) {
-        match self {
-            BuildRng::Os(r) => r.fill_bytes(dest),
-            BuildRng::Deterministic(r) => r.fill_bytes(dest),
-        }
-    }
-    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand_core::Error> {
+    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), Self::Error> {
         match self {
             BuildRng::Os(r) => r.try_fill_bytes(dest),
             BuildRng::Deterministic(r) => r.try_fill_bytes(dest),
@@ -45,33 +52,32 @@ impl rand_core::RngCore for BuildRng {
     feature = "ironwood-tx-build",
     feature = "sapling-spend-build"
 ))]
-impl rand_core::CryptoRng for BuildRng {}
+impl rand_core::TryCryptoRng for BuildRng {}
 
 /// Only for transparent-only builds, which consume no randomness (RFC 6979 nonces).
 #[cfg(feature = "transparent-tx-build")]
 pub struct ZeroRng;
 
 #[cfg(feature = "transparent-tx-build")]
-impl rand_core::RngCore for ZeroRng {
-    fn next_u32(&mut self) -> u32 {
-        0
+impl rand_core::TryRng for ZeroRng {
+    type Error = core::convert::Infallible;
+
+    fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
+        Ok(0)
     }
-    fn next_u64(&mut self) -> u64 {
-        0
+    fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
+        Ok(0)
     }
-    fn fill_bytes(&mut self, dest: &mut [u8]) {
+    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), Self::Error> {
         for byte in dest.iter_mut() {
             *byte = 0;
         }
-    }
-    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand_core::Error> {
-        self.fill_bytes(dest);
         Ok(())
     }
 }
 
 #[cfg(feature = "transparent-tx-build")]
-impl rand_core::CryptoRng for ZeroRng {}
+impl rand_core::TryCryptoRng for ZeroRng {}
 
 #[cfg(any(
     feature = "transparent-tx-build",
@@ -101,7 +107,7 @@ impl sapling::prover::SpendProver for NoProver {
         None
     }
 
-    fn create_proof<R: rand_core::RngCore>(
+    fn create_proof<R: rand_core::Rng>(
         &self,
         _circuit: sapling::circuit::Spend,
         _rng: &mut R,
@@ -132,7 +138,7 @@ impl sapling::prover::OutputProver for NoProver {
         unreachable!("this build path never proves Sapling outputs")
     }
 
-    fn create_proof<R: rand_core::RngCore>(
+    fn create_proof<R: rand_core::Rng>(
         &self,
         _circuit: sapling::circuit::Output,
         _rng: &mut R,

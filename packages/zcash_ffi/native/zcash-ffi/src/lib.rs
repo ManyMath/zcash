@@ -12,7 +12,7 @@ use zcash_address::{
 use zcash_client_backend::{
     data_api::BlockMetadata,
     proto::compact_formats::CompactBlock,
-    scanning::{scan_block, Nullifiers, ScanningKeys},
+    scanning::{scan_block, ScanBlockError, ScanningKeys, SpendIdentifiers},
 };
 use zcash_keys::{
     address::{Address, UnifiedAddress},
@@ -28,7 +28,6 @@ use zcash_protocol::{
         BranchId, MainNetwork, Network, NetworkConstants, NetworkType, NetworkUpgrade, Parameters,
         TestNetwork,
     },
-    constants,
     value::{COIN, MAX_MONEY},
 };
 use zcash_script::script::{self, Evaluable};
@@ -525,7 +524,7 @@ fn scan_compact_blocks_json(
     type AccountId = u32;
     let scanning_keys: ScanningKeys<AccountId, (AccountId, zip32::Scope)> =
         ScanningKeys::from_account_ufvks(std::iter::once((0u32, ufvk)));
-    let nullifiers = Nullifiers::<AccountId>::empty();
+    let spend_ids = SpendIdentifiers::<AccountId>::empty();
     let mut prior_meta: Option<BlockMetadata> = None;
     let mut notes = Vec::new();
     let mut total_value: u64 = 0;
@@ -684,23 +683,28 @@ fn scan_compact_blocks_json(
                 &staged_regtest::params(None),
                 block,
                 &scanning_keys,
-                &nullifiers,
+                &spend_ids,
                 prior_meta.as_ref(),
             ),
-            _ => scan_block(net, block, &scanning_keys, &nullifiers, prior_meta.as_ref()),
+            _ => scan_block(net, block, &scanning_keys, &spend_ids, prior_meta.as_ref()),
         }
-        .map_err(|e| {
-            let at_height = u64::from(u32::from(e.at_height()));
-            if e.is_continuity_error() {
-                ScannerError::new(
-                    "chain_discontinuity",
-                    "compact blocks are not a continuous ascending chain",
-                )
-                .at_block(block_index, Some(at_height))
-            } else {
-                ScannerError::new("scan_error", "compact block could not be scanned")
+        .map_err(|e: ScanBlockError<std::convert::Infallible>| match e {
+            ScanBlockError::Scan(e) => {
+                let at_height = u64::from(u32::from(e.at_height()));
+                if e.is_continuity_error() {
+                    ScannerError::new(
+                        "chain_discontinuity",
+                        "compact blocks are not a continuous ascending chain",
+                    )
                     .at_block(block_index, Some(at_height))
+                } else {
+                    ScannerError::new("scan_error", "compact block could not be scanned")
+                        .at_block(block_index, Some(at_height))
+                }
             }
+            ScanBlockError::AddressLookup(infallible) => match infallible {},
+            _ => ScannerError::new("scan_error", "compact block could not be scanned")
+                .at_block(block_index, declared_height),
         })?;
         let height = u64::from(u32::from(scanned.height()));
 
@@ -733,7 +737,7 @@ fn scan_compact_blocks_json(
                 if include_sapling_witnesses {
                     discovered_sapling.push((output.note().cmu().to_bytes(), note_idx));
                     let recipient = encode_payment_address(
-                        net_type.hrp_sapling_payment_address(),
+                        zcash_address::constants::hrp_sapling_payment_address(net_type),
                         &output.note().recipient(),
                     );
                     let rseed = match output.note().rseed() {
@@ -995,10 +999,13 @@ fn scan_compact_blocks_json(
     feature = "ironwood-note-discovery"
 ))]
 fn encode_orchard_receiver_ua(network: NetworkType, recipient: &orchard::Address) -> String {
-    use zcash_address::unified::{Encoding, Receiver};
-    zcash_address::unified::Address::try_from_items(vec![Receiver::Orchard(
-        recipient.to_raw_address_bytes(),
-    )])
+    use zcash_address::unified::{Encoding, Receiver, Revision, Uitem};
+    zcash_address::unified::Address::try_from_items(
+        Revision::R0,
+        vec![Uitem::Data(Receiver::Orchard(
+            recipient.to_raw_address_bytes(),
+        ))],
+    )
     .expect("a single Orchard receiver is a valid Unified Address")
     .encode(&network)
 }
@@ -1407,6 +1414,10 @@ impl TryFromAddress for UnifiedReceiverInventory {
         let receivers = data
             .items_as_parsed()
             .iter()
+            .filter_map(|item| match item {
+                unified::Uitem::Data(receiver) => Some(receiver),
+                unified::Uitem::Metadata(_) => None,
+            })
             .enumerate()
             .map(|(index, receiver)| {
                 let (kind, pool) = match receiver {
@@ -1512,8 +1523,13 @@ impl TryFromAddress for DecodedAddress {
         let mut has_sapling = false;
         let mut transparent_kind = None;
         let mut unknown_receivers = 0usize;
+        let mut total_receivers = 0usize;
 
-        for receiver in data.items_as_parsed() {
+        for item in data.items_as_parsed() {
+            let unified::Uitem::Data(receiver) = item else {
+                continue;
+            };
+            total_receivers += 1;
             match receiver {
                 unified::Receiver::Orchard(_) => has_orchard = true,
                 unified::Receiver::Sapling(_) => has_sapling = true,
@@ -1548,7 +1564,7 @@ impl TryFromAddress for DecodedAddress {
             has_sapling,
             has_transparent,
             unknown_receivers,
-            total_receivers: data.items_as_parsed().len(),
+            total_receivers,
         })
     }
 
@@ -1784,17 +1800,17 @@ fn network_constants_json(network: NetworkType) -> Value {
         "max_money_zatoshis": MAX_MONEY,
         "coinbase_maturity_blocks": zcash_protocol::consensus::COINBASE_MATURITY_BLOCKS,
         "address_prefixes": {
-            "sapling_payment_address_hrp": network.hrp_sapling_payment_address(),
-            "sapling_extended_spending_key_hrp": network.hrp_sapling_extended_spending_key(),
-            "sapling_extended_full_viewing_key_hrp": network.hrp_sapling_extended_full_viewing_key(),
-            "tex_address_hrp": network.hrp_tex_address(),
-            "unified_address_hrp": network.hrp_unified_address(),
-            "unified_full_viewing_key_hrp": network.hrp_unified_fvk(),
-            "unified_incoming_viewing_key_hrp": network.hrp_unified_ivk(),
-            "sprout_address_b58_prefix": network.b58_sprout_address_prefix(),
-            "transparent_pubkey_address_b58_prefix": network.b58_pubkey_address_prefix(),
-            "transparent_script_address_b58_prefix": network.b58_script_address_prefix(),
-            "transparent_secret_key_b58_prefix": network.b58_secret_key_prefix(),
+            "sapling_payment_address_hrp": zcash_address::constants::hrp_sapling_payment_address(network),
+            "sapling_extended_spending_key_hrp": zcash_keys::constants::hrp_sapling_extended_spending_key(network),
+            "sapling_extended_full_viewing_key_hrp": zcash_keys::constants::hrp_sapling_extended_full_viewing_key(network),
+            "tex_address_hrp": zcash_address::constants::hrp_tex_address(network),
+            "unified_address_hrp": zcash_address::constants::hrp_unified_address(network),
+            "unified_full_viewing_key_hrp": zcash_address::constants::hrp_unified_fvk(network),
+            "unified_incoming_viewing_key_hrp": zcash_address::constants::hrp_unified_ivk(network),
+            "sprout_address_b58_prefix": zcash_address::constants::b58_sprout_address_prefix(network),
+            "transparent_pubkey_address_b58_prefix": zcash_address::constants::b58_pubkey_address_prefix(network),
+            "transparent_script_address_b58_prefix": zcash_address::constants::b58_script_address_prefix(network),
+            "transparent_secret_key_b58_prefix": zcash_keys::constants::b58_secret_key_prefix(network),
         },
         "activation_heights": activation_heights_json(network),
     })
@@ -1818,6 +1834,9 @@ fn activation_heights_for_params<P: Parameters>(params: &P) -> Vec<Value> {
         NetworkUpgrade::Nu5,
         NetworkUpgrade::Nu6,
         NetworkUpgrade::Nu6_1,
+        NetworkUpgrade::Nu6_2,
+        NetworkUpgrade::Nu6_3,
+        NetworkUpgrade::Nu7,
     ]
     .into_iter()
     .filter_map(|upgrade| {
@@ -2117,10 +2136,11 @@ fn derive_ufvk_str(seed: &[u8], net: &Network, account: AccountId) -> Result<Str
     }
     .map_err(|e| format!("key derivation error: {:?}", e))?;
     let ufvk = usk.to_unified_full_viewing_key();
-    Ok(match net {
+    match net {
         Network::MainNetwork => ufvk.encode(&MainNetwork),
         Network::TestNetwork => ufvk.encode(&TestNetwork),
-    })
+    }
+    .map_err(|e| format!("ufvk encoding error: {:?}", e))
 }
 
 fn derive_account_metadata_json(
@@ -2139,9 +2159,10 @@ fn derive_account_metadata_json(
     let ufvk_str = match net {
         Network::MainNetwork => ufvk.encode(&MainNetwork),
         Network::TestNetwork => ufvk.encode(&TestNetwork),
-    };
+    }
+    .map_err(|e| format!("ufvk encoding error: {:?}", e))?;
     let transparent_xpub = ufvk
-        .transparent()
+        .p2pkh()
         .map(|account_pub_key| encode_transparent_xpub(account_pub_key, net, account_index))
         .transpose()?;
 
@@ -2155,8 +2176,8 @@ fn derive_account_metadata_json(
         "receivers": {
             "orchard": ufvk.orchard().is_some(),
             "sapling": ufvk.sapling().is_some(),
-            "transparent": ufvk.transparent().is_some(),
-            "p2pkh": ufvk.transparent().is_some(),
+            "transparent": ufvk.p2pkh().is_some(),
+            "p2pkh": ufvk.p2pkh().is_some(),
             "p2sh": false,
             "unknown": 0,
             "total": receiver_kinds.len(),
@@ -2173,7 +2194,7 @@ fn account_receiver_kinds_json(ufvk: &UnifiedFullViewingKey) -> Vec<Value> {
     if ufvk.sapling().is_some() {
         receiver_kinds.push(json!({"kind": "sapling", "pool": "sapling"}));
     }
-    if ufvk.transparent().is_some() {
+    if ufvk.p2pkh().is_some() {
         receiver_kinds.push(json!({"kind": "p2pkh", "pool": "transparent"}));
     }
     receiver_kinds
@@ -2194,7 +2215,7 @@ fn derive_viewing_keys_json(
     .map_err(|e| format!("key derivation error: {:?}", e))?;
     let ufvk = usk.to_unified_full_viewing_key();
 
-    let transparent = match ufvk.transparent() {
+    let transparent = match ufvk.p2pkh() {
         Some(account_pub_key) => {
             let external_ivk = account_pub_key
                 .derive_external_ivk()
@@ -2223,11 +2244,11 @@ fn derive_viewing_keys_json(
             let (div_index, payment_address) = dfvk.default_address();
             let default_addr_str = if regtest_hrp {
                 encode_payment_address(
-                    constants::regtest::HRP_SAPLING_PAYMENT_ADDRESS,
+                    zcash_address::constants::regtest::HRP_SAPLING_PAYMENT_ADDRESS,
                     &payment_address,
                 )
             } else {
-                let addr = Address::Sapling(payment_address);
+                let addr = Address::Sapling(Box::new(payment_address));
                 match net {
                     Network::MainNetwork => addr.encode(&MainNetwork),
                     Network::TestNetwork => addr.encode(&TestNetwork),
@@ -2345,7 +2366,7 @@ fn validate_ufvk_key(key: &str, network_type: NetworkType) -> Value {
                 "components": {
                     "orchard": ufvk.orchard().is_some(),
                     "sapling": ufvk.sapling().is_some(),
-                    "transparent": ufvk.transparent().is_some(),
+                    "transparent": ufvk.p2pkh().is_some(),
                 },
             }),
         );
@@ -2365,13 +2386,10 @@ fn validate_ufvk_key(key: &str, network_type: NetworkType) -> Value {
 }
 
 fn sapling_hrps(network_type: NetworkType, spending: bool) -> &'static str {
-    match (network_type, spending) {
-        (NetworkType::Main, true) => constants::mainnet::HRP_SAPLING_EXTENDED_SPENDING_KEY,
-        (NetworkType::Test, true) => constants::testnet::HRP_SAPLING_EXTENDED_SPENDING_KEY,
-        (NetworkType::Regtest, true) => constants::regtest::HRP_SAPLING_EXTENDED_SPENDING_KEY,
-        (NetworkType::Main, false) => constants::mainnet::HRP_SAPLING_EXTENDED_FULL_VIEWING_KEY,
-        (NetworkType::Test, false) => constants::testnet::HRP_SAPLING_EXTENDED_FULL_VIEWING_KEY,
-        (NetworkType::Regtest, false) => constants::regtest::HRP_SAPLING_EXTENDED_FULL_VIEWING_KEY,
+    if spending {
+        zcash_keys::constants::hrp_sapling_extended_spending_key(network_type)
+    } else {
+        zcash_keys::constants::hrp_sapling_extended_full_viewing_key(network_type)
     }
 }
 
@@ -2500,9 +2518,9 @@ pub extern "C" fn zcash_ffi_seed_to_sapling_spending_key(
         Err(_) => return json_err("invalid_account", "account_index out of range"),
     };
     let hrp = match network_name {
-        "main" | "mainnet" => constants::mainnet::HRP_SAPLING_EXTENDED_SPENDING_KEY,
-        "test" | "testnet" => constants::testnet::HRP_SAPLING_EXTENDED_SPENDING_KEY,
-        "regtest" => constants::regtest::HRP_SAPLING_EXTENDED_SPENDING_KEY,
+        "main" | "mainnet" => zcash_keys::constants::mainnet::HRP_SAPLING_EXTENDED_SPENDING_KEY,
+        "test" | "testnet" => zcash_keys::constants::testnet::HRP_SAPLING_EXTENDED_SPENDING_KEY,
+        "regtest" => zcash_keys::constants::regtest::HRP_SAPLING_EXTENDED_SPENDING_KEY,
         _ => {
             return json_err(
                 "unsupported_network",
@@ -2722,7 +2740,7 @@ fn derive_ua_json(
     });
 
     let orchard_str = ua.orchard().and_then(|oa| {
-        let orchard_ua = UnifiedAddress::from_receivers(Some(*oa), None, None)?;
+        let orchard_ua = UnifiedAddress::from_receivers(Some(*oa), None, None, None, None)?;
         Some(orchard_ua.to_zcash_address(network_type).to_string())
     });
 
@@ -3226,6 +3244,7 @@ fn branch_id_label(branch: BranchId) -> &'static str {
         BranchId::Nu6_1 => "nu6.1",
         BranchId::Nu6_2 => "nu6.2",
         BranchId::Nu6_3 => "nu6.3",
+        BranchId::Nu7 => "nu7",
     }
 }
 

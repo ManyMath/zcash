@@ -20,7 +20,7 @@ Future<void> main() async {
 `dd0ea2c3c5827a433e62c2f936b89efa2dec5a9a` (v0.4.1), plus the NU6.3 Ironwood
 fields (`PoolType.IRONWOOD`, `TreeState.ironwoodTree`,
 `ShieldedProtocol.ironwood`, `ChainMetadata.ironwoodCommitmentTreeSize`,
-`CompactTx.ironwoodActions`) numbered as in `zcash_client_backend` 0.24.
+`CompactTx.ironwoodActions`) numbered as in `zcash_client_backend` 0.25.
 
 `lib/src/grpc` is generated from `proto/`; do not edit it. Regenerate from the
 repository root with `protoc_plugin` activated:

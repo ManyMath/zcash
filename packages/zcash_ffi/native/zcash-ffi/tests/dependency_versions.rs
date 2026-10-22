@@ -1,15 +1,15 @@
 const CARGO_TOML: &str = include_str!("../Cargo.toml");
 
 const PINNED_UPSTREAM: &[(&str, &str)] = &[
-    ("zcash_client_backend", "0.24.0"),
-    ("zcash_keys", "0.16.1"),
-    ("zcash_primitives", "0.30.1"),
-    ("zcash_proofs", "0.30"),
-    ("zcash_address", "0.13"),
-    ("zcash_protocol", "0.10.6"),
-    ("zcash_script", "0.4.5"),
-    ("zcash_transparent", "0.10"),
-    ("zip32", "0.2.1"),
+    ("zcash_client_backend", "0.25.0"),
+    ("zcash_keys", "0.17.0"),
+    ("zcash_primitives", "0.31.0"),
+    ("zcash_proofs", "0.31"),
+    ("zcash_address", "0.14"),
+    ("zcash_protocol", "0.11.0"),
+    ("zcash_script", "0.6"),
+    ("zcash_transparent", "0.11"),
+    ("zip32", "0.3"),
     ("equihash", "0.3"),
 ];
 

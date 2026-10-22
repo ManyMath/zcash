@@ -16,4 +16,4 @@ Features:
 | `sapling-spend-build` | no | `zcash_ffi_build_sapling_transaction`, Sapling witnesses |
 | `orchard-tx-build` | no | `zcash_ffi_build_orchard_transaction` (before NU6.3 only) |
 | `deterministic-build-rng` | no | accepts `rng_seed` in build requests (tests only) |
-Minimum Rust version: 1.88.
+Minimum Rust version: 1.89.

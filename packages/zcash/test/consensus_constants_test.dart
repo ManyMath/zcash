@@ -30,6 +30,21 @@ void main() {
             'activation_height': 419200,
             'branch_id': '76b809bb',
           },
+          {
+            'name': 'Nu6.2',
+            'activation_height': 3364600,
+            'branch_id': '5437f330',
+          },
+          {
+            'name': 'Nu6.3',
+            'activation_height': 3428143,
+            'branch_id': '37a5165b',
+          },
+          {
+            'name': 'Nu7',
+            'activation_height': 3543405,
+            'branch_id': '77190ad9',
+          },
         ],
       });
 
@@ -45,6 +60,12 @@ void main() {
       ]);
       expect(constants.activationByName('Sapling')?.activationHeight, 419200);
       expect(constants.activationByName('Sapling')?.branchId, '76b809bb');
+      expect(constants.activationByName('Nu6.2')?.activationHeight, 3364600);
+      expect(constants.activationByName('Nu6.2')?.branchId, '5437f330');
+      expect(constants.activationByName('Nu6.3')?.activationHeight, 3428143);
+      expect(constants.activationByName('Nu6.3')?.branchId, '37a5165b');
+      expect(constants.activationByName('Nu7')?.activationHeight, 3543405);
+      expect(constants.activationByName('Nu7')?.branchId, '77190ad9');
     });
 
     test('parses Zebra-style network upgrade JSON', () {

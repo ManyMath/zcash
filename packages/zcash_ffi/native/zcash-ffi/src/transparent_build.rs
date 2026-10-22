@@ -149,6 +149,7 @@ pub(crate) fn regtest_params() -> LocalNetwork {
         nu6_1: None,
         nu6_2: None,
         nu6_3: None,
+        nu7: None,
     }
 }
 
@@ -165,6 +166,7 @@ pub(crate) fn regtest_nu63_params() -> LocalNetwork {
         nu6_1: Some(BlockHeight::from_u32(1)),
         nu6_2: Some(BlockHeight::from_u32(1)),
         nu6_3: Some(BlockHeight::from_u32(1)),
+        nu7: None,
     }
 }
 
@@ -210,7 +212,7 @@ pub(crate) fn build_generic<P: Parameters + Copy>(
             ));
         }
         let sk_bytes = read_hex_32(input, "secret_key", "invalid_secret_key")?;
-        let secret_key = SecretKey::from_slice(&sk_bytes).map_err(|_| {
+        let secret_key = SecretKey::from_secret_bytes(sk_bytes).map_err(|_| {
             err(
                 "invalid_secret_key",
                 "secret_key is not a valid secp256k1 key",

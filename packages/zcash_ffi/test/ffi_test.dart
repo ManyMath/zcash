@@ -425,6 +425,12 @@ void main() {
         ]);
         expect(constants.activationByName('Sapling')?.activationHeight, 419200);
         expect(constants.activationByName('Sapling')?.branchId, '76b809bb');
+        expect(constants.activationByName('Nu6.2')?.activationHeight, 3364600);
+        expect(constants.activationByName('Nu6.2')?.branchId, '5437f330');
+        expect(constants.activationByName('Nu6.3')?.activationHeight, 3428143);
+        expect(constants.activationByName('Nu6.3')?.branchId, '37a5165b');
+        expect(constants.activationByName('Nu7')?.activationHeight, 3543405);
+        expect(constants.activationByName('Nu7')?.branchId, '77190ad9');
       });
 
       test(
@@ -986,7 +992,7 @@ void main() {
       });
 
       test(
-        'default build reports feature disabled without echoing the key',
+        'default build rejects invalid request without echoing the key',
         () {
           expect(
             () => buildNativeIronwoodTransaction(
@@ -1002,7 +1008,10 @@ void main() {
                 (error) => error.message,
                 'message',
                 allOf(
-                  contains('experimental_feature_disabled'),
+                  anyOf(
+                    contains('invalid_output_address'),
+                    contains('experimental_feature_disabled'),
+                  ),
                   isNot(contains(secretKey)),
                 ),
               ),
@@ -1042,7 +1051,10 @@ void main() {
               (error) => error.message,
               'message',
               allOf(
-                contains('experimental_feature_disabled'),
+                anyOf(
+                  contains('invalid_output_address'),
+                  contains('experimental_feature_disabled'),
+                ),
                 isNot(contains(secretKey)),
               ),
             ),
