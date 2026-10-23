@@ -463,4 +463,100 @@ void main() {
       }
     });
   });
+
+  group('NU7 block spacing', () {
+    const mainnet = Zip318Parameters.mainnet;
+    const uniform = Zip318Parameters();
+    const nu7 = 3543405;
+
+    test('presets carry the NU7 activation heights', () {
+      expect(Zip318Parameters.provisional.nu7ActivationHeight, nu7);
+      expect(Zip318Parameters.testnet.nu7ActivationHeight, 4465026);
+      expect(uniform.nu7ActivationHeight, isNull);
+    });
+
+    test('advance keeps a span the same length in time', () {
+      expect(Zip318BlockSpacing.uniform.advance(100, 10), 110);
+      final spacing = mainnet.blockSpacing;
+      expect(spacing.advance(3500000, 10), 3500010);
+      expect(spacing.advance(3600000, 10), 3600030);
+      // Five reference blocks before activation, five (15 blocks) after.
+      expect(spacing.advance(nu7 - 5, 10), nu7 + 15);
+    });
+
+    test('canonical expiry triples its modulus and window from NU7', () {
+      expect(Zip318Schedule.canonicalExpiryHeight(3600000, mainnet), 3732480);
+      expect(Zip318Schedule.canonicalExpiryHeight(3600000, uniform), 3663360);
+      expect(
+        Zip318Schedule.canonicalExpiryHeight(3500000, mainnet),
+        Zip318Schedule.canonicalExpiryHeight(3500000, uniform),
+      );
+      expect(
+        Zip318Schedule.canonicalExpiryHeight(4000000, Zip318Parameters.testnet),
+        4043520,
+      );
+    });
+
+    test('anchor boundaries are 432 blocks apart from NU7', () {
+      const grid = Zip318AnchorSelection(mainnet);
+      expect(grid.boundaryAtOrBelow(3600000), 3599856);
+      expect(grid.isBoundary(3599856), isTrue);
+      // A multiple of 144 but not of 432, after activation.
+      expect(grid.isBoundary(3543552), isFalse);
+      expect(grid.isBoundary(3543264), isTrue);
+      // No boundary lies between activation and the first multiple of 432.
+      expect(grid.boundaryAtOrBelow(3543500), 3543264);
+      expect(grid.boundaryAtOrBelow(3543696), 3543696);
+      expect(grid.boundaryBefore(3543696), 3543264);
+      expect(
+        grid.candidates(
+          activationHeight: 3428143,
+          fundingNoteHeight: 3542976,
+          observedTipHeight: 3544000,
+        ),
+        [3542976, 3543120, 3543264, 3543696],
+      );
+    });
+
+    test('refuses a pre-NU7 grid anchor after activation', () {
+      expect(
+        () => Zip318BoundaryAnchors.at(
+          boundaryHeight: 3543552,
+          fetch: (_) async => throw StateError('must not fetch'),
+        ),
+        throwsA(
+          isA<Zip318AnchorException>().having(
+            (e) => e.anchorRefusal,
+            'anchorRefusal',
+            Zip318AnchorRefusal.wrongHeight,
+          ),
+        ),
+      );
+    });
+
+    test('schedule delays scale to post-NU7 blocks', () {
+      final schedule = Zip318Schedule.plan(
+        decomposition: denominations.decompose(1234 * zec),
+        startHeight: 3600000,
+        canonicalFeeZatoshis: canonicalFee,
+        anchorHeight: 3599856,
+        rng: Random(13),
+        parameters: mainnet,
+      );
+      var previous = 3600000;
+      for (final transfer in schedule.transfers) {
+        final delay = transfer.broadcastHeight - previous;
+        expect(delay % nu7PowTargetSpacingRatio, 0);
+        expect(delay, inInclusiveRange(0, 3 * 576));
+        expect(
+          transfer.expiryHeight,
+          Zip318Schedule.canonicalExpiryHeight(
+            transfer.broadcastHeight,
+            mainnet,
+          ),
+        );
+        previous = transfer.broadcastHeight;
+      }
+    });
+  });
 }

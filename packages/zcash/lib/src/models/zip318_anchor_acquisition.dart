@@ -63,11 +63,12 @@ class Zip318BoundaryAnchors {
     required Future<TreeState> Function(int height) fetch,
     Zip318Parameters parameters = Zip318Parameters.provisional,
   }) async {
-    if (boundaryHeight % parameters.anchorBoundaryModulus != 0) {
+    final grid = Zip318AnchorSelection(parameters);
+    if (!grid.isBoundary(boundaryHeight)) {
       throw Zip318AnchorException(
         Zip318AnchorRefusal.wrongHeight,
-        'height $boundaryHeight is not a multiple of the boundary modulus '
-        '${parameters.anchorBoundaryModulus}; a non-boundary anchor is what '
+        'height $boundaryHeight is not on the anchor grid '
+        '(${grid.gridDescription}); a non-boundary anchor is what '
         "ties a transaction back to its own wallet's sync",
       );
     }

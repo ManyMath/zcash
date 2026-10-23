@@ -7,10 +7,60 @@ import 'spend.dart';
 
 const int _zec = 100000000;
 
+/// ZIP 218: NU7 cuts the target block spacing from 75 to 25 seconds.
+const int nu7PowTargetSpacingRatio = 3;
+
+/// Converts ZIP 318 durations, stated in 75-second reference blocks, into
+/// block heights on a chain whose spacing drops to 25 seconds at NU7.
+class Zip318BlockSpacing {
+  const Zip318BlockSpacing([this.nu7ActivationHeight]);
+
+  static const uniform = Zip318BlockSpacing();
+
+  final int? nu7ActivationHeight;
+
+  int blocksPerReferenceBlock(int height) {
+    final activation = nu7ActivationHeight;
+    return activation != null && height >= activation
+        ? nu7PowTargetSpacingRatio
+        : 1;
+  }
+
+  /// The height `referenceBlocks` reference blocks after `from`; a span
+  /// crossing activation keeps its length in time.
+  int advance(int from, int referenceBlocks) =>
+      _heightAt(_timeOf(from) + referenceBlocks * nu7PowTargetSpacingRatio);
+
+  // Time in post-NU7 block spacings since genesis.
+  int _timeOf(int height) {
+    final activation = nu7ActivationHeight;
+    if (activation == null || height <= activation) {
+      return height * nu7PowTargetSpacingRatio;
+    }
+    return activation * nu7PowTargetSpacingRatio + (height - activation);
+  }
+
+  int _heightAt(int time) {
+    final activation = nu7ActivationHeight;
+    if (activation == null || time <= activation * nu7PowTargetSpacingRatio) {
+      return (time + nu7PowTargetSpacingRatio - 1) ~/ nu7PowTargetSpacingRatio;
+    }
+    return activation + (time - activation * nu7PowTargetSpacingRatio);
+  }
+}
+
+/// Delays and moduli are in reference blocks; [blockSpacing] scales them
+/// from NU7 activation. Use the preset for the wallet's network: a wallet
+/// on the wrong grid or expiry is distinguishable from its peers.
 class Zip318Parameters {
-  static const provisional = Zip318Parameters();
+  static const mainnet = Zip318Parameters(nu7ActivationHeight: 3543405);
+
+  static const testnet = Zip318Parameters(nu7ActivationHeight: 4465026);
+
+  static const provisional = mainnet;
 
   const Zip318Parameters({
+    this.nu7ActivationHeight,
     this.maxResidualValueZatoshis = _zec ~/ 100,
     this.denomCapZatoshis = 10000 * _zec,
     this.meanDelayBlocks = 144,
@@ -23,6 +73,12 @@ class Zip318Parameters {
     this.prepActionsPerTransaction = 16,
     this.isProvisional = true,
   });
+
+  /// Null on a chain where NU7 never activates.
+  final int? nu7ActivationHeight;
+
+  Zip318BlockSpacing get blockSpacing =>
+      Zip318BlockSpacing(nu7ActivationHeight);
 
   final int maxResidualValueZatoshis;
 
@@ -194,22 +250,48 @@ class Zip318AnchorSelection {
 
   final Zip318Parameters parameters;
 
-  int boundaryAtOrBelow(int height) =>
-      (height ~/ parameters.anchorBoundaryModulus) *
-      parameters.anchorBoundaryModulus;
+  // Boundaries are anchorBoundaryModulus reference blocks apart, so the step
+  // in blocks triples from NU7 activation.
+  int _stepAt(int height) =>
+      parameters.anchorBoundaryModulus *
+      parameters.blockSpacing.blocksPerReferenceBlock(height);
+
+  bool isBoundary(int height) => height % _stepAt(height) == 0;
+
+  int boundaryAtOrBelow(int height) {
+    final activation = parameters.nu7ActivationHeight;
+    final candidate = height - height % _stepAt(height);
+    if (activation == null || height < activation || candidate >= activation) {
+      return candidate;
+    }
+    // No boundary in [activation, height]: take the last one before it.
+    final lastBefore = activation - 1;
+    return lastBefore - lastBefore % _stepAt(lastBefore);
+  }
+
+  int? boundaryBefore(int height) =>
+      height > 0 ? boundaryAtOrBelow(height - 1) : null;
+
+  /// A description of the grid for refusal messages.
+  String get gridDescription {
+    final activation = parameters.nu7ActivationHeight;
+    final modulus = parameters.anchorBoundaryModulus;
+    if (activation == null) return 'a multiple of $modulus';
+    return 'a multiple of $modulus before NU7 activation at $activation, or '
+        'of ${modulus * nu7PowTargetSpacingRatio} from it';
+  }
 
   List<int> candidates({
     required int activationHeight,
     required int fundingNoteHeight,
     required int observedTipHeight,
   }) {
-    final newest = boundaryAtOrBelow(observedTipHeight);
     final floor = max(activationHeight + 1, fundingNoteHeight);
     final out = <int>[];
     for (
-      var h = newest;
-      h >= floor && h > 0;
-      h -= parameters.anchorBoundaryModulus
+      int? h = boundaryAtOrBelow(observedTipHeight);
+      h != null && h >= floor && h > 0;
+      h = boundaryBefore(h)
     ) {
       out.add(h);
     }
@@ -233,13 +315,12 @@ class Zip318AnchorSelection {
         'wait for the next boundary rather than anchoring at the chain tip',
       );
     }
-    final newest = boundaryAtOrBelow(observedTipHeight);
-    final allowed = candidateHeights.toSet();
+    // Newest first: age `a` is the boundary `a - 1` steps behind the newest.
+    final byAge = candidateHeights.reversed.toList(growable: false);
     for (var attempt = 0; attempt < 1000; attempt++) {
       final age = _drawGeometric(rng);
       if (age > parameters.anchorAgeCapBoundaries) continue;
-      final height = newest - (age - 1) * parameters.anchorBoundaryModulus;
-      if (allowed.contains(height)) return height;
+      if (age <= byAge.length) return byAge[age - 1];
     }
     throw ZcashModelException(
       'could not draw a boundary anchor within the age cap; the candidate set '
@@ -311,7 +392,9 @@ class Zip318Schedule {
     int broadcastHeight, [
     Zip318Parameters parameters = Zip318Parameters.provisional,
   ]) {
-    final modulus = parameters.expiryModulusBlocks;
+    final modulus =
+        parameters.expiryModulusBlocks *
+        parameters.blockSpacing.blocksPerReferenceBlock(broadcastHeight);
     return (broadcastHeight ~/ modulus) * modulus + 2 * modulus;
   }
 
@@ -330,10 +413,13 @@ class Zip318Schedule {
     var height = startHeight;
     final transfers = <Zip318ScheduledTransfer>[];
     for (final part in parts) {
-      height += _drawExponentialDelay(
-        rng,
-        meanBlocks: params.meanDelayBlocks,
-        maxBlocks: params.maxDelayBlocks,
+      height = params.blockSpacing.advance(
+        height,
+        _drawExponentialDelay(
+          rng,
+          meanBlocks: params.meanDelayBlocks,
+          maxBlocks: params.maxDelayBlocks,
+        ),
       );
       transfers.add(
         Zip318ScheduledTransfer(
@@ -380,10 +466,13 @@ class Zip318PreparationSchedule {
     var height = startHeight;
     final heights = <int>[];
     for (var i = 0; i < transactionCount; i++) {
-      height += _drawExponentialDelay(
-        rng,
-        meanBlocks: parameters.prepMeanDelayBlocks,
-        maxBlocks: parameters.prepMaxDelayBlocks,
+      height = parameters.blockSpacing.advance(
+        height,
+        _drawExponentialDelay(
+          rng,
+          meanBlocks: parameters.prepMeanDelayBlocks,
+          maxBlocks: parameters.prepMaxDelayBlocks,
+        ),
       );
       heights.add(height);
     }

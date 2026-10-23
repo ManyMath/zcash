@@ -11,7 +11,7 @@ enum Zip318PlanRefusal {
 
   incompleteNote,
 
-  /// The anchor height is not on a ZIP 318 boundary (`height ≡ 0 mod M`).
+  /// The anchor height is not on the ZIP 318 anchor grid.
   anchorOffBoundary,
 
   malformedAnchor,
@@ -168,13 +168,14 @@ class Zip318TransferPlan {
         'be a canonical denomination',
       );
     }
-    if (transfer.anchorHeight % parameters.anchorBoundaryModulus != 0) {
+    final grid = Zip318AnchorSelection(parameters);
+    if (!grid.isBoundary(transfer.anchorHeight)) {
       throw Zip318PlanException(
         Zip318PlanRefusal.anchorOffBoundary,
         'the transfer anchors at height ${transfer.anchorHeight}, which is not '
-        'a multiple of the boundary modulus '
-        '${parameters.anchorBoundaryModulus}. Shared boundary anchors are what '
-        "decouple a transaction's anchor from when its wallet last synced",
+        'on the anchor grid (${grid.gridDescription}). Shared boundary anchors '
+        "are what decouple a transaction's anchor from when its wallet last "
+        'synced',
       );
     }
     _requireAnchor(orchardAnchorHex, 'the Orchard anchor');
