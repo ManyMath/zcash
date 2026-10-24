@@ -245,8 +245,8 @@ fn push_discoverable_orchard_action(
     use orchard::note_encryption::testing::fake_compact_action;
     use orchard::note_encryption::{NoteEncryptionDomain, OrchardVersion};
     use orchard::value::NoteValue;
-    use rand::rngs::SysRng;
     use rand::rand_core::UnwrapErr;
+    use rand::rngs::SysRng;
     use zcash_note_encryption::ShieldedOutput;
 
     type OrchardCompact = dyn ShieldedOutput<NoteEncryptionDomain<OrchardVersion>>;

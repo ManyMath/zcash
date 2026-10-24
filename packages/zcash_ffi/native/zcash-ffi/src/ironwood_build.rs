@@ -748,7 +748,7 @@ fn check_zip318_canonical_shape(
         return Err(err(
             "missing_canonical_expiry_height",
             "a ZIP 318 migration transaction requires an explicit expiry_height. \
-                 The builder's default (target_height + 40) is wallet-specific, and \
+                 The builder's default (target_height + 40, or + 120 from NU7) is wallet-specific, and \
                  the canonical expiry — the most recent multiple of EXPIRY_MODULUS at \
                  or below the broadcast height, plus two more — is what makes the \
                  expiry field stop separating wallets. There is no default here for \

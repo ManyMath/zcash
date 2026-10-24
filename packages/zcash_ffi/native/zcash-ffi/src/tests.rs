@@ -1750,6 +1750,53 @@ fn decode_reads_v6_transaction_despite_fixed_branch_id_in_reader() {
 
 #[test]
 #[cfg(feature = "transparent-tx-build")]
+fn nu7_build_is_v6_under_the_nu7_branch_with_its_expiry_delta() {
+    use zcash_primitives::transaction::builder::{
+        BLOSSOM_DEFAULT_TX_EXPIRY_DELTA, NU7_DEFAULT_TX_EXPIRY_DELTA,
+    };
+
+    let inputs = vec![json!({
+        "txid": "22".repeat(32),
+        "vout": 0,
+        "value_zatoshis": 100000u64,
+        "secret_key": BUILD_TEST_SECRET_KEY,
+    })];
+    let build = |params: zcash_protocol::local_consensus::LocalNetwork| {
+        let to = regtest_transparent_address();
+        let outputs = vec![json!({ "address": to, "value_zatoshis": 90000u64 })];
+        transparent_build::build_generic(params, NetworkType::Regtest, 10, 10000, &inputs, &outputs)
+            .expect("transparent build should succeed")
+    };
+
+    let pre_nu7 = build(transparent_build::regtest_nu63_params());
+    assert_eq!(
+        pre_nu7["expiry_height"],
+        10 + BLOSSOM_DEFAULT_TX_EXPIRY_DELTA
+    );
+
+    let built = build(transparent_build::regtest_nu7_params());
+    assert_eq!(built["version"], "v6", "expected a v6 build: {built}");
+    assert_eq!(built["expiry_height"], 10 + NU7_DEFAULT_TX_EXPIRY_DELTA);
+
+    let tx_hex = built["transaction"].as_str().expect("transaction hex");
+    let net = cptr("regtest");
+    let decoded = result_value(zcash_ffi_decode_transaction(
+        cptr(tx_hex).as_ptr(),
+        net.as_ptr(),
+    ));
+    assert_eq!(decoded["status"], "ok", "v6 decode must succeed: {decoded}");
+    assert_eq!(decoded["consensus_branch_id"], "nu7");
+    assert_eq!(decoded["consensus_branch_id_hex"], "77190ad9");
+
+    let ids = result_value(zcash_ffi_transaction_txid(cptr(tx_hex).as_ptr()));
+    assert_eq!(ids["status"], "ok", "unexpected: {ids}");
+    assert_eq!(ids["txid"], built["txid"]);
+    let auth = ids["auth_digest"].as_str().expect("auth_digest for v6");
+    assert_eq!(auth.len(), 64, "auth_digest must be 32 bytes hex");
+}
+
+#[test]
+#[cfg(feature = "transparent-tx-build")]
 fn build_transparent_transaction_is_deterministic() {
     let to = regtest_transparent_address();
     let request = format!(

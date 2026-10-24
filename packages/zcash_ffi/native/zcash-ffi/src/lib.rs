@@ -2914,8 +2914,11 @@ pub extern "C" fn zcash_ffi_transaction_txid(tx_hex_ptr: *const c_char) -> *mut 
 
     match read_full_transaction(&bytes) {
         Ok(tx) => {
+            // ZIP 244 auth digests apply to v5 and to v6 (ZIP 229).
             let auth_digest = match tx.version() {
-                TxVersion::V5 => Value::from(hex::encode(tx.auth_commitment().as_bytes())),
+                TxVersion::V5 | TxVersion::V6 => {
+                    Value::from(hex::encode(tx.auth_commitment().as_bytes()))
+                }
                 _ => Value::Null,
             };
             json_success(json!({

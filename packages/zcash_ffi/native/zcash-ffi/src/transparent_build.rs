@@ -170,6 +170,14 @@ pub(crate) fn regtest_nu63_params() -> LocalNetwork {
     }
 }
 
+#[cfg(test)]
+pub(crate) fn regtest_nu7_params() -> LocalNetwork {
+    LocalNetwork {
+        nu7: Some(BlockHeight::from_u32(1)),
+        ..regtest_nu63_params()
+    }
+}
+
 fn zatoshis(value: u64, field: &str) -> Result<Zatoshis, BuildError> {
     Zatoshis::from_u64(value)
         .map_err(|_| err("invalid_request", &format!("{field} is out of range")))
