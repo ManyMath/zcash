@@ -433,6 +433,20 @@ void main() {
         expect(constants.activationByName('Nu7')?.branchId, '77190ad9');
       });
 
+      test('ZIP 318 presets match the native NU7 activation heights', () {
+        for (final (network, params) in [
+          ('main', Zip318Parameters.mainnet),
+          ('test', Zip318Parameters.testnet),
+        ]) {
+          final constants = nativeNetworkConstants(network: network);
+          expect(
+            params.nu7ActivationHeight,
+            constants.activationByName('Nu7')?.activationHeight,
+            reason: network,
+          );
+        }
+      });
+
       test(
         'nativeNetworkConstants exposes regtest constants without schedule',
         () {
@@ -972,6 +986,16 @@ void main() {
       );
       const anchor = IronwoodAnchorSource.tree('');
 
+      // With the feature compiled in, the request passes the gate and fails
+      // on the placeholder address; without it, the gate refuses it.
+      String expectedRejection() =>
+          nativeCapabilities().statusFor(
+                NativeCapability.ironwoodTransactionBuild,
+              ) ==
+              CapabilityStatus.supported
+          ? 'invalid_output_address'
+          : 'experimental_feature_disabled';
+
       test('throws without explicit experimental opt-in', () {
         expect(
           () => buildNativeIronwoodTransaction(
@@ -991,34 +1015,25 @@ void main() {
         );
       });
 
-      test(
-        'default build rejects invalid request without echoing the key',
-        () {
-          expect(
-            () => buildNativeIronwoodTransaction(
-              network: ZcashNetwork.testnet,
-              targetHeight: 4134000,
-              anchor: anchor,
-              inputs: inputs,
-              ironwoodOutput: ironwoodOutput,
-              allowExperimentalIronwoodBuild: true,
+      test('opt-in reaches the compiled gate without echoing the key', () {
+        expect(
+          () => buildNativeIronwoodTransaction(
+            network: ZcashNetwork.testnet,
+            targetHeight: 4134000,
+            anchor: anchor,
+            inputs: inputs,
+            ironwoodOutput: ironwoodOutput,
+            allowExperimentalIronwoodBuild: true,
+          ),
+          throwsA(
+            isA<StateError>().having(
+              (error) => error.message,
+              'message',
+              allOf(contains(expectedRejection()), isNot(contains(secretKey))),
             ),
-            throwsA(
-              isA<StateError>().having(
-                (error) => error.message,
-                'message',
-                allOf(
-                  anyOf(
-                    contains('invalid_output_address'),
-                    contains('experimental_feature_disabled'),
-                  ),
-                  isNot(contains(secretKey)),
-                ),
-              ),
-            ),
-          );
-        },
-      );
+          ),
+        );
+      });
 
       test('the fee quote is gated exactly as the build is', () {
         expect(
@@ -1050,13 +1065,7 @@ void main() {
             isA<StateError>().having(
               (error) => error.message,
               'message',
-              allOf(
-                anyOf(
-                  contains('invalid_output_address'),
-                  contains('experimental_feature_disabled'),
-                ),
-                isNot(contains(secretKey)),
-              ),
+              allOf(contains(expectedRejection()), isNot(contains(secretKey))),
             ),
           ),
         );
