@@ -187,11 +187,23 @@ class ZcashAddressMetadata {
   final ZcashAddressPool pool;
   final ZcashAddressReceiverPresence receivers;
 
+  /// `r0` or `r2` for a Unified Address, otherwise null.
+  final String? unifiedRevision;
+
+  /// ZIP 316 Revision 2 expiry; the native builders refuse to pay past it.
+  final int? expiryHeight;
+
+  /// Unix seconds.
+  final int? expiryTime;
+
   const ZcashAddressMetadata({
     required this.network,
     required this.receiverType,
     required this.pool,
     required this.receivers,
+    this.unifiedRevision,
+    this.expiryHeight,
+    this.expiryTime,
   });
 
   factory ZcashAddressMetadata.fromJson(Map<String, dynamic> json) {
@@ -209,6 +221,9 @@ class ZcashAddressMetadata {
       receivers: ZcashAddressReceiverPresence.fromJson(
         receivers.cast<String, dynamic>(),
       ),
+      unifiedRevision: json['unified_revision'] as String?,
+      expiryHeight: (json['expiry_height'] as num?)?.toInt(),
+      expiryTime: (json['expiry_time'] as num?)?.toInt(),
     );
   }
 
@@ -217,6 +232,9 @@ class ZcashAddressMetadata {
     'receiver_type': receiverType.name,
     'pool': pool.name,
     'receivers': receivers.toJson(),
+    'unified_revision': unifiedRevision,
+    'expiry_height': expiryHeight,
+    'expiry_time': expiryTime,
   };
 }
 
@@ -292,10 +310,21 @@ class ZcashUnifiedAddressReceiverInventory {
   final List<ZcashUnifiedAddressReceiver> receivers;
   final ZcashUnifiedAddressReceiverCounts counts;
 
+  /// `r0` or `r2`.
+  final String? unifiedRevision;
+
+  final int? expiryHeight;
+
+  /// Unix seconds.
+  final int? expiryTime;
+
   const ZcashUnifiedAddressReceiverInventory({
     required this.network,
     required this.receivers,
     required this.counts,
+    this.unifiedRevision,
+    this.expiryHeight,
+    this.expiryTime,
   });
 
   int get receiverCount => receivers.length;
@@ -332,6 +361,9 @@ class ZcashUnifiedAddressReceiverInventory {
       counts: ZcashUnifiedAddressReceiverCounts.fromJson(
         rawCounts.cast<String, dynamic>(),
       ),
+      unifiedRevision: json['unified_revision'] as String?,
+      expiryHeight: (json['expiry_height'] as num?)?.toInt(),
+      expiryTime: (json['expiry_time'] as num?)?.toInt(),
     );
   }
 
@@ -341,6 +373,9 @@ class ZcashUnifiedAddressReceiverInventory {
     'receiver_count': receiverCount,
     'receivers': receivers.map((receiver) => receiver.toJson()).toList(),
     'counts': counts.toJson(),
+    'unified_revision': unifiedRevision,
+    'expiry_height': expiryHeight,
+    'expiry_time': expiryTime,
   };
 }
 

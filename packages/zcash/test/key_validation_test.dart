@@ -8,11 +8,7 @@ void main() {
         'key_type': 'ufvk',
         'network': 'mainnet',
         'valid': true,
-        'components': {
-          'orchard': true,
-          'sapling': true,
-          'transparent': false,
-        },
+        'components': {'orchard': true, 'sapling': true, 'transparent': false},
       });
 
       expect(result.keyType, ZcashKeyType.ufvk);
@@ -23,6 +19,30 @@ void main() {
       expect(result.components!.transparent, isFalse);
       expect(result.toJson()['valid'], true);
       expect((result.toJson()['components']! as Map)['orchard'], true);
+      expect(result.expiryHeight, isNull);
+    });
+
+    test('parses P2SH components and Revision 2 expiry', () {
+      final result = ZcashKeyValidation.fromJson({
+        'key_type': 'ufvk',
+        'network': 'mainnet',
+        'valid': true,
+        'components': {
+          'orchard': true,
+          'sapling': false,
+          'transparent': true,
+          'p2pkh': false,
+          'p2sh': true,
+        },
+        'expiry_height': 3600000,
+        'expiry_time': 1900000000,
+      });
+
+      expect(result.components!.transparent, isTrue);
+      expect(result.components!.p2pkh, isFalse);
+      expect(result.components!.p2sh, isTrue);
+      expect(result.expiryHeight, 3600000);
+      expect(result.expiryTime, 1900000000);
     });
 
     test('parses a wrong-network failure without components', () {

@@ -27,6 +27,25 @@ void main() {
       expect(metadata.receivers.transparent, isTrue);
       expect(metadata.receivers.transparentKind, 'p2pkh');
       expect(metadata.receivers.total, 3);
+      expect(metadata.unifiedRevision, isNull);
+      expect(metadata.expiryHeight, isNull);
+    });
+
+    test('parses Revision 2 expiry metadata', () {
+      final metadata = ZcashAddressMetadata.fromJson({
+        'network': 'mainnet',
+        'receiver_type': 'unified',
+        'pool': 'mixed',
+        'receivers': {'orchard': true, 'sapling': true, 'total': 2},
+        'unified_revision': 'r2',
+        'expiry_height': 3600000,
+        'expiry_time': 1900000000,
+      });
+
+      expect(metadata.unifiedRevision, 'r2');
+      expect(metadata.expiryHeight, 3600000);
+      expect(metadata.expiryTime, 1900000000);
+      expect(metadata.toJson()['expiry_height'], 3600000);
     });
 
     test('rejects metadata without receiver object', () {
