@@ -241,6 +241,7 @@ String encodeIronwoodBuildRequest({
   int? ironwoodChangeZatoshis,
   int? expiryHeight,
   int? regtestNu63ActivationHeight,
+  int? currentUnixTime,
   String? seedHex,
   int account = 0,
   String? spendParamsPath,
@@ -258,6 +259,7 @@ String encodeIronwoodBuildRequest({
     'target_height': targetHeight,
     'expiry_height': ?expiryHeight,
     'regtest_nu63_activation_height': ?regtestNu63ActivationHeight,
+    'current_unix_time': ?currentUnixTime,
     ...anchor.toRequestJson(),
     'fee_zatoshis': ?feeZatoshis,
     'rng_seed': ?rngSeedHex,
@@ -283,6 +285,7 @@ String encodeZip318MigrationRequest({
   required String seedHex,
   int account = 0,
   String? rngSeedHex,
+  int? currentUnixTime,
 }) {
   return encodeIronwoodBuildRequest(
     network: network,
@@ -300,6 +303,7 @@ String encodeZip318MigrationRequest({
     seedHex: seedHex,
     account: account,
     rngSeedHex: rngSeedHex,
+    currentUnixTime: currentUnixTime,
     ironwoodOutput: IronwoodBuildOutput(
       address: plan.recipientAddress,
       valueZatoshis: plan.ironwoodOutputZatoshis,

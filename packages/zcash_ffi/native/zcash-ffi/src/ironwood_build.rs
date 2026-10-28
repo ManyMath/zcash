@@ -192,6 +192,7 @@ struct ParsedRequest {
     ironwood_change: Option<u64>,
     /// Required for a ZIP 318 migration, whose expiry is canonical.
     expiry_height: Option<u32>,
+    current_unix_time: Option<u64>,
     regtest_nu63_activation_height: Option<u32>,
     seed: Option<Vec<u8>>,
     account: AccountId,
@@ -513,6 +514,8 @@ fn parse_request(request: &Value) -> Result<ParsedRequest, BuildError> {
             Some(h as u32)
         }
     };
+    let current_unix_time = super::recipient_expiry::read_current_unix_time(request)
+        .map_err(|r| err(r.category, &r.message))?;
 
     if inputs.is_empty()
         && sapling_spends.is_empty()
@@ -685,6 +688,7 @@ fn parse_request(request: &Value) -> Result<ParsedRequest, BuildError> {
         orchard_change,
         ironwood_change,
         expiry_height,
+        current_unix_time,
         regtest_nu63_activation_height,
         seed,
         account,
@@ -923,7 +927,7 @@ fn populate<P: Parameters + Copy>(
         }
     }
 
-    let recipient = ironwood_recipient(&params, &req.ironwood_output.address)?;
+    let recipient = ironwood_recipient(&params, &builder, req)?;
     builder
         .add_ironwood_output::<std::convert::Infallible>(
             req.ironwood_output.ovk.clone(),
@@ -1602,18 +1606,28 @@ where
     }))
 }
 
-fn ironwood_recipient<P: Parameters>(
+fn ironwood_recipient<P: Parameters + Copy>(
     params: &P,
-    address: &str,
+    builder: &Builder<P, ()>,
+    req: &ParsedRequest,
 ) -> Result<orchard::Address, BuildError> {
-    match Address::decode(params, address) {
-        Some(Address::Unified(ua)) => ua.orchard().copied().ok_or_else(|| {
-            err(
-                "missing_orchard_receiver",
-                "the Ironwood recipient must be a Unified Address with an Orchard \
-                     receiver; Ironwood reuses the Orchard receiver (ZIP 229)",
+    match Address::decode(params, &req.ironwood_output.address) {
+        Some(Address::Unified(ua)) => {
+            super::recipient_expiry::check(
+                &ua,
+                BlockHeight::from_u32(req.target_height),
+                builder.expiry_height(),
+                req.current_unix_time,
             )
-        }),
+            .map_err(|r| err(r.category, &r.message))?;
+            ua.orchard().copied().ok_or_else(|| {
+                err(
+                    "missing_orchard_receiver",
+                    "the Ironwood recipient must be a Unified Address with an Orchard \
+                     receiver; Ironwood reuses the Orchard receiver (ZIP 229)",
+                )
+            })
+        }
         Some(Address::Sapling(_)) | Some(Address::Transparent(_)) | Some(Address::Tex(_)) => {
             Err(err(
                 "unsupported_ironwood_recipient",

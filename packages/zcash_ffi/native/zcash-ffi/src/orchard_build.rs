@@ -72,6 +72,7 @@ struct ParsedRequest {
     anchor_tree_size: Option<u64>,
     rng_seed: Option<[u8; 32]>,
     expiry_height: Option<u32>,
+    current_unix_time: Option<u64>,
     regtest_nu63_activation_height: Option<u32>,
     inputs: Vec<ParsedInput>,
     outputs: Vec<ParsedOutput>,
@@ -252,6 +253,8 @@ fn parse_request(request: &Value) -> Result<ParsedRequest, BuildError> {
             Some(h as u32)
         }
     };
+    let current_unix_time = super::recipient_expiry::read_current_unix_time(request)
+        .map_err(|r| err(r.category, &r.message))?;
 
     let raw_inputs = request
         .get("inputs")
@@ -366,6 +369,7 @@ fn parse_request(request: &Value) -> Result<ParsedRequest, BuildError> {
         anchor_tree_size,
         rng_seed,
         expiry_height,
+        current_unix_time,
         regtest_nu63_activation_height,
         inputs,
         outputs,
@@ -472,7 +476,7 @@ fn populate<P: Parameters + Copy>(
             .map_err(|_| err("invalid_output", "could not add transparent output"))?;
     }
 
-    let recipient = orchard_recipient(&params, &req.orchard_output.address)?;
+    let recipient = orchard_recipient(&params, &builder, req)?;
     builder
         .add_orchard_output::<std::convert::Infallible>(
             req.orchard_output.ovk.clone(),
@@ -582,18 +586,28 @@ where
     }))
 }
 
-fn orchard_recipient<P: Parameters>(
+fn orchard_recipient<P: Parameters + Copy>(
     params: &P,
-    address: &str,
+    builder: &Builder<P, ()>,
+    req: &ParsedRequest,
 ) -> Result<orchard::Address, BuildError> {
-    match Address::decode(params, address) {
-        Some(Address::Unified(ua)) => ua.orchard().copied().ok_or_else(|| {
-            err(
-                "missing_orchard_receiver",
-                "the Orchard recipient must be a Unified Address with an Orchard \
-                     receiver",
+    match Address::decode(params, &req.orchard_output.address) {
+        Some(Address::Unified(ua)) => {
+            super::recipient_expiry::check(
+                &ua,
+                BlockHeight::from_u32(req.target_height),
+                builder.expiry_height(),
+                req.current_unix_time,
             )
-        }),
+            .map_err(|r| err(r.category, &r.message))?;
+            ua.orchard().copied().ok_or_else(|| {
+                err(
+                    "missing_orchard_receiver",
+                    "the Orchard recipient must be a Unified Address with an Orchard \
+                     receiver",
+                )
+            })
+        }
         Some(Address::Sapling(_)) | Some(Address::Transparent(_)) | Some(Address::Tex(_)) => {
             Err(err(
                 "unsupported_orchard_recipient",

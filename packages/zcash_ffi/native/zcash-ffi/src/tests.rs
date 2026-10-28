@@ -1,5 +1,6 @@
 use super::*;
 use std::ffi::CString;
+use zcash_protocol::consensus::BlockHeight;
 
 // Project test seed: the 64 bytes 0x00..0x3f; arbitrary.
 const TEST_SEED_HEX: &str = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f\
@@ -952,6 +953,10 @@ fn validate_key_accepts_valid_keys_for_each_type() {
     assert_eq!(ufvk_v["components"]["sapling"], true);
     assert_eq!(ufvk_v["components"]["orchard"], true);
     assert_eq!(ufvk_v["components"]["transparent"], true);
+    assert_eq!(ufvk_v["components"]["p2pkh"], true);
+    assert_eq!(ufvk_v["components"]["p2sh"], false);
+    assert!(ufvk_v["expiry_height"].is_null());
+    assert!(ufvk_v["expiry_time"].is_null());
 
     let extsk = sapling_spending_key(&main);
     let extsk_v = validate_key_value(&extsk, &main, "sapling_extended_spending_key");
@@ -4614,4 +4619,203 @@ fn build_sapling_real_note_is_deterministic() {
         first["transaction"], second["transaction"],
         "one stated seed, one artifact — even spending a real note"
     );
+}
+
+/// Re-encodes a regtest UA's shielded receivers with ZIP 316 Revision 2 expiry metadata.
+fn regtest_ua_with_expiry(ua: &str, height: Option<u32>, time: Option<u64>) -> String {
+    let params = staged_regtest::params(None);
+    let Some(Address::Unified(ua)) = Address::decode(&params, ua) else {
+        panic!("not a regtest unified address: {ua}");
+    };
+    UnifiedAddress::from_receivers(
+        ua.orchard().copied(),
+        ua.sapling().copied(),
+        None,
+        height.map(BlockHeight::from_u32),
+        time,
+    )
+    .expect("shielded receivers make a valid address")
+    .encode(&params)
+}
+
+fn regtest_shielded_ua() -> String {
+    let params = staged_regtest::params(None);
+    let seed = hex::decode(TEST_SEED_HEX).unwrap();
+    let usk =
+        UnifiedSpendingKey::from_seed(&params, &seed, zip32::AccountId::ZERO).expect("derive usk");
+    let (ua, _) = usk
+        .to_unified_full_viewing_key()
+        .default_address(UnifiedAddressRequest::unsafe_custom(
+            ReceiverRequirement::Require,
+            ReceiverRequirement::Require,
+            ReceiverRequirement::Omit,
+        ))
+        .expect("Orchard and Sapling address");
+    ua.encode(&params)
+}
+
+#[test]
+fn decode_reports_unified_revision_and_expiry() {
+    let net = cptr("regtest");
+    let r0 = regtest_shielded_ua();
+    let r2 = regtest_ua_with_expiry(&r0, Some(1000), Some(1_900_000_000));
+
+    let v = decode_address_value(&r0, &net);
+    assert_eq!(v["status"], "ok", "{v}");
+    assert_eq!(v["unified_revision"], "r0");
+    assert!(v["expiry_height"].is_null());
+    assert!(v["expiry_time"].is_null());
+
+    for v in [
+        decode_address_value(&r2, &net),
+        unified_address_receivers_value(&r2, &net),
+    ] {
+        assert_eq!(v["status"], "ok", "{v}");
+        assert_eq!(v["unified_revision"], "r2");
+        assert_eq!(v["expiry_height"], 1000);
+        assert_eq!(v["expiry_time"], 1_900_000_000u64);
+    }
+    let inventory = unified_address_receivers_value(&r2, &net);
+    assert_eq!(
+        inventory["counts"]["total"], 2,
+        "metadata is not a receiver"
+    );
+
+    let params = staged_regtest::params(None);
+    let Some(Address::Unified(ua)) = Address::decode(&params, &r0) else {
+        unreachable!()
+    };
+    let sapling = Address::Sapling(Box::new(*ua.sapling().expect("sapling receiver")));
+    let sapling = decode_address_value(&sapling.encode(&params), &net);
+    assert!(sapling["unified_revision"].is_null(), "{sapling}");
+    assert!(sapling["expiry_height"].is_null());
+}
+
+#[test]
+#[cfg(any(feature = "orchard-tx-build", feature = "ironwood-tx-build"))]
+fn recipient_expiry_follows_the_upstream_rules() {
+    let params = staged_regtest::params(None);
+    let ua = |height: Option<u32>, time: Option<u64>| {
+        let encoded = regtest_ua_with_expiry(&regtest_shielded_ua(), height, time);
+        match Address::decode(&params, &encoded) {
+            Some(Address::Unified(ua)) => *ua,
+            _ => unreachable!(),
+        }
+    };
+    let h = BlockHeight::from_u32;
+    let check = |ua: &UnifiedAddress, target: u32, expiry: u32, now: Option<u64>| {
+        recipient_expiry::check(ua, h(target), h(expiry), now)
+            .err()
+            .map(|r| r.category)
+    };
+
+    let plain = ua(None, None);
+    assert_eq!(check(&plain, 10, 50, None), None);
+
+    let by_height = ua(Some(100), None);
+    assert_eq!(check(&by_height, 10, 50, None), None);
+    assert_eq!(check(&by_height, 10, 100, None), None);
+    assert_eq!(
+        check(&by_height, 10, 101, None),
+        Some("recipient_expiry_conflict")
+    );
+    assert_eq!(
+        check(&by_height, 10, 0, None),
+        Some("recipient_expiry_conflict")
+    );
+    // The tip is one below the target height.
+    assert_eq!(check(&by_height, 101, 100, None), None);
+    assert_eq!(
+        check(&by_height, 102, 150, None),
+        Some("recipient_address_expired")
+    );
+
+    let by_time = ua(None, Some(1_900_000_000));
+    assert_eq!(
+        check(&by_time, 10, 50, None),
+        Some("recipient_expiry_time_unchecked")
+    );
+    assert_eq!(check(&by_time, 10, 50, Some(1_900_000_000)), None);
+    assert_eq!(
+        check(&by_time, 10, 50, Some(1_900_000_001)),
+        Some("recipient_address_expired")
+    );
+}
+
+#[test]
+#[cfg(feature = "ironwood-tx-build")]
+fn ironwood_build_refuses_an_expired_or_conflicting_recipient() {
+    let (tree_hex, _) = ironwood_build::test_tree_fixture(3);
+    let request = |to: &str, extra: &str| {
+        format!(
+            r#"{{"ironwood_build_version":1,"network":"regtest","target_height":10,
+                     "ironwood_tree":"{tree}","rng_seed":"{seed}"{extra},
+                     "inputs":[{{"txid":"{txid}","vout":0,"value_zatoshis":100000,"secret_key":"{sk}"}}],
+                     "ironwood_output":{{"address":"{to}"}}}}"#,
+            tree = tree_hex,
+            seed = "05".repeat(32),
+            txid = "22".repeat(32),
+            sk = BUILD_TEST_SECRET_KEY,
+        )
+    };
+    let base = regtest_unified_address();
+
+    // The builder's default expiry is target_height + 40 = 50.
+    let fits = regtest_ua_with_expiry(&base, Some(50), Some(1_900_000_000));
+    let v = build_ironwood_value(&request(&fits, r#","current_unix_time":1800000000"#));
+    assert_eq!(v["status"], "ok", "build should succeed: {v}");
+    assert_eq!(v["expiry_height"], 50);
+
+    for (to, extra, category) in [
+        (
+            regtest_ua_with_expiry(&base, Some(49), None),
+            "",
+            "recipient_expiry_conflict",
+        ),
+        (
+            regtest_ua_with_expiry(&base, Some(100), None),
+            r#","expiry_height":101"#,
+            "recipient_expiry_conflict",
+        ),
+        (
+            regtest_ua_with_expiry(&base, Some(5), None),
+            "",
+            "recipient_address_expired",
+        ),
+        (
+            regtest_ua_with_expiry(&base, None, Some(1_900_000_000)),
+            "",
+            "recipient_expiry_time_unchecked",
+        ),
+        (
+            regtest_ua_with_expiry(&base, None, Some(1_900_000_000)),
+            r#","current_unix_time":2000000000"#,
+            "recipient_address_expired",
+        ),
+    ] {
+        let v = build_ironwood_value(&request(&to, extra));
+        assert_eq!(v["status"], "error", "{extra}: {v}");
+        assert_eq!(v["category"], category, "{extra}: {v}");
+        assert!(!v.to_string().contains(BUILD_TEST_SECRET_KEY));
+    }
+}
+
+#[test]
+#[cfg(feature = "orchard-tx-build")]
+fn orchard_build_refuses_an_expired_recipient() {
+    let (tree_hex, _) = orchard_build::test_tree_fixture(3);
+    let to = regtest_ua_with_expiry(&orchard_regtest_unified_address(), Some(5), None);
+    let request = format!(
+        r#"{{"orchard_build_version":1,"network":"regtest","target_height":10,
+                 "orchard_tree":"{tree}","rng_seed":"{seed}",
+                 "inputs":[{{"txid":"{txid}","vout":0,"value_zatoshis":100000,"secret_key":"{sk}"}}],
+                 "orchard_output":{{"address":"{to}"}}}}"#,
+        tree = tree_hex,
+        seed = "07".repeat(32),
+        txid = "22".repeat(32),
+        sk = BUILD_TEST_SECRET_KEY,
+    );
+    let v = build_orchard_value(&request);
+    assert_eq!(v["status"], "error", "{v}");
+    assert_eq!(v["category"], "recipient_address_expired", "{v}");
 }

@@ -1207,12 +1207,65 @@ struct DecodedAddress {
     has_transparent: bool,
     unknown_receivers: usize,
     total_receivers: usize,
+    unified: Option<UnifiedMetadata>,
 }
 
 #[derive(Debug)]
 struct UnifiedReceiverInventory {
     network: NetworkType,
     receivers: Vec<UnifiedReceiverInventoryEntry>,
+    metadata: UnifiedMetadata,
+}
+
+/// ZIP 316 Revision 2 metadata; the parser has already rejected unknown
+/// MUST-understand items.
+#[derive(Debug)]
+struct UnifiedMetadata {
+    revision: unified::Revision,
+    expiry_height: Option<u32>,
+    expiry_time: Option<u64>,
+}
+
+impl UnifiedMetadata {
+    fn of(data: &unified::Address) -> Self {
+        let mut expiry_height = None;
+        let mut expiry_time = None;
+        for item in data.items_as_parsed() {
+            match item {
+                unified::Uitem::Metadata(unified::MetadataItem::ExpiryHeight(h)) => {
+                    expiry_height = Some(*h)
+                }
+                unified::Uitem::Metadata(unified::MetadataItem::ExpiryTime(t)) => {
+                    expiry_time = Some(*t)
+                }
+                _ => {}
+            }
+        }
+        Self {
+            revision: data.revision(),
+            expiry_height,
+            expiry_time,
+        }
+    }
+
+    fn insert_into(metadata: Option<&Self>, object: &mut Value) {
+        let object = object.as_object_mut().expect("address JSON is an object");
+        object.insert(
+            "unified_revision".to_string(),
+            json!(metadata.map(|m| match m.revision {
+                unified::Revision::R0 => "r0",
+                unified::Revision::R2 => "r2",
+            })),
+        );
+        object.insert(
+            "expiry_height".to_string(),
+            json!(metadata.and_then(|m| m.expiry_height)),
+        );
+        object.insert(
+            "expiry_time".to_string(),
+            json!(metadata.and_then(|m| m.expiry_time)),
+        );
+    }
 }
 
 #[derive(Debug)]
@@ -1342,6 +1395,7 @@ impl TryFromAddress for TransparentAddressClassification {
 
 impl UnifiedReceiverInventory {
     fn into_json(self) -> Value {
+        let metadata = self.metadata;
         let mut orchard = 0usize;
         let mut sapling = 0usize;
         let mut transparent = 0usize;
@@ -1366,7 +1420,7 @@ impl UnifiedReceiverInventory {
             }
         }
 
-        json!({
+        let mut object = json!({
             "network": network_type_label(self.network),
             "address_type": "unified",
             "receiver_count": self.receivers.len(),
@@ -1386,7 +1440,9 @@ impl UnifiedReceiverInventory {
                 "unknown": unknown,
                 "total": orchard + sapling + transparent + unknown,
             }
-        })
+        });
+        UnifiedMetadata::insert_into(Some(&metadata), &mut object);
+        object
     }
 }
 
@@ -1434,6 +1490,7 @@ impl TryFromAddress for UnifiedReceiverInventory {
         Ok(Self {
             network: net,
             receivers,
+            metadata: UnifiedMetadata::of(&data),
         })
     }
 
@@ -1477,11 +1534,12 @@ impl DecodedAddress {
             has_transparent: pool == "transparent",
             unknown_receivers: 0,
             total_receivers: 1,
+            unified: None,
         }
     }
 
     fn into_json(self) -> Value {
-        json!({
+        let mut object = json!({
             "network": network_type_label(self.network),
             "receiver_type": self.receiver_type,
             "pool": self.pool,
@@ -1494,7 +1552,9 @@ impl DecodedAddress {
                 "unknown": self.unknown_receivers,
                 "total": self.total_receivers,
             }
-        })
+        });
+        UnifiedMetadata::insert_into(self.unified.as_ref(), &mut object);
+        object
     }
 }
 
@@ -1565,6 +1625,7 @@ impl TryFromAddress for DecodedAddress {
             has_transparent,
             unknown_receivers,
             total_receivers,
+            unified: Some(UnifiedMetadata::of(&data)),
         })
     }
 
@@ -2366,8 +2427,12 @@ fn validate_ufvk_key(key: &str, network_type: NetworkType) -> Value {
                 "components": {
                     "orchard": ufvk.orchard().is_some(),
                     "sapling": ufvk.sapling().is_some(),
-                    "transparent": ufvk.p2pkh().is_some(),
+                    "transparent": ufvk.p2pkh().is_some() || ufvk.p2sh().is_some(),
+                    "p2pkh": ufvk.p2pkh().is_some(),
+                    "p2sh": ufvk.p2sh().is_some(),
                 },
+                "expiry_height": ufvk.expiry_height().map(u32::from),
+                "expiry_time": ufvk.expiry_time(),
             }),
         );
     }
@@ -3123,6 +3188,9 @@ mod staged_regtest;
 mod memo_read;
 
 mod compact_block_adapter;
+
+#[cfg(any(feature = "orchard-tx-build", feature = "ironwood-tx-build"))]
+mod recipient_expiry;
 
 #[cfg(feature = "orchard-tx-build")]
 mod orchard_build;

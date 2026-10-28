@@ -522,6 +522,11 @@ SaplingBuildResult zcashNativeBuildSaplingTransaction({
   return SaplingBuildResult.fromJson(json);
 }
 
+// A recipient address may carry a ZIP 316 expiry time; the native
+// builders have no clock, so they are handed this one.
+int _unixSeconds(DateTime? now) =>
+    (now ?? DateTime.now()).millisecondsSinceEpoch ~/ 1000;
+
 OrchardBuildResult zcashNativeBuildOrchardTransaction({
   required String network,
   required int targetHeight,
@@ -533,6 +538,7 @@ OrchardBuildResult zcashNativeBuildOrchardTransaction({
   int? regtestNu63ActivationHeight,
   int? feeZatoshis,
   String? rngSeedHex,
+  DateTime? now,
   bool allowExperimentalOrchardBuild = false,
 }) {
   if (!allowExperimentalOrchardBuild) {
@@ -553,6 +559,7 @@ OrchardBuildResult zcashNativeBuildOrchardTransaction({
     outputs: outputs,
     expiryHeight: expiryHeight,
     regtestNu63ActivationHeight: regtestNu63ActivationHeight,
+    currentUnixTime: _unixSeconds(now),
     feeZatoshis: feeZatoshis,
     rngSeedHex: rngSeedHex,
   );
@@ -593,6 +600,7 @@ IronwoodBuildResult zcashNativeBuildIronwoodTransaction({
   String? outputParamsPath,
   int? feeZatoshis,
   String? rngSeedHex,
+  DateTime? now,
   bool allowExperimentalIronwoodBuild = false,
 }) {
   if (!allowExperimentalIronwoodBuild) {
@@ -615,6 +623,7 @@ IronwoodBuildResult zcashNativeBuildIronwoodTransaction({
     orchardChangeZatoshis: orchardChangeZatoshis,
     expiryHeight: expiryHeight,
     regtestNu63ActivationHeight: regtestNu63ActivationHeight,
+    currentUnixTime: _unixSeconds(now),
     seedHex: seedHex,
     account: account,
     spendParamsPath: spendParamsPath,

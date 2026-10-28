@@ -17,6 +17,10 @@ const _expectedMainnetSapling =
     'zs1zt3mq96vp65l8ch54r78nc50ml68qsyg3pkteq8pn8sfgzakhgw4vqn6px5w08hrf2uzuam5kmj';
 const _expectedMainnetUa =
     'u1tcw2tuatlzdc4ncep4nef7v9h5q87jx7t4fzyj7sw5g6775u3fwkucjafgsl2dg6h3hfjtml85ggqakl5mf2c746ygk7qnp8kyhentqkcnpqwarfcceczd0drzuvtxaeak9kadkwp6sn5xpj40cwmpjcu8aqy6v8rueum0h9mvefhhfytvrq2dcwxsx4cdk7uzv99yhspftg72ut509';
+// ZIP 316 Revision 2, Orchard and Sapling, expiring at height 3600000 and
+// Unix time 1900000000.
+const _mainnetR2UaWithExpiry =
+    'zu16a535yvr5k7dkpptjhxcf3f2w5hnwxgxt9assj6c2vec3hhxyl8re3t84kt9cgjxyat37hglc772w4qawz84h0hflhfpd4lnpnvr75qvray3ufkf2jjv2hn50229j5ytzv895ke3le4xg9lwwnduvkx26tammmrp4lp770yx4zj67xd4enzt3jvzrn02f25unn6salt4nz';
 const _p2pkhScriptHex = '76a914040404040404040404040404040404040404040488ac';
 const _p2shScriptHex = 'a914070707070707070707070707070707070707070787';
 
@@ -270,6 +274,33 @@ void main() {
         expect(metadata.receivers.sapling, isTrue);
         expect(metadata.receivers.transparent, isTrue);
         expect(metadata.receivers.total, 3);
+      });
+
+      test('decodeNativeAddress reports Revision 2 expiry metadata', () {
+        final r0 = decodeNativeAddress(
+          address: _expectedMainnetUa,
+          network: ZcashNetwork.mainnet,
+        );
+        expect(r0.unifiedRevision, 'r0');
+        expect(r0.expiryHeight, isNull);
+        expect(r0.expiryTime, isNull);
+
+        final r2 = decodeNativeAddress(
+          address: _mainnetR2UaWithExpiry,
+          network: ZcashNetwork.mainnet,
+        );
+        expect(r2.unifiedRevision, 'r2');
+        expect(r2.expiryHeight, 3600000);
+        expect(r2.expiryTime, 1900000000);
+        expect(r2.receivers.total, 2);
+
+        final inventory = inventoryUnifiedAddressReceivers(
+          address: _mainnetR2UaWithExpiry,
+          network: ZcashNetwork.mainnet,
+        );
+        expect(inventory.unifiedRevision, 'r2');
+        expect(inventory.expiryHeight, 3600000);
+        expect(inventory.receiverCount, 2);
       });
 
       test('inventoryUnifiedAddressReceivers returns receiver kinds', () {
@@ -1272,6 +1303,35 @@ void main() {
       expect(request.containsKey('rng_seed'), isFalse);
       expect(request['ironwood_output'], {'address': 'uregtest1x'});
       expect(request['outputs'], isEmpty);
+    });
+
+    test('carries the current time only when one is given', () {
+      String encode({int? currentUnixTime}) => encodeIronwoodBuildRequest(
+        network: 'regtest',
+        targetHeight: 10,
+        anchor: const IronwoodAnchorSource.tree(''),
+        inputs: inputs,
+        ironwoodOutput: const IronwoodBuildOutput(address: 'uregtest1x'),
+        currentUnixTime: currentUnixTime,
+      );
+      expect(decode(encode()).containsKey('current_unix_time'), isFalse);
+      expect(
+        decode(encode(currentUnixTime: 1800000000))['current_unix_time'],
+        1800000000,
+      );
+      expect(
+        decode(
+          encodeOrchardBuildRequest(
+            network: 'regtest',
+            targetHeight: 10,
+            anchor: const OrchardAnchorSource.tree(''),
+            inputs: inputs,
+            orchardOutput: const OrchardBuildOutput(address: 'uregtest1x'),
+            currentUnixTime: 1800000000,
+          ),
+        )['current_unix_time'],
+        1800000000,
+      );
     });
 
     test('carries a staged regtest activation height when one is declared', () {

@@ -497,6 +497,11 @@ ZcashCompactBlockConversion convertNativeRawBlocks({
   return ZcashCompactBlockConversion.fromJson(json);
 }
 
+// A recipient address may carry a ZIP 316 expiry time; the native
+// builders have no clock, so they are handed this one.
+int _unixSeconds(DateTime? now) =>
+    (now ?? DateTime.now()).millisecondsSinceEpoch ~/ 1000;
+
 OrchardBuildResult buildNativeOrchardTransaction({
   required ZcashNetwork network,
   required int targetHeight,
@@ -508,6 +513,7 @@ OrchardBuildResult buildNativeOrchardTransaction({
   int? regtestNu63ActivationHeight,
   int? feeZatoshis,
   String? rngSeedHex,
+  DateTime? now,
   bool allowExperimentalOrchardBuild = false,
   ZcashFfiBindings? bindings,
 }) {
@@ -530,6 +536,7 @@ OrchardBuildResult buildNativeOrchardTransaction({
     outputs: outputs,
     expiryHeight: expiryHeight,
     regtestNu63ActivationHeight: regtestNu63ActivationHeight,
+    currentUnixTime: _unixSeconds(now),
     feeZatoshis: feeZatoshis,
     rngSeedHex: rngSeedHex,
   );
@@ -566,6 +573,7 @@ IronwoodBuildResult buildNativeIronwoodTransaction({
   String? outputParamsPath,
   int? feeZatoshis,
   String? rngSeedHex,
+  DateTime? now,
   bool allowExperimentalIronwoodBuild = false,
   ZcashFfiBindings? bindings,
 }) {
@@ -592,6 +600,7 @@ IronwoodBuildResult buildNativeIronwoodTransaction({
     ironwoodChangeZatoshis: ironwoodChangeZatoshis,
     expiryHeight: expiryHeight,
     regtestNu63ActivationHeight: regtestNu63ActivationHeight,
+    currentUnixTime: _unixSeconds(now),
     seedHex: seedHex,
     account: account,
     spendParamsPath: spendParamsPath,
@@ -632,6 +641,7 @@ IronwoodFeeQuote quoteNativeIronwoodFee({
   String? spendParamsPath,
   String? outputParamsPath,
   int? feeZatoshis,
+  DateTime? now,
   bool allowExperimentalIronwoodBuild = false,
   ZcashFfiBindings? bindings,
 }) {
@@ -657,6 +667,7 @@ IronwoodFeeQuote quoteNativeIronwoodFee({
     ironwoodChangeZatoshis: ironwoodChangeZatoshis,
     expiryHeight: expiryHeight,
     regtestNu63ActivationHeight: regtestNu63ActivationHeight,
+    currentUnixTime: _unixSeconds(now),
     seedHex: seedHex,
     account: account,
     spendParamsPath: spendParamsPath,

@@ -55,6 +55,7 @@ String encodeOrchardBuildRequest({
   Iterable<TransparentBuildOutput> outputs = const [],
   int? expiryHeight,
   int? regtestNu63ActivationHeight,
+  int? currentUnixTime,
   int? feeZatoshis,
   String? rngSeedHex,
 }) {
@@ -64,6 +65,7 @@ String encodeOrchardBuildRequest({
     'target_height': targetHeight,
     'expiry_height': ?expiryHeight,
     'regtest_nu63_activation_height': ?regtestNu63ActivationHeight,
+    'current_unix_time': ?currentUnixTime,
     ...anchor.toRequestJson(),
     'fee_zatoshis': ?feeZatoshis,
     'rng_seed': ?rngSeedHex,
