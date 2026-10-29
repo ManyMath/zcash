@@ -394,6 +394,15 @@ pub fn build_orchard_transaction_json(request: &Value) -> Result<Value, BuildErr
     }
 }
 
+/// Test-only: builds against `params` in place of the network the request names.
+#[cfg(test)]
+pub(crate) fn test_build_with_params<P: Parameters + Copy>(
+    params: P,
+    request: &Value,
+) -> Result<Value, BuildError> {
+    build_for_params(params, &parse_request(request)?)
+}
+
 fn build_for_params<P: Parameters + Copy>(
     params: P,
     req: &ParsedRequest,

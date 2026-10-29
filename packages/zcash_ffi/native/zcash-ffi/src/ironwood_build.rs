@@ -774,6 +774,15 @@ pub fn build_ironwood_transaction_json(request: &Value) -> Result<Value, BuildEr
     }
 }
 
+/// Test-only: builds against `params` in place of the network the request names.
+#[cfg(test)]
+pub(crate) fn test_build_with_params<P: Parameters + Copy>(
+    params: P,
+    request: &Value,
+) -> Result<Value, BuildError> {
+    build_for_params(params, &parse_request(request)?)
+}
+
 fn build_for_params<P: Parameters + Copy>(
     params: P,
     req: &ParsedRequest,

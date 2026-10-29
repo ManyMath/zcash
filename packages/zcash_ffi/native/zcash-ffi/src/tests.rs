@@ -2304,6 +2304,44 @@ fn build_orchard_transaction_honours_a_staged_regtest_activation_height() {
     assert_eq!(v["category"], "unsupported_activation_override", "{v}");
 }
 
+/// NU7 follows NU6.3, so ZIP 258 still closes the pool: the Orchard builder has no NU7 build.
+#[test]
+#[cfg(feature = "orchard-tx-build")]
+fn orchard_nu7_build_is_refused_and_pre_nu7_expiry_is_the_blossom_delta() {
+    use zcash_primitives::transaction::builder::BLOSSOM_DEFAULT_TX_EXPIRY_DELTA;
+
+    let to = orchard_regtest_unified_address();
+    let request: Value = serde_json::from_str(&format!(
+        r#"{{"orchard_build_version":1,"network":"regtest","target_height":10,
+                 "orchard_tree":"","rng_seed":"{seed}",
+                 "inputs":[{{"txid":"{txid}","vout":0,"value_zatoshis":100000,"secret_key":"{sk}"}}],
+                 "orchard_output":{{"address":"{to}"}}}}"#,
+        seed = "0d".repeat(32),
+        txid = "22".repeat(32),
+        sk = BUILD_TEST_SECRET_KEY,
+        to = to,
+    ))
+    .expect("request json");
+    let build = |params: zcash_protocol::local_consensus::LocalNetwork| {
+        orchard_build::test_build_with_params(params, &request)
+    };
+
+    let pre_nu7 = build(staged_regtest::params(None)).expect("orchard build should succeed");
+    assert_eq!(pre_nu7["version"], "v5");
+    assert_eq!(pre_nu7["consensus_branch_id"], "nu6.2");
+    assert_eq!(
+        pre_nu7["expiry_height"],
+        10 + BLOSSOM_DEFAULT_TX_EXPIRY_DELTA
+    );
+
+    let (category, _) = build(staged_regtest::nu7_params(Some(1))).expect_err("pool is closed");
+    assert_eq!(category, "orchard_pool_closed");
+
+    // Without NU6.3 the guard is skipped, but the NU7 branch's Orchard V3 bundle still refuses.
+    let (category, _) = build(staged_regtest::nu7_params(None)).expect_err("pool is closed");
+    assert_eq!(category, "orchard_pool_closed");
+}
+
 fn build_ironwood_value(request: &str) -> Value {
     let req = cptr(request);
     result_value(zcash_ffi_build_ironwood_transaction(req.as_ptr()))
@@ -2985,6 +3023,81 @@ fn build_ironwood_transaction_honours_a_staged_regtest_activation_height() {
     );
     let v = build_ironwood_value(&main);
     assert_eq!(v["category"], "unsupported_activation_override", "{v}");
+}
+
+#[test]
+#[cfg(feature = "ironwood-tx-build")]
+fn ironwood_nu7_build_is_v6_under_the_nu7_branch_with_its_expiry_delta() {
+    use zcash_primitives::transaction::builder::{
+        BLOSSOM_DEFAULT_TX_EXPIRY_DELTA, NU7_DEFAULT_TX_EXPIRY_DELTA,
+    };
+
+    let to = regtest_unified_address();
+    let (tree_hex, _) = ironwood_build::test_tree_fixture(3);
+    let request: Value = serde_json::from_str(&format!(
+        r#"{{"ironwood_build_version":1,"network":"regtest","target_height":10,
+                 "ironwood_tree":"{tree}","rng_seed":"{seed}",
+                 "inputs":[{{"txid":"{txid}","vout":0,"value_zatoshis":100000,"secret_key":"{sk}"}}],
+                 "ironwood_output":{{"address":"{to}"}}}}"#,
+        tree = tree_hex,
+        seed = "0e".repeat(32),
+        txid = "22".repeat(32),
+        sk = BUILD_TEST_SECRET_KEY,
+        to = to,
+    ))
+    .expect("request json");
+    let build = |params: zcash_protocol::local_consensus::LocalNetwork, request: &Value| {
+        ironwood_build::test_build_with_params(params, request)
+            .expect("ironwood build should succeed")
+    };
+
+    let pre_nu7 = build(staged_regtest::params(Some(1)), &request);
+    assert_eq!(pre_nu7["consensus_branch_id"], "nu6.3");
+    assert_eq!(
+        pre_nu7["expiry_height"],
+        10 + BLOSSOM_DEFAULT_TX_EXPIRY_DELTA
+    );
+
+    let built = build(staged_regtest::nu7_params(Some(1)), &request);
+    assert_eq!(built["version"], "v6", "expected a v6 build: {built}");
+    assert_eq!(built["consensus_branch_id"], "nu7");
+    assert_eq!(built["expiry_height"], 10 + NU7_DEFAULT_TX_EXPIRY_DELTA);
+
+    let tx_hex = built["transaction"].as_str().expect("transaction hex");
+    let net = cptr("regtest");
+    let decoded = result_value(zcash_ffi_decode_transaction(
+        cptr(tx_hex).as_ptr(),
+        net.as_ptr(),
+    ));
+    assert_eq!(decoded["status"], "ok", "v6 decode must succeed: {decoded}");
+    assert_eq!(decoded["version"], "v6");
+    assert_eq!(decoded["consensus_branch_id"], "nu7");
+    assert_eq!(decoded["consensus_branch_id_hex"], "77190ad9");
+    assert_eq!(decoded["ironwood"]["present"], true);
+
+    let ids = result_value(zcash_ffi_transaction_txid(cptr(tx_hex).as_ptr()));
+    assert_eq!(ids["status"], "ok", "unexpected: {ids}");
+    assert_eq!(ids["txid"], built["txid"]);
+    let auth = ids["auth_digest"].as_str().expect("auth_digest for v6");
+    assert_eq!(auth.len(), 64, "auth_digest must be 32 bytes hex");
+
+    // The ZIP 318 migration is the one Orchard bundle left after NU6.3; it must still build at NU7.
+    let migration: Value = serde_json::from_str(&format!(
+        r#"{{"ironwood_build_version":1,"network":"regtest","target_height":10,
+                 "ironwood_tree":"{tree}","expiry_height":{expiry},{orchard},
+                 "ironwood_output":{{"address":"{to}"}}}}"#,
+        tree = ironwood_build::test_tree_fixture(2).0,
+        expiry = TEST_CANONICAL_EXPIRY,
+        orchard = orchard_spend_fragment(1_000_000, 0x11),
+        to = to,
+    ))
+    .expect("request json");
+    let migrated = build(staged_regtest::nu7_params(Some(1)), &migration);
+    assert_eq!(migrated["version"], "v6");
+    assert_eq!(migrated["consensus_branch_id"], "nu7");
+    assert_eq!(migrated["zip318_canonical"], true);
+    assert_eq!(migrated["orchard"]["actions"], 2);
+    assert_eq!(migrated["expiry_height"], TEST_CANONICAL_EXPIRY);
 }
 
 #[test]

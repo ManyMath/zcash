@@ -17,6 +17,17 @@ pub(crate) fn params(nu6_3: Option<u32>) -> LocalNetwork {
     }
 }
 
+#[cfg(all(
+    test,
+    any(feature = "orchard-tx-build", feature = "ironwood-tx-build")
+))]
+pub(crate) fn nu7_params(nu6_3: Option<u32>) -> LocalNetwork {
+    LocalNetwork {
+        nu7: Some(BlockHeight::from_u32(1)),
+        ..params(nu6_3)
+    }
+}
+
 #[cfg(any(
     feature = "orchard-tx-build",
     feature = "ironwood-tx-build",
