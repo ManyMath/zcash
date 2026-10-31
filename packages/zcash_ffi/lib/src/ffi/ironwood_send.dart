@@ -19,6 +19,7 @@ IronwoodPreparedSend prepareNativeIronwoodSend({
   int? expiryHeight,
   Uint8List? memo,
   int? regtestNu63ActivationHeight,
+  DateTime? now,
   bool allowExperimentalIronwoodBuild = false,
   ZcashFfiBindings? bindings,
 }) {
@@ -61,6 +62,7 @@ IronwoodPreparedSend prepareNativeIronwoodSend({
       ),
       seedHex: seedHex,
       account: account,
+      now: now,
       allowExperimentalIronwoodBuild: true,
       bindings: bindings,
     ).feeZatoshis,
@@ -88,6 +90,7 @@ IronwoodPreparedSend prepareNativeIronwoodSend({
     ironwoodChangeZatoshis: plan.changeZatoshis,
     seedHex: seedHex,
     account: account,
+    now: now,
     allowExperimentalIronwoodBuild: true,
     bindings: bindings,
   );

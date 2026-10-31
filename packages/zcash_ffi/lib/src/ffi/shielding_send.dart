@@ -75,6 +75,7 @@ ShieldingPreparedSend prepareNativeShieldingSend({
   int? maxCoins,
   Uint8List? memo,
   int? regtestNu63ActivationHeight,
+  DateTime? now,
   bool allowExperimentalBuild = false,
   ZcashFfiBindings? bindings,
 }) {
@@ -164,6 +165,7 @@ ShieldingPreparedSend prepareNativeShieldingSend({
           ),
           seedHex: seedHex,
           account: account,
+          now: now,
           allowExperimentalIronwoodBuild: true,
           bindings: bindings,
         ).feeZatoshis;
@@ -221,6 +223,7 @@ ShieldingPreparedSend prepareNativeShieldingSend({
         feeZatoshis: selection.feeZatoshis,
         seedHex: seedHex,
         account: account,
+        now: now,
         allowExperimentalIronwoodBuild: true,
         bindings: bindings,
       );
