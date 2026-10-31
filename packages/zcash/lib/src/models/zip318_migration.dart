@@ -63,12 +63,12 @@ class Zip318Parameters {
     this.nu7ActivationHeight,
     this.maxResidualValueZatoshis = _zec ~/ 100,
     this.denomCapZatoshis = 10000 * _zec,
-    this.meanDelayBlocks = 144,
+    this.meanDelayBlocks = 66,
     this.maxDelayBlocks = 576,
     this.anchorBoundaryModulus = 144,
-    this.anchorAgeCapBoundaries = 16,
+    this.anchorAgeCapBoundaries = 4,
     this.expiryModulusBlocks = 34560,
-    this.prepMeanDelayBlocks = 24,
+    this.prepMeanDelayBlocks = 16,
     this.prepMaxDelayBlocks = 96,
     this.prepActionsPerTransaction = 16,
     this.isProvisional = true,
@@ -90,6 +90,8 @@ class Zip318Parameters {
 
   final int anchorBoundaryModulus;
 
+  /// Age `a` counts boundaries before the most recent observed one, so the
+  /// most recent (age 0) is never used.
   final int anchorAgeCapBoundaries;
 
   final int expiryModulusBlocks;
@@ -179,14 +181,14 @@ class Zip318Denominations {
       final largest = candidates.first;
       final place = largest ~/ _leadingDigit(largest, parameters);
       final roll = rng.nextDouble();
-      int chosen;
-      if (roll < 0.10 && place <= remaining) {
-        chosen = place;
-      } else if (roll < 0.35 && 2 * place <= remaining) {
-        chosen = 2 * place;
-      } else {
-        chosen = largest;
-      }
+      // With {1, 2, 5} available, 1 at 10% and 2 at 25%; with only {1, 2},
+      // 1 at 25%. A leading 1, DENOM_CAP included, is its magnitude's only one.
+      final chosen = switch (largest ~/ place) {
+        5 when roll < 0.10 => place,
+        5 when roll < 0.35 => 2 * place,
+        2 when roll < 0.25 => place,
+        _ => largest,
+      };
       parts.add(chosen);
       remaining -= chosen;
     }
@@ -309,23 +311,22 @@ class Zip318AnchorSelection {
       fundingNoteHeight: fundingNoteHeight,
       observedTipHeight: observedTipHeight,
     );
-    if (candidateHeights.isEmpty) {
+    // Newest first: byAge[a] is age `a`, and byAge[0] is the most recent
+    // boundary, which is never used.
+    final byAge = candidateHeights.reversed.toList(growable: false);
+    final maxAge = min(parameters.anchorAgeCapBoundaries, byAge.length - 1);
+    if (maxAge < 1) {
       throw ZcashModelException(
         'no canonical boundary anchor is available yet for this funding note; '
         'wait for the next boundary rather than anchoring at the chain tip',
       );
     }
-    // Newest first: age `a` is the boundary `a - 1` steps behind the newest.
-    final byAge = candidateHeights.reversed.toList(growable: false);
-    for (var attempt = 0; attempt < 1000; attempt++) {
+    // Draws past the cap or the candidate set are redrawn, which truncates
+    // Geometric(1/2) to [1, maxAge].
+    while (true) {
       final age = _drawGeometric(rng);
-      if (age > parameters.anchorAgeCapBoundaries) continue;
-      if (age <= byAge.length) return byAge[age - 1];
+      if (age <= maxAge) return byAge[age];
     }
-    throw ZcashModelException(
-      'could not draw a boundary anchor within the age cap; the candidate set '
-      'is too sparse for the configured parameters',
-    );
   }
 
   static int _drawGeometric(Random rng) {

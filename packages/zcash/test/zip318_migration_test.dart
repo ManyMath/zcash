@@ -141,6 +141,38 @@ void main() {
       }
     });
 
+    test('randomized decomposition never exceeds DENOM_CAP', () {
+      final rng = Random(41);
+      for (var i = 0; i < 200; i++) {
+        final result = denominations.decomposeRandomized(25000 * zec, rng);
+        for (final part in result.parts) {
+          expect(denominations.isCanonical(part), isTrue, reason: '$part');
+        }
+        expect(result.migratedZatoshis, 25000 * zec);
+      }
+    });
+
+    test('randomized decomposition uses the ZIP 318 frequencies', () {
+      final rng = Random(43);
+      const trials = 4000;
+      var oneOfOneTwo = 0;
+      var oneOfAll = 0;
+      var twoOfAll = 0;
+      for (var i = 0; i < trials; i++) {
+        // Only {1, 2} ZEC fit under 2 ZEC; all of {1, 2, 5} fit under 5.
+        if (denominations.decomposeRandomized(2 * zec, rng).parts.first ==
+            zec) {
+          oneOfOneTwo++;
+        }
+        final first = denominations.decomposeRandomized(5 * zec, rng).parts;
+        if (first.first == zec) oneOfAll++;
+        if (first.first == 2 * zec) twoOfAll++;
+      }
+      expect(oneOfOneTwo / trials, closeTo(0.25, 0.03));
+      expect(oneOfAll / trials, closeTo(0.10, 0.02));
+      expect(twoOfAll / trials, closeTo(0.25, 0.03));
+    });
+
     test('reports funding note values as denomination plus fee', () {
       final result = denominations.decompose(7 * zec);
       expect(result.transferCount, 2);
@@ -181,7 +213,7 @@ void main() {
       }
     });
 
-    test('drawn anchors are always boundaries within the age cap', () {
+    test('drawn anchors are always boundaries aged 1 to the cap', () {
       final rng = Random(3);
       final newest = selection.boundaryAtOrBelow(3500000);
       for (var i = 0; i < 300; i++) {
@@ -192,16 +224,16 @@ void main() {
           rng: rng,
         );
         expect(anchor % 144, 0, reason: 'anchor must be a boundary');
-        expect(anchor, lessThanOrEqualTo(newest));
-        final age = (newest - anchor) ~/ 144 + 1;
-        expect(age, inInclusiveRange(1, 16));
+        expect(anchor, lessThan(newest), reason: 'age 0 is never drawn');
+        final age = (newest - anchor) ~/ 144;
+        expect(age, inInclusiveRange(1, 4));
       }
     });
 
     test('the draw is recency-weighted, not uniform', () {
       final rng = Random(5);
       final newest = selection.boundaryAtOrBelow(3500000);
-      var atNewest = 0;
+      var atAgeOne = 0;
       const trials = 2000;
       for (var i = 0; i < trials; i++) {
         final anchor = selection.drawAnchorHeight(
@@ -210,9 +242,26 @@ void main() {
           observedTipHeight: 3500000,
           rng: rng,
         );
-        if (anchor == newest) atNewest++;
+        if (anchor == newest - 144) atAgeOne++;
       }
-      expect(atNewest / trials, inInclusiveRange(0.4, 0.6));
+      // Geometric(1/2) truncated to [1, 4]: P(1) = 8/15.
+      expect(atAgeOne / trials, closeTo(8 / 15, 0.05));
+    });
+
+    test('truncates the age to the candidate set', () {
+      final rng = Random(9);
+      for (var i = 0; i < 50; i++) {
+        // Candidates 3456000 and 3456144; only age 1 is admissible.
+        expect(
+          selection.drawAnchorHeight(
+            activationHeight: activation,
+            fundingNoteHeight: 3456000,
+            observedTipHeight: 3456200,
+            rng: rng,
+          ),
+          3456000,
+        );
+      }
     });
 
     test('refuses to anchor when no boundary is available yet', () {
@@ -220,6 +269,16 @@ void main() {
         () => selection.drawAnchorHeight(
           activationHeight: activation,
           fundingNoteHeight: 3456100,
+          observedTipHeight: 3456143,
+          rng: Random(1),
+        ),
+        throwsA(isA<ZcashModelException>()),
+      );
+      // The most recent boundary alone is age 0, which is never used.
+      expect(
+        () => selection.drawAnchorHeight(
+          activationHeight: activation,
+          fundingNoteHeight: 3456000,
           observedTipHeight: 3456143,
           rng: Random(1),
         ),
@@ -273,6 +332,22 @@ void main() {
         schedule.transfers.map((t) => t.denominationZatoshis).toList(),
         isNot(descending),
       );
+    });
+
+    test('delays have mean MEAN_DELAY', () {
+      final schedule = Zip318Schedule.plan(
+        decomposition: Zip318Decomposition(
+          parts: List.filled(4000, zec),
+          residualZatoshis: 0,
+          parameters: Zip318Parameters.provisional,
+        ),
+        startHeight: 0,
+        canonicalFeeZatoshis: canonicalFee,
+        anchorHeight: 0,
+        rng: Random(53),
+        parameters: const Zip318Parameters(),
+      );
+      expect(schedule.finalBroadcastHeight! / 4000, closeTo(66, 4));
     });
 
     test('every transfer shares the cohort anchor', () {
@@ -354,6 +429,17 @@ void main() {
       }
     });
 
+    test('preparation delays have mean PREP_MEAN_DELAY', () {
+      final schedule = Zip318PreparationSchedule.plan(
+        transactionCount: 20000,
+        startHeight: 0,
+        rng: Random(47),
+        parameters: const Zip318Parameters(),
+      );
+      // Redrawing above PREP_MAX_DELAY pulls the mean of 16 down to 15.76.
+      expect(schedule.broadcastHeights.last / 20000, closeTo(15.76, 0.5));
+    });
+
     test('preparation is spaced far more tightly than migration', () {
       const params = Zip318Parameters.provisional;
       expect(params.prepMeanDelayBlocks, lessThan(params.meanDelayBlocks));
@@ -428,12 +514,12 @@ void main() {
       const params = Zip318Parameters.provisional;
       expect(params.maxResidualValueZatoshis, zec ~/ 100);
       expect(params.denomCapZatoshis, 10000 * zec);
-      expect(params.meanDelayBlocks, 144);
+      expect(params.meanDelayBlocks, 66);
       expect(params.maxDelayBlocks, 576);
       expect(params.anchorBoundaryModulus, 144);
-      expect(params.anchorAgeCapBoundaries, 16);
+      expect(params.anchorAgeCapBoundaries, 4);
       expect(params.expiryModulusBlocks, 34560);
-      expect(params.prepMeanDelayBlocks, 24);
+      expect(params.prepMeanDelayBlocks, 16);
       expect(params.prepMaxDelayBlocks, 96);
       expect(params.prepActionsPerTransaction, 16);
     });
