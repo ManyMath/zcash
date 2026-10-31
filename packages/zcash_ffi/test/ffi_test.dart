@@ -1663,6 +1663,27 @@ void main() {
       });
     });
 
+    test('refuses a plan scheduled for another network', () {
+      expect(
+        () => encodeZip318MigrationRequest(
+          network: 'test',
+          plan: planFor(denomination + fee),
+          seedHex: '00' * 32,
+        ),
+        throwsA(isA<ArgumentError>()),
+      );
+      expect(
+        decode(
+          encodeZip318MigrationRequest(
+            network: 'regtest',
+            plan: planFor(denomination + fee),
+            seedHex: '00' * 32,
+          ),
+        )['target_height'],
+        3428600,
+      );
+    });
+
     test('states the denomination explicitly when change is present', () {
       final request = decode(
         encodeZip318MigrationRequest(

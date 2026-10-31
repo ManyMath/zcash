@@ -287,6 +287,18 @@ String encodeZip318MigrationRequest({
   String? rngSeedHex,
   int? currentUnixTime,
 }) {
+  final consensus = ZcashConsensusNetwork.fromJson(network);
+  if (consensus != ZcashConsensusNetwork.regtest &&
+      plan.parameters.nu7ActivationHeight !=
+          Zip318Parameters.forNetwork(consensus).nu7ActivationHeight) {
+    throw ArgumentError.value(
+      network,
+      'network',
+      'the ZIP 318 plan was scheduled with NU7 at height '
+          '${plan.parameters.nu7ActivationHeight}, which is not this '
+          "network's NU7 height",
+    );
+  }
   return encodeIronwoodBuildRequest(
     network: network,
     targetHeight: plan.targetHeight,

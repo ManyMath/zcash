@@ -1,5 +1,6 @@
 import 'dart:math';
 
+import 'consensus.dart';
 import 'proposal.dart' show maxMoneyZatoshis;
 import 'spend.dart';
 
@@ -58,6 +59,19 @@ class Zip318Parameters {
   static const testnet = Zip318Parameters(nu7ActivationHeight: 4465026);
 
   static const provisional = mainnet;
+
+  /// Regtest has no fixed NU7 height: pass the node's, or omit it for
+  /// uniform spacing.
+  factory Zip318Parameters.forNetwork(
+    ZcashConsensusNetwork network, {
+    int? regtestNu7ActivationHeight,
+  }) => switch (network) {
+    ZcashConsensusNetwork.mainnet => mainnet,
+    ZcashConsensusNetwork.testnet => testnet,
+    ZcashConsensusNetwork.regtest => Zip318Parameters(
+      nu7ActivationHeight: regtestNu7ActivationHeight,
+    ),
+  };
 
   const Zip318Parameters({
     this.nu7ActivationHeight,

@@ -561,6 +561,30 @@ void main() {
       expect(uniform.nu7ActivationHeight, isNull);
     });
 
+    test('forNetwork picks the preset for the network', () {
+      expect(
+        Zip318Parameters.forNetwork(ZcashConsensusNetwork.mainnet),
+        same(Zip318Parameters.mainnet),
+      );
+      expect(
+        Zip318Parameters.forNetwork(ZcashConsensusNetwork.testnet),
+        same(Zip318Parameters.testnet),
+      );
+      expect(
+        Zip318Parameters.forNetwork(
+          ZcashConsensusNetwork.regtest,
+        ).nu7ActivationHeight,
+        isNull,
+      );
+      expect(
+        Zip318Parameters.forNetwork(
+          ZcashConsensusNetwork.regtest,
+          regtestNu7ActivationHeight: 200,
+        ).blockSpacing.advance(195, 10),
+        215,
+      );
+    });
+
     test('advance keeps a span the same length in time', () {
       expect(Zip318BlockSpacing.uniform.advance(100, 10), 110);
       final spacing = mainnet.blockSpacing;
