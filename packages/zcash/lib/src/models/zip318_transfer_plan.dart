@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import 'scan.dart';
 import 'spend.dart';
 import 'zip318_migration.dart';
@@ -13,6 +15,18 @@ enum Zip318PlanRefusal {
 
   /// The anchor height is not on the ZIP 318 anchor grid.
   anchorOffBoundary,
+
+  /// The anchor is at or below NU6.3 activation.
+  anchorBeforeActivation,
+
+  /// The anchor predates the funding note, so cannot witness it.
+  anchorBeforeFundingNote,
+
+  /// The anchor is above the most recent boundary the wallet has observed.
+  anchorNotObserved,
+
+  /// The anchor's age is outside 1 to ANCHOR_AGE_CAP boundaries.
+  anchorAgeOutOfRange,
 
   malformedAnchor,
 
@@ -106,8 +120,10 @@ class Zip318TransferPlan {
   const Zip318TransferPlan({
     required this.transfer,
     required this.funding,
+    required this.anchorHeight,
     required this.orchardAnchorHex,
     required this.ironwoodAnchorHex,
+    required this.observedTipHeight,
     required this.recipientAddress,
     required this.parameters,
   });
@@ -116,15 +132,27 @@ class Zip318TransferPlan {
 
   final Zip318FundingSelection funding;
 
+  /// The boundary drawn at proving time.
+  final int anchorHeight;
+
+  /// The Orchard and Ironwood tree roots as of [anchorHeight]. The builder
+  /// checks the Orchard witness against the first, but nothing here can
+  /// recompute either from the height; zcash_ffi's
+  /// `planNativeZip318Transfer` derives both from the boundary tree state.
   final String orchardAnchorHex;
 
   final String ironwoodAnchorHex;
+
+  /// The chain tip the wallet had scanned to when it drew the anchor.
+  final int observedTipHeight;
 
   final String recipientAddress;
 
   final Zip318Parameters parameters;
 
-  int get targetHeight => transfer.broadcastHeight;
+  /// The next block, or the scheduled height if that is later, so a late
+  /// build takes the consensus branch of the block it can be mined in.
+  int get targetHeight => max(transfer.broadcastHeight, observedTipHeight + 1);
 
   int get expiryHeight => transfer.expiryHeight;
 
@@ -135,12 +163,19 @@ class Zip318TransferPlan {
 
   int get feeZatoshis => transfer.feeZatoshis;
 
+  /// [anchorHeight] is the boundary drawn at proving time, for instance by
+  /// [Zip318AnchorSelection.drawAnchorHeight] with this [observedTipHeight],
+  /// and the anchor hexes are the tree roots as of it. [activationHeight]
+  /// defaults to [Zip318Parameters.nu63ActivationHeight].
   factory Zip318TransferPlan.forTransfer({
     required Zip318ScheduledTransfer transfer,
     required Zip318FundingSelection funding,
+    required int anchorHeight,
     required String orchardAnchorHex,
     required String ironwoodAnchorHex,
+    required int observedTipHeight,
     required String recipientAddress,
+    int? activationHeight,
     Zip318Parameters parameters = Zip318Parameters.provisional,
   }) {
     final note = funding.note;
@@ -168,26 +203,35 @@ class Zip318TransferPlan {
         'be a canonical denomination',
       );
     }
-    final grid = Zip318AnchorSelection(parameters);
-    if (!grid.isBoundary(transfer.anchorHeight)) {
-      throw Zip318PlanException(
-        Zip318PlanRefusal.anchorOffBoundary,
-        'the transfer anchors at height ${transfer.anchorHeight}, which is not '
-        'on the anchor grid (${grid.gridDescription}). Shared boundary anchors '
-        "are what decouple a transaction's anchor from when its wallet last "
-        'synced',
-      );
-    }
+    _requireCandidateAnchor(
+      anchorHeight: anchorHeight,
+      fundingNoteHeight: note.height,
+      observedTipHeight: observedTipHeight,
+      broadcastHeight: transfer.broadcastHeight,
+      activationHeight: parameters.nu63ActivationHeightOr(activationHeight),
+      parameters: parameters,
+    );
     _requireAnchor(orchardAnchorHex, 'the Orchard anchor');
     _requireAnchor(ironwoodAnchorHex, 'the Ironwood anchor');
-    return Zip318TransferPlan(
+    final plan = Zip318TransferPlan(
       transfer: transfer,
       funding: funding,
+      anchorHeight: anchorHeight,
       orchardAnchorHex: orchardAnchorHex,
       ironwoodAnchorHex: ironwoodAnchorHex,
+      observedTipHeight: observedTipHeight,
       recipientAddress: recipientAddress,
       parameters: parameters,
     );
+    if (plan.targetHeight > plan.expiryHeight) {
+      throw Zip318PlanException(
+        Zip318PlanRefusal.offSchedule,
+        'the next block is ${plan.targetHeight} and this transfer expired at '
+        '${plan.expiryHeight}; rebuild it against the current canonical '
+        'expiry rather than building a dead transaction',
+      );
+    }
+    return plan;
   }
 
   void checkDueAt(int chainHeight) {
@@ -206,6 +250,68 @@ class Zip318TransferPlan {
         'current canonical expiry rather than broadcasting a dead transaction',
       );
     }
+  }
+}
+
+// ZIP 318's candidate set as observed at proving time, plus the age bound.
+// The age is counted from the tip, or from the broadcast height when the
+// transfer is proved ahead of it, so the broadcast anchor stays in range.
+void _requireCandidateAnchor({
+  required int anchorHeight,
+  required int fundingNoteHeight,
+  required int observedTipHeight,
+  required int broadcastHeight,
+  required int activationHeight,
+  required Zip318Parameters parameters,
+}) {
+  final grid = Zip318AnchorSelection(parameters);
+  if (!grid.isBoundary(anchorHeight)) {
+    throw Zip318PlanException(
+      Zip318PlanRefusal.anchorOffBoundary,
+      'the transfer anchors at height $anchorHeight, which is not on the '
+      'anchor grid (${grid.gridDescription}). Shared boundary anchors are '
+      "what decouple a transaction's anchor from when its wallet last synced",
+    );
+  }
+  if (anchorHeight <= activationHeight) {
+    throw Zip318PlanException(
+      Zip318PlanRefusal.anchorBeforeActivation,
+      'the anchor at $anchorHeight is not above NU6.3 activation at '
+      '$activationHeight; there is no Ironwood tree to anchor to there',
+    );
+  }
+  if (anchorHeight < fundingNoteHeight) {
+    throw Zip318PlanException(
+      Zip318PlanRefusal.anchorBeforeFundingNote,
+      'the anchor at $anchorHeight predates the funding note, mined at '
+      '$fundingNoteHeight, so its tree cannot witness the note; draw again '
+      'from the candidates at or after the note',
+    );
+  }
+  final newest = grid.boundaryAtOrBelow(observedTipHeight);
+  if (anchorHeight > newest) {
+    throw Zip318PlanException(
+      Zip318PlanRefusal.anchorNotObserved,
+      'the anchor at $anchorHeight is above $newest, the most recent boundary '
+      'at the observed tip $observedTipHeight',
+    );
+  }
+  final cap = parameters.anchorAgeCapBoundaries;
+  final age = grid.anchorAge(
+    anchorHeight,
+    referenceHeight: max(observedTipHeight, broadcastHeight),
+    limit: cap,
+  );
+  if (anchorHeight == newest || age == null) {
+    throw Zip318PlanException(
+      Zip318PlanRefusal.anchorAgeOutOfRange,
+      anchorHeight == newest
+          ? 'the anchor at $anchorHeight is the most recent observed boundary '
+                '(age 0), which ZIP 318 never uses; wait for the next boundary'
+          : 'the anchor at $anchorHeight is more than $cap boundaries older '
+                'than the boundary at '
+                '${max(observedTipHeight, broadcastHeight)}; draw again',
+    );
   }
 }
 

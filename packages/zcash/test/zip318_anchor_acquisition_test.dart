@@ -160,6 +160,19 @@ void main() {
       expect(await drawWith(11), await drawWith(11));
     });
 
+    test('defaults activation and passes the broadcast height on', () async {
+      // Proved at tip 3428600 for a broadcast at 3429000: from the broadcast's
+      // boundary 3428928, only 3428352 (age 4) is observed and within the cap.
+      final anchors = await Zip318BoundaryAnchors.draw(
+        fundingNoteHeight: 3428200,
+        observedTipHeight: 3428600,
+        broadcastHeight: 3429000,
+        rng: Random(13),
+        fetch: (h) async => treeStateAt(h),
+      );
+      expect(anchors.boundaryHeight, 3428352);
+    });
+
     test('waits rather than falling back when no boundary is available', () {
       return expectLater(
         Zip318BoundaryAnchors.draw(

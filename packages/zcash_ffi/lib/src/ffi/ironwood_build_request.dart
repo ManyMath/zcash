@@ -279,6 +279,8 @@ String encodeIronwoodBuildRequest({
   });
 }
 
+/// Builds at [Zip318TransferPlan.targetHeight], so a late transfer takes the
+/// next block's consensus branch, and keeps the expiry its schedule fixed.
 String encodeZip318MigrationRequest({
   required String network,
   required Zip318TransferPlan plan,
@@ -288,16 +290,25 @@ String encodeZip318MigrationRequest({
   int? currentUnixTime,
 }) {
   final consensus = ZcashConsensusNetwork.fromJson(network);
-  if (consensus != ZcashConsensusNetwork.regtest &&
-      plan.parameters.nu7ActivationHeight !=
-          Zip318Parameters.forNetwork(consensus).nu7ActivationHeight) {
-    throw ArgumentError.value(
-      network,
-      'network',
-      'the ZIP 318 plan was scheduled with NU7 at height '
-          '${plan.parameters.nu7ActivationHeight}, which is not this '
-          "network's NU7 height",
-    );
+  if (consensus != ZcashConsensusNetwork.regtest) {
+    final preset = Zip318Parameters.forNetwork(consensus);
+    for (final (upgrade, planned, actual) in [
+      (
+        'NU6.3',
+        plan.parameters.nu63ActivationHeight,
+        preset.nu63ActivationHeight,
+      ),
+      ('NU7', plan.parameters.nu7ActivationHeight, preset.nu7ActivationHeight),
+    ]) {
+      if (planned != actual) {
+        throw ArgumentError.value(
+          network,
+          'network',
+          'the ZIP 318 plan was scheduled with $upgrade at height $planned, '
+              "which is not this network's $upgrade height",
+        );
+      }
+    }
   }
   return encodeIronwoodBuildRequest(
     network: network,

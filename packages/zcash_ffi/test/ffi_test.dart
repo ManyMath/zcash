@@ -464,12 +464,17 @@ void main() {
         expect(constants.activationByName('Nu7')?.branchId, '77190ad9');
       });
 
-      test('ZIP 318 presets match the native NU7 activation heights', () {
+      test('ZIP 318 presets match the native NU6.3 and NU7 heights', () {
         for (final (network, params) in [
           ('main', Zip318Parameters.mainnet),
           ('test', Zip318Parameters.testnet),
         ]) {
           final constants = nativeNetworkConstants(network: network);
+          expect(
+            params.nu63ActivationHeight,
+            constants.activationByName('Nu6.3')?.activationHeight,
+            reason: network,
+          );
           expect(
             params.nu7ActivationHeight,
             constants.activationByName('Nu7')?.activationHeight,
@@ -1596,9 +1601,9 @@ void main() {
     Map<String, Object?> decode(String json) =>
         (jsonDecode(json) as Map).cast<String, Object?>();
 
-    ZcashScannedNote scannedOrchardNote(int value) =>
+    ZcashScannedNote scannedOrchardNote(int value, {int height = 3428200}) =>
         ZcashScannedNote.fromJson({
-          'height': 3428400,
+          'height': height,
           'tx': 'aa' * 32,
           'output': 0,
           'value': value,
@@ -1616,18 +1621,20 @@ void main() {
       denominationZatoshis: denomination,
       feeZatoshis: fee,
       broadcastHeight: 3428600,
-      anchorHeight: 3428496,
       expiryHeight: Zip318Schedule.canonicalExpiryHeight(3428600),
     );
 
+    // At tip 3428599 the most recent boundary is 3428496; 3428352 is age 1.
     Zip318TransferPlan planFor(int noteValue) => Zip318TransferPlan.forTransfer(
       transfer: scheduled,
       funding: Zip318FundingSelection.select(
         transfer: scheduled,
         notes: [scannedOrchardNote(noteValue)],
       ),
+      anchorHeight: 3428352,
       orchardAnchorHex: 'cd' * 32,
       ironwoodAnchorHex: 'ef' * 32,
+      observedTipHeight: 3428599,
       recipientAddress: 'uregtest1self',
     );
 
@@ -1698,6 +1705,146 @@ void main() {
         denomination,
       );
     });
+
+    test('builds a pre-NU7 transfer built late at the NU7 target', () {
+      const mainnet = Zip318Parameters.mainnet;
+      final late = Zip318ScheduledTransfer(
+        denominationZatoshis: denomination,
+        feeZatoshis: fee,
+        broadcastHeight: 3543300,
+        expiryHeight: Zip318Schedule.canonicalExpiryHeight(3543300, mainnet),
+      );
+      final plan = Zip318TransferPlan.forTransfer(
+        transfer: late,
+        funding: Zip318FundingSelection.select(
+          transfer: late,
+          notes: [scannedOrchardNote(denomination + fee, height: 3542000)],
+        ),
+        anchorHeight: 3543120,
+        orchardAnchorHex: 'cd' * 32,
+        ironwoodAnchorHex: 'ef' * 32,
+        observedTipHeight: 3543500,
+        recipientAddress: 'uregtest1self',
+        parameters: mainnet,
+      );
+      final request = decode(
+        encodeZip318MigrationRequest(
+          network: 'main',
+          plan: plan,
+          seedHex: '00' * 32,
+        ),
+      );
+      expect(
+        request['target_height'] as int,
+        greaterThanOrEqualTo(mainnet.nu7ActivationHeight!),
+      );
+      expect(request['target_height'], 3543501);
+      expect(request['expiry_height'], 3594240);
+    });
+
+    test('refuses a plan whose NU6.3 height is not the network\'s', () {
+      final params = Zip318Parameters(
+        nu63ActivationHeight: 3428000,
+        nu7ActivationHeight: Zip318Parameters.mainnet.nu7ActivationHeight,
+      );
+      final plan = Zip318TransferPlan.forTransfer(
+        transfer: scheduled,
+        funding: Zip318FundingSelection.select(
+          transfer: scheduled,
+          notes: [scannedOrchardNote(denomination + fee)],
+        ),
+        anchorHeight: 3428352,
+        orchardAnchorHex: 'cd' * 32,
+        ironwoodAnchorHex: 'ef' * 32,
+        observedTipHeight: 3428599,
+        recipientAddress: 'uregtest1self',
+        parameters: params,
+      );
+      expect(
+        () => encodeZip318MigrationRequest(
+          network: 'main',
+          plan: plan,
+          seedHex: '00' * 32,
+        ),
+        throwsA(isA<ArgumentError>()),
+      );
+    });
+
+    test(
+      'derives both anchor roots from the boundary tree state',
+      skip: _libAvailable ? false : 'ZCASH_FFI_LIB not set',
+      () {
+        final ufvk =
+            (jsonDecode(
+                      ZcashFfiBindings.instance.seedToAccountUfvk(
+                        _seed,
+                        'main',
+                        0,
+                      ),
+                    )
+                    as Map<String, dynamic>)['ufvk']
+                as String;
+        // A one-leaf tree: left leaf 0, no right leaf, no parents.
+        final oneLeaf = '01${'00' * 32}0000';
+        final anchors = Zip318BoundaryAnchors(
+          boundaryHeight: 3428352,
+          orchardTreeHex: oneLeaf,
+          ironwoodTreeHex: '',
+        );
+        final plan = planNativeZip318Transfer(
+          transfer: scheduled,
+          funding: Zip318FundingSelection.select(
+            transfer: scheduled,
+            notes: [scannedOrchardNote(denomination + fee)],
+          ),
+          anchors: anchors,
+          observedTipHeight: 3428599,
+          recipientAddress: 'uregtest1self',
+          ufvk: ufvk,
+          network: 'main',
+        );
+        expect(plan.anchorHeight, 3428352);
+        expect(plan.orchardAnchorHex, hasLength(64));
+        expect(plan.orchardAnchorHex, isNot(orchardFamilyEmptyTreeRootHex));
+        expect(plan.ironwoodAnchorHex, orchardFamilyEmptyTreeRootHex);
+        final both = nativeZip318BoundaryRoots(
+          Zip318BoundaryAnchors(
+            boundaryHeight: 3428352,
+            orchardTreeHex: oneLeaf,
+            ironwoodTreeHex: oneLeaf,
+          ),
+          ufvk: ufvk,
+          network: 'main',
+        );
+        expect(both.orchardAnchorHex, plan.orchardAnchorHex);
+        expect(both.ironwoodAnchorHex, plan.orchardAnchorHex);
+        expect(
+          () => planNativeZip318Transfer(
+            transfer: scheduled,
+            funding: Zip318FundingSelection.select(
+              transfer: scheduled,
+              notes: [scannedOrchardNote(denomination + fee)],
+            ),
+            anchors: Zip318BoundaryAnchors(
+              boundaryHeight: 3428496,
+              orchardTreeHex: oneLeaf,
+              ironwoodTreeHex: '',
+            ),
+            observedTipHeight: 3428599,
+            recipientAddress: 'uregtest1self',
+            ufvk: ufvk,
+            network: 'main',
+          ),
+          throwsA(
+            isA<Zip318PlanException>().having(
+              (e) => e.refusal,
+              'refusal',
+              Zip318PlanRefusal.anchorAgeOutOfRange,
+            ),
+          ),
+        );
+      },
+    );
 
     test('refuses a scanned note that cannot be rebuilt', () {
       final bare = ZcashScannedNote.fromJson({

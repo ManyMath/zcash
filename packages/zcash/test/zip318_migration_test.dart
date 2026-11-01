@@ -264,6 +264,51 @@ void main() {
       }
     });
 
+    test('rounds up to boundaries', () {
+      expect(selection.boundaryAtOrAbove(3456000), 3456000);
+      expect(selection.boundaryAtOrAbove(3456001), 3456144);
+      expect(selection.boundaryAfter(3456000), 3456144);
+      expect(selection.boundaryAfter(3455999), 3456000);
+    });
+
+    test('defaults the activation height to the parameter set', () {
+      expect(
+        selection.candidates(fundingNoteHeight: 0, observedTipHeight: 3428500),
+        selection.candidates(
+          activationHeight: activation,
+          fundingNoteHeight: 0,
+          observedTipHeight: 3428500,
+        ),
+      );
+    });
+
+    test('counts the age from the broadcast when proved ahead of it', () {
+      final rng = Random(73);
+      // Observed boundary 3499920; the broadcast's is two boundaries later,
+      // so only ages 3 and 4 from it are both observed and within the cap.
+      final drawn = <int>{};
+      for (var i = 0; i < 200; i++) {
+        drawn.add(
+          selection.drawAnchorHeight(
+            fundingNoteHeight: 3450000,
+            observedTipHeight: 3500000,
+            broadcastHeight: 3500300,
+            rng: rng,
+          ),
+        );
+      }
+      expect(drawn, {3499776, 3499632});
+      expect(
+        () => selection.drawAnchorHeight(
+          fundingNoteHeight: 3450000,
+          observedTipHeight: 3500000,
+          broadcastHeight: 3500000 + 6 * 144,
+          rng: rng,
+        ),
+        throwsA(isA<ZcashModelException>()),
+      );
+    });
+
     test('refuses to anchor when no boundary is available yet', () {
       expect(
         () => selection.drawAnchorHeight(
@@ -294,7 +339,7 @@ void main() {
         decomposition: decomposition,
         startHeight: 3500000,
         canonicalFeeZatoshis: canonicalFee,
-        anchorHeight: 3499968,
+        fundingNoteHeight: 3499000,
         rng: Random(13),
       );
       expect(schedule.transfers, hasLength(decomposition.transferCount));
@@ -313,7 +358,7 @@ void main() {
         decomposition: decomposition,
         startHeight: 3500000,
         canonicalFeeZatoshis: canonicalFee,
-        anchorHeight: 3499968,
+        fundingNoteHeight: 3499000,
         rng: Random(17),
       );
       final scheduled = schedule.transfers
@@ -343,24 +388,26 @@ void main() {
         ),
         startHeight: 0,
         canonicalFeeZatoshis: canonicalFee,
-        anchorHeight: 0,
+        fundingNoteHeight: 0,
+        activationHeight: 0,
         rng: Random(53),
         parameters: const Zip318Parameters(),
       );
-      expect(schedule.finalBroadcastHeight! / 4000, closeTo(66, 4));
+      expect(
+        (schedule.finalBroadcastHeight! - schedule.startHeight!) / 4000,
+        closeTo(66, 4),
+      );
     });
 
-    test('every transfer shares the cohort anchor', () {
+    test('keeps a start already past the bound', () {
       final schedule = Zip318Schedule.plan(
         decomposition: denominations.decompose(100 * zec),
         startHeight: 3500000,
         canonicalFeeZatoshis: canonicalFee,
-        anchorHeight: 3499968,
+        fundingNoteHeight: 3499000,
         rng: Random(19),
       );
-      for (final transfer in schedule.transfers) {
-        expect(transfer.anchorHeight, 3499968);
-      }
+      expect(schedule.startHeight, 3500000);
     });
 
     test(
@@ -383,7 +430,7 @@ void main() {
         decomposition: denominations.decompose(1234 * zec),
         startHeight: 3500000,
         canonicalFeeZatoshis: canonicalFee,
-        anchorHeight: 3499968,
+        fundingNoteHeight: 3499000,
         rng: Random(23),
       );
       expect(schedule.transfers.length, greaterThan(2));
@@ -397,13 +444,105 @@ void main() {
       expect(schedule.overdueAt(3499999), isEmpty);
     });
 
+    test('raises the start to the boundary after the lowest candidate', () {
+      // Funding at 3456100: the lowest candidate is 3456144, so every
+      // transfer has 3456144 at age 1 or more from 3456288 on.
+      expect(
+        Zip318Schedule.earliestStartHeight(fundingNoteHeight: 3456100),
+        3456288,
+      );
+      final schedule = Zip318Schedule.plan(
+        decomposition: denominations.decompose(1234 * zec),
+        startHeight: 3456000,
+        canonicalFeeZatoshis: canonicalFee,
+        fundingNoteHeight: 3456100,
+        rng: Random(61),
+      );
+      expect(schedule.startHeight, 3456288);
+      const grid = Zip318AnchorSelection();
+      for (final transfer in schedule.transfers) {
+        expect(transfer.broadcastHeight, greaterThanOrEqualTo(3456288));
+        expect(
+          grid.candidates(
+            fundingNoteHeight: 3456100,
+            observedTipHeight: transfer.broadcastHeight,
+          ),
+          hasLength(greaterThanOrEqualTo(2)),
+          reason: 'an age-1 anchor must exist at every broadcast',
+        );
+      }
+    });
+
+    test('raising the start preserves the drawn gaps', () {
+      Zip318Schedule planFrom(int start) => Zip318Schedule.plan(
+        decomposition: denominations.decompose(987 * zec),
+        startHeight: start,
+        canonicalFeeZatoshis: canonicalFee,
+        fundingNoteHeight: 3456100,
+        rng: Random(67),
+      );
+      final raised = planFrom(3400000);
+      final atBound = planFrom(3456288);
+      expect(
+        raised.transfers.map((t) => t.broadcastHeight),
+        atBound.transfers.map((t) => t.broadcastHeight),
+      );
+    });
+
+    test('bounds the start by NU6.3 activation just before and after it', () {
+      const activation = 3428143;
+      // The first boundary above activation is 3428208, whether the note
+      // was created before activation, at it, or just after it.
+      for (final funding in [3428000, activation, activation + 1, 3428208]) {
+        expect(
+          const Zip318AnchorSelection().lowestCandidateBoundary(
+            fundingNoteHeight: funding,
+          ),
+          3428208,
+          reason: 'funding at $funding',
+        );
+        expect(
+          Zip318Schedule.earliestStartHeight(fundingNoteHeight: funding),
+          3428352,
+        );
+      }
+      // One block past a boundary moves the lowest candidate a whole bucket.
+      expect(
+        Zip318Schedule.earliestStartHeight(fundingNoteHeight: 3428209),
+        3428496,
+      );
+      // Activation on a boundary is not itself a candidate.
+      expect(
+        Zip318Schedule.earliestStartHeight(
+          fundingNoteHeight: 0,
+          activationHeight: 288,
+          parameters: const Zip318Parameters(),
+        ),
+        576,
+      );
+    });
+
+    test('needs an NU6.3 height when the parameters lack one', () {
+      expect(
+        () => Zip318Schedule.plan(
+          decomposition: denominations.decompose(zec),
+          startHeight: 100,
+          canonicalFeeZatoshis: canonicalFee,
+          fundingNoteHeight: 0,
+          rng: Random(1),
+          parameters: const Zip318Parameters(),
+        ),
+        throwsA(isA<ZcashModelException>()),
+      );
+    });
+
     test('a wholly sub-threshold balance schedules nothing', () {
       final decomposition = denominations.decompose((0.005 * zec).round());
       final schedule = Zip318Schedule.plan(
         decomposition: decomposition,
         startHeight: 3500000,
         canonicalFeeZatoshis: canonicalFee,
-        anchorHeight: 3499968,
+        fundingNoteHeight: 3499000,
         rng: Random(29),
       );
       expect(schedule.transfers, isEmpty);
@@ -438,6 +577,27 @@ void main() {
       );
       // Redrawing above PREP_MAX_DELAY pulls the mean of 16 down to 15.76.
       expect(schedule.broadcastHeights.last / 20000, closeTo(15.76, 0.5));
+    });
+
+    test('estimates the funding height as last broadcast plus the margin', () {
+      final schedule = Zip318PreparationSchedule.plan(
+        transactionCount: 3,
+        startHeight: 3400000,
+        rng: Random(71),
+      );
+      expect(
+        schedule.estimatedFundingNoteHeight,
+        schedule.broadcastHeights.last + 10,
+      );
+      expect(
+        Zip318PreparationSchedule.plan(
+          transactionCount: 0,
+          startHeight: 3400000,
+          rng: Random(71),
+        ).estimatedFundingNoteHeight,
+        isNull,
+        reason: 'with no preparation the notes give their own height',
+      );
     });
 
     test('preparation is spaced far more tightly than migration', () {
@@ -522,6 +682,7 @@ void main() {
       expect(params.prepMeanDelayBlocks, 16);
       expect(params.prepMaxDelayBlocks, 96);
       expect(params.prepActionsPerTransaction, 16);
+      expect(params.prepMiningMarginBlocks, 10);
     });
 
     test('a substituted parameter set is honoured end to end', () {
@@ -538,7 +699,8 @@ void main() {
         decomposition: const Zip318Denominations().decompose(100 * zec),
         startHeight: 1000,
         canonicalFeeZatoshis: canonicalFee,
-        anchorHeight: 900,
+        fundingNoteHeight: 0,
+        activationHeight: 0,
         rng: Random(37),
         parameters: tighter,
       );
@@ -555,10 +717,13 @@ void main() {
     const uniform = Zip318Parameters();
     const nu7 = 3543405;
 
-    test('presets carry the NU7 activation heights', () {
+    test('presets carry the NU6.3 and NU7 activation heights', () {
       expect(Zip318Parameters.provisional.nu7ActivationHeight, nu7);
       expect(Zip318Parameters.testnet.nu7ActivationHeight, 4465026);
       expect(uniform.nu7ActivationHeight, isNull);
+      expect(Zip318Parameters.mainnet.nu63ActivationHeight, 3428143);
+      expect(Zip318Parameters.testnet.nu63ActivationHeight, 4134000);
+      expect(uniform.nu63ActivationHeight, isNull);
     });
 
     test('forNetwork picks the preset for the network', () {
@@ -582,6 +747,17 @@ void main() {
           regtestNu7ActivationHeight: 200,
         ).blockSpacing.advance(195, 10),
         215,
+      );
+      final regtest = Zip318Parameters.forNetwork(
+        ZcashConsensusNetwork.regtest,
+        regtestNu63ActivationHeight: 5,
+      );
+      expect(regtest.nu63ActivationHeight, 5);
+      expect(
+        Zip318Parameters.forNetwork(
+          ZcashConsensusNetwork.regtest,
+        ).nu63ActivationHeight,
+        isNull,
       );
     });
 
@@ -628,6 +804,40 @@ void main() {
       );
     });
 
+    test('rounds up across activation onto the post-NU7 grid', () {
+      const grid = Zip318AnchorSelection(mainnet);
+      // 3543408 is a multiple of 144 past activation, not a boundary.
+      expect(grid.boundaryAtOrAbove(3543300), 3543696);
+      expect(grid.boundaryAtOrAbove(3543200), 3543264);
+      expect(grid.boundaryAfter(3543264), 3543696);
+      expect(grid.boundaryAfter(3543696), 3544128);
+    });
+
+    test('the start bound follows the post-NU7 grid', () {
+      expect(
+        Zip318Schedule.earliestStartHeight(
+          fundingNoteHeight: 3543200,
+          parameters: mainnet,
+        ),
+        3543696,
+      );
+      expect(
+        Zip318Schedule.earliestStartHeight(
+          fundingNoteHeight: 3543300,
+          parameters: mainnet,
+        ),
+        3544128,
+      );
+      // The mining margin is a block count: NU7 does not triple it.
+      final prep = Zip318PreparationSchedule.plan(
+        transactionCount: 2,
+        startHeight: 3600000,
+        rng: Random(79),
+        parameters: mainnet,
+      );
+      expect(prep.estimatedFundingNoteHeight, prep.broadcastHeights.last + 10);
+    });
+
     test('refuses a pre-NU7 grid anchor after activation', () {
       expect(
         () => Zip318BoundaryAnchors.at(
@@ -649,7 +859,7 @@ void main() {
         decomposition: denominations.decompose(1234 * zec),
         startHeight: 3600000,
         canonicalFeeZatoshis: canonicalFee,
-        anchorHeight: 3599856,
+        fundingNoteHeight: 3599000,
         rng: Random(13),
         parameters: mainnet,
       );

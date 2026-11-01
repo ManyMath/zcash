@@ -98,6 +98,80 @@ IronwoodPreparedSend prepareNativeIronwoodSend({
   return IronwoodPreparedSend(plan: plan, transaction: transaction);
 }
 
+/// The root of an empty depth-32 Orchard-family tree, Orchard and Ironwood
+/// alike (`Anchor::empty_tree`, from the orchard crate's test vectors).
+const String orchardFamilyEmptyTreeRootHex =
+    'ae2935f1dfd8a24aed7c70df7de3a668eb7a49b1319880dde2bbd9031ae5d82f';
+
+/// The roots of the two trees in [anchors], computed natively: a scan of no
+/// blocks from those frontiers reports exactly their roots.
+({String orchardAnchorHex, String ironwoodAnchorHex}) nativeZip318BoundaryRoots(
+  Zip318BoundaryAnchors anchors, {
+  required String ufvk,
+  required String network,
+  ZcashFfiBindings? bindings,
+}) {
+  final orchardTree = anchors.orchardTreeHex.isEmpty
+      ? null
+      : anchors.orchardTreeHex;
+  final ironwoodTree = anchors.ironwoodTreeIsEmpty
+      ? null
+      : anchors.ironwoodTreeHex;
+  ZcashScanResult? scan;
+  if (orchardTree != null || ironwoodTree != null) {
+    scan = scanCompactBlocks(
+      ufvk: ufvk,
+      network: network,
+      blocks: const [],
+      includeOrchardWitnesses: true,
+      priorOrchardFrontier: orchardTree,
+      priorIronwoodFrontier: ironwoodTree,
+      bindings: bindings,
+    );
+  }
+  // A frontier of size zero reports no root; that is the empty tree's.
+  return (
+    orchardAnchorHex: scan?.orchardAnchor ?? orchardFamilyEmptyTreeRootHex,
+    ironwoodAnchorHex: scan?.ironwoodAnchor ?? orchardFamilyEmptyTreeRootHex,
+  );
+}
+
+/// [Zip318TransferPlan.forTransfer] with the anchor roots computed from the
+/// boundary tree state in [anchors], so the roots cannot drift from the
+/// height they are checked against.
+Zip318TransferPlan planNativeZip318Transfer({
+  required Zip318ScheduledTransfer transfer,
+  required Zip318FundingSelection funding,
+  required Zip318BoundaryAnchors anchors,
+  required int observedTipHeight,
+  required String recipientAddress,
+  required String ufvk,
+  required String network,
+  int? activationHeight,
+  Zip318Parameters? parameters,
+  ZcashFfiBindings? bindings,
+}) {
+  final roots = nativeZip318BoundaryRoots(
+    anchors,
+    ufvk: ufvk,
+    network: network,
+    bindings: bindings,
+  );
+  return Zip318TransferPlan.forTransfer(
+    transfer: transfer,
+    funding: funding,
+    anchorHeight: anchors.boundaryHeight,
+    orchardAnchorHex: roots.orchardAnchorHex,
+    ironwoodAnchorHex: roots.ironwoodAnchorHex,
+    observedTipHeight: observedTipHeight,
+    recipientAddress: recipientAddress,
+    activationHeight: activationHeight,
+    parameters:
+        parameters ??
+        Zip318Parameters.forNetwork(ZcashConsensusNetwork.fromJson(network)),
+  );
+}
+
 String? _memoHex(Uint8List? memo) {
   if (memo == null) {
     return null;

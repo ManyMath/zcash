@@ -37,10 +37,12 @@ class Zip318BoundaryAnchors {
 
   bool get ironwoodTreeIsEmpty => ironwoodTreeHex.isEmpty;
 
+  /// Draw at proving time; see [Zip318AnchorSelection.drawAnchorHeight].
   static Future<Zip318BoundaryAnchors> draw({
-    required int activationHeight,
+    int? activationHeight,
     required int fundingNoteHeight,
     required int observedTipHeight,
+    int? broadcastHeight,
     required Future<TreeState> Function(int height) fetch,
     required Random rng,
     Zip318Parameters parameters = Zip318Parameters.provisional,
@@ -49,6 +51,7 @@ class Zip318BoundaryAnchors {
       activationHeight: activationHeight,
       fundingNoteHeight: fundingNoteHeight,
       observedTipHeight: observedTipHeight,
+      broadcastHeight: broadcastHeight,
       rng: rng,
     );
     return at(

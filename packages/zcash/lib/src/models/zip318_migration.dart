@@ -54,26 +54,36 @@ class Zip318BlockSpacing {
 /// from NU7 activation. Use the preset for the wallet's network: a wallet
 /// on the wrong grid or expiry is distinguishable from its peers.
 class Zip318Parameters {
-  static const mainnet = Zip318Parameters(nu7ActivationHeight: 3543405);
+  static const mainnet = Zip318Parameters(
+    nu63ActivationHeight: 3428143,
+    nu7ActivationHeight: 3543405,
+  );
 
-  static const testnet = Zip318Parameters(nu7ActivationHeight: 4465026);
+  static const testnet = Zip318Parameters(
+    nu63ActivationHeight: 4134000,
+    nu7ActivationHeight: 4465026,
+  );
 
   static const provisional = mainnet;
 
-  /// Regtest has no fixed NU7 height: pass the node's, or omit it for
-  /// uniform spacing.
+  /// Regtest has no fixed NU6.3 or NU7 height: pass the node's. Omitting NU7
+  /// gives uniform spacing; omitting NU6.3 leaves every anchor and start
+  /// bound needing an explicit activation height.
   factory Zip318Parameters.forNetwork(
     ZcashConsensusNetwork network, {
+    int? regtestNu63ActivationHeight,
     int? regtestNu7ActivationHeight,
   }) => switch (network) {
     ZcashConsensusNetwork.mainnet => mainnet,
     ZcashConsensusNetwork.testnet => testnet,
     ZcashConsensusNetwork.regtest => Zip318Parameters(
+      nu63ActivationHeight: regtestNu63ActivationHeight,
       nu7ActivationHeight: regtestNu7ActivationHeight,
     ),
   };
 
   const Zip318Parameters({
+    this.nu63ActivationHeight,
     this.nu7ActivationHeight,
     this.maxResidualValueZatoshis = _zec ~/ 100,
     this.denomCapZatoshis = 10000 * _zec,
@@ -85,8 +95,13 @@ class Zip318Parameters {
     this.prepMeanDelayBlocks = 16,
     this.prepMaxDelayBlocks = 96,
     this.prepActionsPerTransaction = 16,
+    this.prepMiningMarginBlocks = 10,
     this.isProvisional = true,
   });
+
+  /// NU6.3 activates the Ironwood pool; every anchor lies strictly above it.
+  /// Null when unknown, as on regtest without a configured height.
+  final int? nu63ActivationHeight;
 
   /// Null on a chain where NU7 never activates.
   final int? nu7ActivationHeight;
@@ -116,7 +131,25 @@ class Zip318Parameters {
 
   final int prepActionsPerTransaction;
 
+  /// Blocks for the last preparation transaction to mine after its scheduled
+  /// height. A mining margin is a block count, not a duration, so NU7 does
+  /// not scale it. Not fixed by ZIP 318; 10 follows zcash_pool_migration.
+  final int prepMiningMarginBlocks;
+
   final bool isProvisional;
+
+  /// [explicit] if given, else the NU6.3 height this parameter set carries.
+  int nu63ActivationHeightOr(int? explicit) {
+    final height = explicit ?? nu63ActivationHeight;
+    if (height == null) {
+      throw ZcashModelException(
+        'the NU6.3 activation height is unknown for this parameter set; pass '
+        'activationHeight, or use Zip318Parameters.forNetwork with '
+        'regtestNu63ActivationHeight on regtest',
+      );
+    }
+    return height;
+  }
 }
 
 class Zip318Denominations {
@@ -288,6 +321,48 @@ class Zip318AnchorSelection {
   int? boundaryBefore(int height) =>
       height > 0 ? boundaryAtOrBelow(height - 1) : null;
 
+  int boundaryAtOrAbove(int height) {
+    final activation = parameters.nu7ActivationHeight;
+    final candidate = _roundUp(height, _stepAt(height));
+    if (activation == null || height >= activation || candidate < activation) {
+      return candidate;
+    }
+    // The pre-NU7 grid ran past activation: take the first post-NU7 boundary.
+    return _roundUp(activation, _stepAt(activation));
+  }
+
+  int boundaryAfter(int height) => boundaryAtOrAbove(height + 1);
+
+  static int _roundUp(int height, int step) =>
+      (height + step - 1) ~/ step * step;
+
+  /// The first boundary strictly above NU6.3 activation and at or after
+  /// [fundingNoteHeight]: the oldest anchor a funding note can ever take.
+  int lowestCandidateBoundary({
+    required int fundingNoteHeight,
+    int? activationHeight,
+  }) => max(
+    boundaryAfter(parameters.nu63ActivationHeightOr(activationHeight)),
+    boundaryAtOrAbove(fundingNoteHeight),
+  );
+
+  /// How many boundaries [anchorHeight] lies below the most recent boundary
+  /// at or below [referenceHeight]: 0 for that boundary itself. Null when the
+  /// anchor is above it or more than [limit] boundaries back.
+  int? anchorAge(
+    int anchorHeight, {
+    required int referenceHeight,
+    required int limit,
+  }) {
+    int? h = boundaryAtOrBelow(referenceHeight);
+    for (var age = 0; age <= limit && h != null; age++) {
+      if (h == anchorHeight) return age;
+      if (h < anchorHeight) return null;
+      h = boundaryBefore(h);
+    }
+    return null;
+  }
+
   /// A description of the grid for refusal messages.
   String get gridDescription {
     final activation = parameters.nu7ActivationHeight;
@@ -298,11 +373,14 @@ class Zip318AnchorSelection {
   }
 
   List<int> candidates({
-    required int activationHeight,
+    int? activationHeight,
     required int fundingNoteHeight,
     required int observedTipHeight,
   }) {
-    final floor = max(activationHeight + 1, fundingNoteHeight);
+    final floor = max(
+      parameters.nu63ActivationHeightOr(activationHeight) + 1,
+      fundingNoteHeight,
+    );
     final out = <int>[];
     for (
       int? h = boundaryAtOrBelow(observedTipHeight);
@@ -314,10 +392,15 @@ class Zip318AnchorSelection {
     return out.reversed.toList(growable: false);
   }
 
+  /// Draw at proving time, from the tip observed then. A transfer proved
+  /// ahead of [broadcastHeight] counts its age from the boundary at that
+  /// height instead, so the anchor it broadcasts with is no older than the
+  /// cap; the most recent observed boundary stays excluded either way.
   int drawAnchorHeight({
-    required int activationHeight,
+    int? activationHeight,
     required int fundingNoteHeight,
     required int observedTipHeight,
+    int? broadcastHeight,
     required Random rng,
   }) {
     final candidateHeights = candidates(
@@ -325,21 +408,31 @@ class Zip318AnchorSelection {
       fundingNoteHeight: fundingNoteHeight,
       observedTipHeight: observedTipHeight,
     );
-    // Newest first: byAge[a] is age `a`, and byAge[0] is the most recent
-    // boundary, which is never used.
-    final byAge = candidateHeights.reversed.toList(growable: false);
-    final maxAge = min(parameters.anchorAgeCapBoundaries, byAge.length - 1);
-    if (maxAge < 1) {
+    final cap = parameters.anchorAgeCapBoundaries;
+    final newest = boundaryAtOrBelow(observedTipHeight);
+    final reference = max(observedTipHeight, broadcastHeight ?? 0);
+    // Ages counted from the reference boundary; the most recent observed
+    // boundary (age 0 at proving time) is never used.
+    final byAge = <int, int>{
+      for (final h in candidateHeights)
+        if (h < newest)
+          ?anchorAge(h, referenceHeight: reference, limit: cap): h,
+    };
+    if (byAge.isEmpty) {
       throw ZcashModelException(
-        'no canonical boundary anchor is available yet for this funding note; '
-        'wait for the next boundary rather than anchoring at the chain tip',
+        candidateHeights.length < 2
+            ? 'no canonical boundary anchor is available yet for this funding '
+                  'note; wait for the next boundary rather than anchoring at '
+                  'the chain tip'
+            : 'the broadcast height is more than $cap boundaries past every '
+                  'anchor observed so far; prove closer to the broadcast',
       );
     }
     // Draws past the cap or the candidate set are redrawn, which truncates
-    // Geometric(1/2) to [1, maxAge].
+    // Geometric(1/2) to the admissible ages.
     while (true) {
-      final age = _drawGeometric(rng);
-      if (age <= maxAge) return byAge[age];
+      final anchor = byAge[_drawGeometric(rng)];
+      if (anchor != null) return anchor;
     }
   }
 
@@ -352,12 +445,13 @@ class Zip318AnchorSelection {
   }
 }
 
+/// Carries no anchor: ZIP 318 draws each transfer's anchor at proving time,
+/// from the candidate set observed then (see [Zip318AnchorSelection]).
 class Zip318ScheduledTransfer {
   const Zip318ScheduledTransfer({
     required this.denominationZatoshis,
     required this.feeZatoshis,
     required this.broadcastHeight,
-    required this.anchorHeight,
     required this.expiryHeight,
   });
 
@@ -367,8 +461,7 @@ class Zip318ScheduledTransfer {
 
   final int broadcastHeight;
 
-  final int anchorHeight;
-
+  /// Fixed at scheduling, from [broadcastHeight]; a late build keeps it.
   final int expiryHeight;
 
   int get fundingNoteValueZatoshis => denominationZatoshis + feeZatoshis;
@@ -381,9 +474,14 @@ class Zip318Schedule {
     required this.transfers,
     required this.residualZatoshis,
     required this.parameters,
+    this.startHeight,
   });
 
   final List<Zip318ScheduledTransfer> transfers;
+
+  /// The height the delays accumulated from, after [plan] raised it to
+  /// [earliestStartHeight]. Null for a schedule assembled by hand.
+  final int? startHeight;
 
   final int residualZatoshis;
 
@@ -413,19 +511,49 @@ class Zip318Schedule {
     return (broadcastHeight ~/ modulus) * modulus + 2 * modulus;
   }
 
+  /// The boundary after the lowest candidate boundary for funding notes
+  /// created at [fundingNoteHeight]. From there every transfer has an anchor
+  /// of age 1 or more, so none needs a fallback.
+  static int earliestStartHeight({
+    required int fundingNoteHeight,
+    int? activationHeight,
+    Zip318Parameters parameters = Zip318Parameters.provisional,
+  }) {
+    final grid = Zip318AnchorSelection(parameters);
+    return grid.boundaryAfter(
+      grid.lowestCandidateBoundary(
+        fundingNoteHeight: fundingNoteHeight,
+        activationHeight: activationHeight,
+      ),
+    );
+  }
+
+  /// [fundingNoteHeight] is when the funding notes exist: with note
+  /// preparation, [Zip318PreparationSchedule.estimatedFundingNoteHeight].
+  /// [startHeight] is raised to [earliestStartHeight] rather than clamping
+  /// each transfer, which keeps the drawn gaps intact.
   static Zip318Schedule plan({
     required Zip318Decomposition decomposition,
     required int startHeight,
     required int canonicalFeeZatoshis,
-    required int anchorHeight,
+    required int fundingNoteHeight,
     required Random rng,
+    int? activationHeight,
     Zip318Parameters? parameters,
   }) {
     final params = parameters ?? decomposition.parameters;
+    final start = max(
+      startHeight,
+      earliestStartHeight(
+        fundingNoteHeight: fundingNoteHeight,
+        activationHeight: activationHeight,
+        parameters: params,
+      ),
+    );
     final parts = List<int>.from(decomposition.parts);
     parts.shuffle(rng);
 
-    var height = startHeight;
+    var height = start;
     final transfers = <Zip318ScheduledTransfer>[];
     for (final part in parts) {
       height = params.blockSpacing.advance(
@@ -441,7 +569,6 @@ class Zip318Schedule {
           denominationZatoshis: part,
           feeZatoshis: canonicalFeeZatoshis,
           broadcastHeight: height,
-          anchorHeight: anchorHeight,
           expiryHeight: canonicalExpiryHeight(height, params),
         ),
       );
@@ -450,6 +577,7 @@ class Zip318Schedule {
       transfers: transfers,
       residualZatoshis: decomposition.residualZatoshis,
       parameters: params,
+      startHeight: start,
     );
   }
 }
@@ -468,6 +596,13 @@ class Zip318PreparationSchedule {
   final Zip318Parameters parameters;
 
   int get transactionCount => broadcastHeights.length;
+
+  /// When the funding notes are expected to exist: the last preparation
+  /// broadcast plus [Zip318Parameters.prepMiningMarginBlocks]. Null with no
+  /// preparation, where the funding notes' own height is the answer.
+  int? get estimatedFundingNoteHeight => broadcastHeights.isEmpty
+      ? null
+      : broadcastHeights.last + parameters.prepMiningMarginBlocks;
 
   static Zip318PreparationSchedule plan({
     required int transactionCount,
