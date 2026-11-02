@@ -12,6 +12,6 @@ flutter test integration_test -d <device> \
 Runs on Android and the iOS Simulator. The iOS device build
 (`flutter build ios --no-codesign`) has not been run on a phone.
 
-`pubspec.yaml` overrides `zcash` with the checkout so the example builds
-against the same tree as `zcash_flutter`; an app that depends on the published
-`zcash_flutter` does not need the override.
+`pubspec.yaml` depends on `zcash_flutter` by path and overrides `zcash` with the
+checkout so the example builds against the same tree; an app that depends on the
+published `zcash_flutter` needs neither.
