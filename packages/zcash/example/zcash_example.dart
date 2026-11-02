@@ -20,14 +20,18 @@ void main(List<String> args) async {
     print('Network upgrades:');
     for (final entry in chain.upgrades.entries) {
       final u = entry.value;
-      print('  ${u.name.padRight(16)} height=${u.activationHeight}  '
-          'status=${u.status}');
+      print(
+        '  ${u.name.padRight(16)} height=${u.activationHeight}  '
+        'status=${u.status}',
+      );
     }
     print('');
 
     final tip = await zebra.getBestBlockHeightAndHash();
     final block = await zebra.getBlock(tip.hash);
-    print('Latest block:  height=${block.height}  txs=${block.transactions.length}');
+    print(
+      'Latest block:  height=${block.height}  txs=${block.transactions.length}',
+    );
 
     final mempool = await zebra.getRawMempool();
     print('Mempool:       ${mempool.length} unconfirmed transaction(s)');

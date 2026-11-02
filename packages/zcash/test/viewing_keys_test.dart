@@ -34,10 +34,7 @@ void main() {
       expect(keys.sapling.defaultAddress, 'zs1example');
       expect(keys.sapling.defaultDiversifierIndex, 5);
       expect(keys.toJson()['account_index'], 3);
-      expect(
-        (keys.toJson()['transparent']! as Map)['external_ivk'],
-        'aa' * 65,
-      );
+      expect((keys.toJson()['transparent']! as Map)['external_ivk'], 'aa' * 65);
     });
 
     test('parses absent pools without viewing-key material', () {
