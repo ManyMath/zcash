@@ -137,7 +137,7 @@ class Zip318TransferPlan {
 
   /// The Orchard and Ironwood tree roots as of [anchorHeight]. The builder
   /// checks the Orchard witness against the first, but nothing here can
-  /// recompute either from the height; zcash_ffi's
+  /// recompute either from the height; zcash_flutter's
   /// `planNativeZip318Transfer` derives both from the boundary tree state.
   final String orchardAnchorHex;
 

@@ -5,7 +5,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:test/test.dart';
-import 'package:zcash_ffi/zcash_ffi.dart';
+import 'package:zcash_flutter/zcash_flutter.dart';
 import 'harness.dart';
 
 // Needs an Ironwood-aware ZEBRA_BIN and a ZCASH_FFI_LIB with orchard-tx-build
@@ -69,66 +69,69 @@ void main() {
       expect(coinbase!.satoshis, greaterThan(20000));
     });
 
-    test('a v5 Orchard shielding transaction is accepted below NU6.3', () async {
-      if (harness == null || coinbase == null) return;
-      final tip = await harness!.client.getBlockCount();
-      expect(
-        tip,
-        lessThan(nu63Activation),
-        reason: 'this transaction can only exist on the pre-activation side',
-      );
+    test(
+      'a v5 Orchard shielding transaction is accepted below NU6.3',
+      () async {
+        if (harness == null || coinbase == null) return;
+        final tip = await harness!.client.getBlockCount();
+        expect(
+          tip,
+          lessThan(nu63Activation),
+          reason: 'this transaction can only exist on the pre-activation side',
+        );
 
-      final treeState = await harness!.client.getTreeState('$tip');
-      final built = buildNativeOrchardTransaction(
-        network: ZcashNetwork.regtest,
-        targetHeight: tip + 1,
-        regtestNu63ActivationHeight: nu63Activation,
-        anchor: OrchardAnchorSource.tree(treeState.orchard?.finalState ?? ''),
-        inputs: [
-          TransparentBuildInput(
-            txid: coinbase!.txid,
-            vout: coinbase!.outputIndex,
-            valueZatoshis: coinbase!.satoshis,
-            secretKeyHex: kIronwoodProofMinerSecretKeyHex,
+        final treeState = await harness!.client.getTreeState('$tip');
+        final built = buildNativeOrchardTransaction(
+          network: ZcashNetwork.regtest,
+          targetHeight: tip + 1,
+          regtestNu63ActivationHeight: nu63Activation,
+          anchor: OrchardAnchorSource.tree(treeState.orchard?.finalState ?? ''),
+          inputs: [
+            TransparentBuildInput(
+              txid: coinbase!.txid,
+              vout: coinbase!.outputIndex,
+              valueZatoshis: coinbase!.satoshis,
+              secretKeyHex: kIronwoodProofMinerSecretKeyHex,
+            ),
+          ],
+          orchardOutput: const OrchardBuildOutput(
+            address: kIronwoodProofUnifiedAddress,
           ),
-        ],
-        orchardOutput: const OrchardBuildOutput(
-          address: kIronwoodProofUnifiedAddress,
-        ),
-        allowExperimentalOrchardBuild: true,
-        bindings: ffi,
-      );
+          allowExperimentalOrchardBuild: true,
+          bindings: ffi,
+        );
 
-      expect(built.isConsensusValid, isTrue);
-      expect(built.version, 'v5');
-      expect(
-        built.consensusBranchId,
-        'nu6.2',
-        reason: 'below activation the chain is on NU6.2, and so must this be',
-      );
-      expect(built.orchardActions, 2);
-      expect(
-        built.orchardOutputZatoshis,
-        coinbase!.satoshis - built.feeZatoshis,
-      );
-      preActivationTxHex = built.transactionHex;
-      preActivationTxid = built.txid;
+        expect(built.isConsensusValid, isTrue);
+        expect(built.version, 'v5');
+        expect(
+          built.consensusBranchId,
+          'nu6.2',
+          reason: 'below activation the chain is on NU6.2, and so must this be',
+        );
+        expect(built.orchardActions, 2);
+        expect(
+          built.orchardOutputZatoshis,
+          coinbase!.satoshis - built.feeZatoshis,
+        );
+        preActivationTxHex = built.transactionHex;
+        preActivationTxid = built.txid;
 
-      final txid = await harness!.client.sendRawTransaction(
-        built.transactionHex,
-      );
-      expect(txid, built.txid);
-      expect(await harness!.client.getRawMempool(), contains(built.txid));
+        final txid = await harness!.client.sendRawTransaction(
+          built.transactionHex,
+        );
+        expect(txid, built.txid);
+        expect(await harness!.client.getRawMempool(), contains(built.txid));
 
-      final hash = (await harness!.mineBlocks(1)).single;
-      final block = await harness!.client.getBlock(hash);
-      expect(
-        block.transactions,
-        contains(built.txid),
-        reason: 'the transaction must be mined, not merely accepted',
-      );
-      shieldBlockHeight = await harness!.client.getBlockCount();
-    });
+        final hash = (await harness!.mineBlocks(1)).single;
+        final block = await harness!.client.getBlock(hash);
+        expect(
+          block.transactions,
+          contains(built.txid),
+          reason: 'the transaction must be mined, not merely accepted',
+        );
+        shieldBlockHeight = await harness!.client.getBlockCount();
+      },
+    );
 
     test('the mined Orchard output is in the chain tree state', () async {
       if (harness == null || preActivationTxid == null) return;

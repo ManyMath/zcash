@@ -5,8 +5,8 @@ import 'dart:ffi';
 import 'dart:io';
 
 import 'package:test/test.dart';
-import 'package:zcash_ffi/src/ffi/native_asset_symbols.dart';
-import 'package:zcash_ffi/zcash_ffi.dart';
+import 'package:zcash_flutter/src/ffi/native_asset_symbols.dart';
+import 'package:zcash_flutter/zcash_flutter.dart';
 
 void main() {
   group('the native-asset table', () {

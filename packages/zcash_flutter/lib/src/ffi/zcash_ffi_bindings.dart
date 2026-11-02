@@ -21,7 +21,7 @@ class ZcashFfiBindings {
       ZcashFfiBindings._(nativeAssetSymbol, nativeAssetsLibraryLabel);
 
   static const nativeAssetsLibraryLabel =
-      'the zcash_ffi code asset (package:zcash_ffi/src/ffi/'
+      'the zcash_ffi code asset (package:zcash_flutter/src/ffi/'
       'zcash_native_assets.dart)';
 
   late final _version = _symbol<NativeFunction<Pointer<Utf8> Function()>>(

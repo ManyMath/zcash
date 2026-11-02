@@ -2,7 +2,7 @@
 
 Pure Dart Zcash models and node clients: `ZebraClient` (JSON-RPC),
 `ZcashdWalletClient` (JSON-RPC) and `LightwalletdClient` (gRPC), plus the value
-objects the native layer in `zcash_ffi` produces and consumes. No `dart:ffi`.
+objects the native layer in `zcash_flutter` produces and consumes. No `dart:ffi`.
 
 ```dart
 import 'package:zcash/zcash.dart';

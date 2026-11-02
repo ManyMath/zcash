@@ -2,8 +2,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-FFI_DIR="$SCRIPT_DIR/packages/zcash_ffi/native/zcash-ffi"
-DART_FFI_DIR="$SCRIPT_DIR/packages/zcash_ffi/lib/src/ffi/native"
+FFI_DIR="$SCRIPT_DIR/packages/zcash_flutter/native/zcash-ffi"
+DART_FFI_DIR="$SCRIPT_DIR/packages/zcash_flutter/lib/src/ffi/native"
 
 echo "Building zcash-ffi (release)..."
 (cd "$FFI_DIR" && cargo build --release)

@@ -4,7 +4,7 @@ library;
 import 'dart:convert';
 
 import 'package:test/test.dart';
-import 'package:zcash_ffi/src/ffi/native_result.dart';
+import 'package:zcash_flutter/src/ffi/native_result.dart';
 
 void main() {
   group('native result parser', () {

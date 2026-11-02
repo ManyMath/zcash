@@ -2,7 +2,7 @@
 library;
 
 import 'package:test/test.dart';
-import 'package:zcash_ffi/src/ffi/zcash_native_assets.dart';
+import 'package:zcash_flutter/src/ffi/zcash_native_assets.dart';
 
 void main() {
   test('documented zcashNative* wrappers resolve as public symbols', () {

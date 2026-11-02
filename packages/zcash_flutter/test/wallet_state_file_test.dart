@@ -4,7 +4,7 @@ library;
 import 'dart:io';
 
 import 'package:test/test.dart';
-import 'package:zcash_ffi/zcash_ffi.dart';
+import 'package:zcash_flutter/zcash_flutter.dart';
 
 void main() {
   late Directory dir;

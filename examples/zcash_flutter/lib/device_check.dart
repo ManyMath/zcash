@@ -1,6 +1,6 @@
 import 'dart:math';
 
-import 'package:zcash_ffi/zcash_ffi.dart';
+import 'package:zcash_flutter/zcash_flutter.dart';
 
 class DeviceCheck {
   DeviceCheck({this.lightwalletd, this.syncBlocks = 200});

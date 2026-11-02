@@ -6,7 +6,7 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:test/test.dart';
-import 'package:zcash_ffi/zcash_ffi.dart';
+import 'package:zcash_flutter/zcash_flutter.dart';
 
 // Needs MAINNET_LIGHTWALLETD=<host:port> (TLS, e.g. zec.rocks:443).
 // MAINNET_SYNC_BLOCKS, MAINNET_RANGE_SIZE and ZCASH_FFI_LIB are optional.

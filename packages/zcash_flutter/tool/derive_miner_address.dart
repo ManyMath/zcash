@@ -1,4 +1,4 @@
-import 'package:zcash_ffi/zcash_ffi.dart';
+import 'package:zcash_flutter/zcash_flutter.dart';
 
 // Bytes 0x00..0x3f: a deterministic dev seed, not a published vector.
 const _testSeedHex =

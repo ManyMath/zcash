@@ -59,7 +59,7 @@ void main() {
         isEmpty,
         reason:
             'the pure zcash package must not import native code. '
-            'Move native-backed behavior to zcash_ffi. Offenders:\n'
+            'Move native-backed behavior to zcash_flutter. Offenders:\n'
             '${offenders.join('\n')}',
       );
     });

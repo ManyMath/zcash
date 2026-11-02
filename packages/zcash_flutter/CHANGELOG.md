@@ -1,6 +1,7 @@
-## 0.0.8
+## 0.0.1
 
-First release.
+First release, continuing the unpublished `zcash_ffi` package under its new
+name.
 
 - `dart:ffi` bindings to the bundled `zcash-ffi` crate: BIP 39 mnemonics, key
   derivation, address parsing, mining helpers, compact-block scanning, note

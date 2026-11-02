@@ -1,7 +1,7 @@
 name: zcash
 description: >-
   Pure Dart Zcash models and node clients for Zebra and zcashd JSON-RPC and
-  lightwalletd gRPC, plus the wallet value objects shared with zcash_ffi.
+  lightwalletd gRPC, plus the wallet value objects shared with zcash_flutter.
 version: 0.0.8
 repository: https://github.com/ManyMath/zcash/tree/main/packages/zcash
 issue_tracker: https://github.com/ManyMath/zcash/issues

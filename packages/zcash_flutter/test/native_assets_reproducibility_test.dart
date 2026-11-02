@@ -154,12 +154,12 @@ Directory _packageDirectory() {
     return current;
   }
   final monorepoNested = Directory(
-    path.join(current.path, 'packages', 'zcash_ffi'),
+    path.join(current.path, 'packages', 'zcash_flutter'),
   );
   if (_isZcashFfiPackage(monorepoNested)) {
     return monorepoNested;
   }
-  fail('Unable to locate zcash_ffi package directory from ${current.path}');
+  fail('Unable to locate zcash_flutter package directory from ${current.path}');
 }
 
 bool _isZcashFfiPackage(Directory directory) {
@@ -168,6 +168,6 @@ bool _isZcashFfiPackage(Directory directory) {
     return false;
   }
   return pubspec.readAsStringSync().contains(
-    RegExp(r'^name:\s*zcash_ffi\s*$', multiLine: true),
+    RegExp(r'^name:\s*zcash_flutter\s*$', multiLine: true),
   );
 }

@@ -4,8 +4,8 @@ Dart packages for Zcash wallets, backed by a Rust FFI crate.
 
 - `packages/zcash`: pure Dart models, node clients (Zebra, zcashd,
   lightwalletd) and the generated lightwalletd protobuf types.
-- `packages/zcash_ffi`: `dart:ffi` bindings, build hooks and the `zcash_tool`
-  CLI over `packages/zcash_ffi/native/zcash-ffi`.
+- `packages/zcash_flutter`: `dart:ffi` bindings, build hooks and the `zcash_tool`
+  CLI over `packages/zcash_flutter/native/zcash-ffi`.
 - `examples/zcash_flutter`: a Flutter app and device check.
 
 ## Build and test
@@ -16,7 +16,7 @@ dart run melos bootstrap
 dart run melos run analyze
 dart run melos run test
 
-cd packages/zcash_ffi/native/zcash-ffi
+cd packages/zcash_flutter/native/zcash-ffi
 cargo test --release                 # default features
 cargo test --release --all-features
 cargo clippy --all-targets --all-features
@@ -24,7 +24,7 @@ cargo clippy --all-targets --all-features
 
 ## Live suites
 
-The suites in `packages/zcash_ffi/test/integration` skip unless enabled. They
+The suites in `packages/zcash_flutter/test/integration` skip unless enabled. They
 run a regtest chain from local binaries:
 
 ```sh
@@ -34,7 +34,7 @@ export LIGHTWALLETD_BIN=/path/to/lightwalletd # lightwalletd 0.5.2
 export ZCASH_FFI_LIB=/path/to/libzcash_ffi.dylib
 export ZCASH_SAPLING_SPEND_PARAMS=/path/to/sapling-spend.params
 export ZCASH_SAPLING_OUTPUT_PARAMS=/path/to/sapling-output.params
-cd packages/zcash_ffi && dart test -j 1 test/integration/zebra_ironwood_live_test.dart
+cd packages/zcash_flutter && dart test -j 1 test/integration/zebra_ironwood_live_test.dart
 ```
 
 Build `ZCASH_FFI_LIB` with

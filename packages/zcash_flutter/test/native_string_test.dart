@@ -5,7 +5,7 @@ import 'dart:ffi';
 
 import 'package:ffi/ffi.dart';
 import 'package:test/test.dart';
-import 'package:zcash_ffi/src/ffi/native_string.dart';
+import 'package:zcash_flutter/src/ffi/native_string.dart';
 
 void main() {
   group('native string ownership', () {

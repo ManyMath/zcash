@@ -9,7 +9,7 @@ class ZcashDeviceCheckApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => MaterialApp(
-    title: 'zcash_ffi device check',
+    title: 'zcash_flutter device check',
     theme: ThemeData(colorSchemeSeed: const Color(0xFFF4B728)),
     home: const _CheckPage(),
   );
@@ -51,7 +51,7 @@ class _CheckPageState extends State<_CheckPage> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('zcash_ffi device check')),
+    appBar: AppBar(title: const Text('zcash_flutter device check')),
     body: ListView(
       padding: const EdgeInsets.all(16),
       children: [for (final line in _lines) Text(line)],

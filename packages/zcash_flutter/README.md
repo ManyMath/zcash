@@ -1,4 +1,4 @@
-# zcash_ffi
+# zcash_flutter
 
 `dart:ffi` bindings over the `zcash-ffi` crate (`native/zcash-ffi`): key
 derivation, compact-block scanning, transaction building and lightwalletd sync.

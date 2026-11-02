@@ -4,7 +4,7 @@ library;
 import 'dart:convert';
 import 'dart:io';
 import 'package:test/test.dart';
-import 'package:zcash_ffi/zcash_ffi.dart';
+import 'package:zcash_flutter/zcash_flutter.dart';
 import 'harness.dart';
 
 // Needs an Ironwood-aware ZEBRA_BIN, the Sapling MPC parameters in

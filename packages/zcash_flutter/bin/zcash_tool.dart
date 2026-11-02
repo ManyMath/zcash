@@ -1,7 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:zcash_ffi/zcash_ffi.dart';
+import 'package:zcash_flutter/zcash_flutter.dart';
 
 // Bytes 0x00..0x3f: a deterministic dev seed, not a published vector.
 const _seedHex =
@@ -10,7 +10,7 @@ const _seedHex =
 const _network = 'regtest';
 
 const _usage = '''
-zcash_tool — native-backed zcash_ffi developer CLI
+zcash_tool — native-backed zcash_flutter developer CLI
 
 Usage: dart run zcash_tool <command> [options]
 

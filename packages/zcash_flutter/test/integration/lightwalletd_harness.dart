@@ -5,7 +5,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
-import 'package:zcash_ffi/zcash_ffi.dart';
+import 'package:zcash_flutter/zcash_flutter.dart';
 
 import 'docker_image_policy.dart';
 

@@ -1,5 +1,5 @@
 name: zcash_flutter_example
-description: "Runs the zcash_ffi wallet surface on a device."
+description: "Runs the zcash_flutter wallet surface on a device."
 publish_to: 'none'
 
 version: 1.0.0+1
@@ -11,8 +11,8 @@ dependencies:
   flutter:
     sdk: flutter
 
-  zcash_ffi:
-    path: ../../packages/zcash_ffi
+  zcash_flutter:
+    path: ../../packages/zcash_flutter
 
 dev_dependencies:
   flutter_test:
@@ -26,7 +26,7 @@ flutter:
 
   uses-material-design: true
 
-# zcash_ffi depends on the hosted zcash package; point it at the checkout so
+# zcash_flutter depends on the hosted zcash package; point it at the checkout so
 # the example builds against the same tree.
 dependency_overrides:
   zcash:

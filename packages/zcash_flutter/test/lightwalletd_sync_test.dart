@@ -6,7 +6,7 @@ import 'dart:io';
 import 'package:fixnum/fixnum.dart';
 import 'package:grpc/grpc.dart';
 import 'package:test/test.dart';
-import 'package:zcash_ffi/zcash_ffi.dart' hide TreeState;
+import 'package:zcash_flutter/zcash_flutter.dart' hide TreeState;
 import 'package:zcash/lightwalletd_protos.dart' as lwd show TreeState, Duration;
 import 'package:zcash/lightwalletd_protos.dart'
     show

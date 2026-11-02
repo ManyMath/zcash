@@ -5,7 +5,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:test/test.dart';
-import 'package:zcash_ffi/zcash_ffi.dart'
+import 'package:zcash_flutter/zcash_flutter.dart'
     show
         CapabilityStatus,
         CompactBlockScanInput,
@@ -16,7 +16,7 @@ import 'package:zcash_ffi/zcash_ffi.dart'
         ZcashAddressReceiverType,
         ZcashKeyType,
         ZcashKeyValidationReason;
-import 'package:zcash_ffi/src/ffi/zcash_native_assets.dart';
+import 'package:zcash_flutter/src/ffi/zcash_native_assets.dart';
 
 const _seed =
     '000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f'
@@ -682,7 +682,7 @@ Directory _packageDirectory() {
   if (_isZcashFfiPackage(current)) {
     return current;
   }
-  final monorepoNested = Directory('${current.path}/packages/zcash_ffi');
+  final monorepoNested = Directory('${current.path}/packages/zcash_flutter');
   if (_isZcashFfiPackage(monorepoNested)) {
     return monorepoNested;
   }
@@ -695,6 +695,6 @@ bool _isZcashFfiPackage(Directory directory) {
     return false;
   }
   return pubspec.readAsStringSync().contains(
-    RegExp(r'^name:\s*zcash_ffi\s*$', multiLine: true),
+    RegExp(r'^name:\s*zcash_flutter\s*$', multiLine: true),
   );
 }

@@ -1,4 +1,4 @@
-@DefaultAsset('package:zcash_ffi/src/ffi/zcash_native_assets.dart')
+@DefaultAsset('package:zcash_flutter/src/ffi/zcash_native_assets.dart')
 library;
 
 import 'dart:ffi';
