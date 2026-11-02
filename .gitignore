@@ -26,3 +26,6 @@ vendor/
 coverage/
 .cache/
 tmp/
+
+# Library packages do not commit lockfiles.
+packages/*/pubspec.lock
