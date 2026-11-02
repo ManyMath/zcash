@@ -1,3 +1,0 @@
-import 'bin/zcash_tool.dart' as zcash_tool;
-
-void main(List<String> args) => zcash_tool.main(args);

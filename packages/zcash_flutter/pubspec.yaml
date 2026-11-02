@@ -2,8 +2,8 @@ name: zcash_flutter
 description: >-
   Zcash wallet operations for Flutter and Dart over the bundled zcash-ffi
   Rust crate: key derivation, compact-block scanning, transaction building
-  and lightwalletd sync, with the zcash_tool CLI.
-version: 0.0.1
+  and lightwalletd sync.
+version: 0.0.2
 repository: https://github.com/ManyMath/zcash/tree/main/packages/zcash_flutter
 issue_tracker: https://github.com/ManyMath/zcash/issues
 topics:
@@ -12,9 +12,6 @@ topics:
   - wallet
   - ffi
   - native-assets
-
-executables:
-  zcash_tool:
 
 environment:
   sdk: '>=3.10.0 <4.0.0'

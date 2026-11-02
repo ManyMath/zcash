@@ -1,3 +1,9 @@
+## 0.0.2
+
+- Removed the `zcash_tool` executable. It continues as the unpublished
+  `zcash_cli` package in the repository.
+- Added the Flutter example app and device check under `example/`.
+
 ## 0.0.1
 
 First release, continuing the unpublished `zcash_ffi` package under its new

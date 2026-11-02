@@ -10,9 +10,9 @@ const _seedHex =
 const _network = 'regtest';
 
 const _usage = '''
-zcash_tool — native-backed zcash_flutter developer CLI
+zcash_cli — native-backed zcash_flutter developer CLI
 
-Usage: dart run zcash_tool <command> [options]
+Usage: dart run zcash_cli <command> [options]
 
 Commands:
   capabilities   Print the native zcash-ffi version and compiled capability
@@ -55,12 +55,12 @@ void main(List<String> args) {
       case '-h':
         stdout.write(_usage);
       default:
-        stderr.writeln('zcash_tool: unknown command "$command"');
+        stderr.writeln('zcash_cli: unknown command "$command"');
         stderr.write(_usage);
         exitCode = 2;
     }
   } catch (error, stackTrace) {
-    stderr.writeln('zcash_tool $command failure: $error');
+    stderr.writeln('zcash_cli $command failure: $error');
     stderr.writeln(stackTrace);
     exitCode = 1;
   }

@@ -10,9 +10,5 @@ on `PATH`. `ZCASH_FFI_LIB` overrides the library at runtime (for feature
 builds), `ZCASH_FFI_MANIFEST_DIR` overrides the crate directory at build time
 and `ZCASH_FFI_CARGO_PROFILE` selects `release` (the default) or `debug`.
 
-```sh
-dart run zcash_tool capabilities --json
-dart run zcash_tool address <addr> --network regtest
-dart run zcash_tool derive --network regtest
-dart run zcash_tool scan blocks.json --json
-```
+`example/` is a Flutter app and device check. The developer CLI lives in the
+repository as `packages/zcash_cli` and is not published.

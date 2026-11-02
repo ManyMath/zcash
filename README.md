@@ -4,9 +4,10 @@ Dart packages for Zcash wallets, backed by a Rust FFI crate.
 
 - `packages/zcash`: pure Dart models, node clients (Zebra, zcashd,
   lightwalletd) and the generated lightwalletd protobuf types.
-- `packages/zcash_flutter`: `dart:ffi` bindings, build hooks and the `zcash_tool`
-  CLI over `packages/zcash_flutter/native/zcash-ffi`.
-- `packages/zcash_flutter/example`: a Flutter app and device check.
+- `packages/zcash_flutter`: `dart:ffi` bindings and build hooks over
+  `packages/zcash_flutter/native/zcash-ffi`, with a Flutter example app and
+  device check under `example/`.
+- `packages/zcash_cli`: unpublished developer CLI over `zcash_flutter`.
 
 ## Build and test
 

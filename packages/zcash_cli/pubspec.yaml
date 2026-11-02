@@ -1,0 +1,17 @@
+name: zcash_cli
+description: Developer CLI over zcash_flutter. Not published.
+publish_to: none
+
+executables:
+  zcash_cli:
+
+environment:
+  sdk: '>=3.10.0 <4.0.0'
+
+dependencies:
+  zcash_flutter:
+    path: ../zcash_flutter
+
+dev_dependencies:
+  lints: ^6.0.0
+  test: ^1.27.0
