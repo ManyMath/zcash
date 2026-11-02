@@ -4,9 +4,9 @@ import 'package:code_assets/code_assets.dart';
 import 'package:hooks/hooks.dart';
 import 'package:path/path.dart' as path;
 
-import 'android_build.dart';
-import 'host_build.dart';
-import 'ios_build.dart';
+import 'package:zcash_flutter/src/hook/android_build.dart';
+import 'package:zcash_flutter/src/hook/host_build.dart';
+import 'package:zcash_flutter/src/hook/ios_build.dart';
 
 const _assetName = 'src/ffi/zcash_native_assets.dart';
 const _libraryName = 'zcash_ffi';

@@ -3,7 +3,7 @@ library;
 
 import 'package:test/test.dart';
 
-import '../hook/ios_build.dart';
+import 'package:zcash_flutter/src/hook/ios_build.dart';
 
 void main() {
   test('maps each iOS architecture and SDK to its Rust triple', () {

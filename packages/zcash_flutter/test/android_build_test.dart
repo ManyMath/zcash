@@ -3,7 +3,7 @@ library;
 
 import 'package:test/test.dart';
 
-import '../hook/android_build.dart';
+import 'package:zcash_flutter/src/hook/android_build.dart';
 
 void main() {
   test('maps every Android ABI to its Rust triple and NDK wrapper prefix', () {

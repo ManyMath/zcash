@@ -3,7 +3,7 @@ library;
 
 import 'package:test/test.dart';
 
-import '../hook/host_build.dart';
+import 'package:zcash_flutter/src/hook/host_build.dart';
 
 void main() {
   test('maps every desktop target to its Rust triple', () {
