@@ -11,6 +11,3 @@ flutter test integration_test -d <device> \
 
 Runs on Android and the iOS Simulator. The iOS device build
 (`flutter build ios --no-codesign`) has not been run on a phone.
-
-`pubspec.yaml` overrides `http` and `path` because cargokit's `build_tool`
-pins exact versions; a consumer of `zcash_ffi` needs the same overrides.

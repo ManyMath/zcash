@@ -1,23 +1,20 @@
 import 'dart:io';
 
-import 'package:build_tool/src/artifacts_provider.dart';
-import 'package:build_tool/src/builder.dart';
-import 'package:build_tool/src/cargo.dart';
-import 'package:build_tool/src/crate_hash.dart';
-import 'package:build_tool/src/logging.dart';
-import 'package:build_tool/src/options.dart';
-import 'package:build_tool/src/target.dart';
-import 'package:build_tool/src/util.dart';
 import 'package:code_assets/code_assets.dart';
 import 'package:hooks/hooks.dart';
 import 'package:path/path.dart' as path;
 
 import 'android_build.dart';
+import 'host_build.dart';
 import 'ios_build.dart';
 
 const _assetName = 'src/ffi/zcash_native_assets.dart';
+const _libraryName = 'zcash_ffi';
 
 const zcashFfiManifestDirEnvVar = 'ZCASH_FFI_MANIFEST_DIR';
+
+/// `release` (the default) or `debug`.
+const zcashFfiCargoProfileEnvVar = 'ZCASH_FFI_CARGO_PROFILE';
 
 String resolveZcashFfiManifestDir({
   required String packageRoot,
@@ -62,23 +59,54 @@ String validateZcashFfiManifestDir(String manifestDir) {
   return selectedPath;
 }
 
+/// Whether to pass `--release` to cargo, from [zcashFfiCargoProfileEnvVar].
+bool releaseProfile({Map<String, String>? environment}) {
+  final value =
+      (environment ?? Platform.environment)[zcashFfiCargoProfileEnvVar]
+          ?.trim()
+          .toLowerCase();
+  return switch (value) {
+    null || '' || 'release' => true,
+    'debug' => false,
+    _ => throw StateError(
+      'Invalid $zcashFfiCargoProfileEnvVar "$value": expected release or '
+      'debug.',
+    ),
+  };
+}
+
+/// The crate files a rebuild depends on: everything under the manifest
+/// directory except cargo's `target` output and dot directories.
+List<File> crateFiles(String manifestDir) {
+  final files = <File>[];
+  void walk(Directory directory) {
+    for (final entity in directory.listSync(followLinks: false)) {
+      final name = path.basename(entity.path);
+      if (name.startsWith('.')) continue;
+      if (entity is File) {
+        files.add(entity);
+      } else if (entity is Directory && name != 'target') {
+        walk(entity);
+      }
+    }
+  }
+
+  walk(Directory(manifestDir));
+  files.sort((a, b) => a.path.compareTo(b.path));
+  return files;
+}
+
 void main(List<String> args) async {
   await build(args, (input, output) async {
-    final os = input.config.code.targetOS.toString();
+    final targetOS = input.config.code.targetOS;
     final arch = input.config.code.targetArchitecture.toString();
-    final isAndroid = input.config.code.targetOS == OS.android;
-    final isIOS = input.config.code.targetOS == OS.iOS;
-    final target = isAndroid || isIOS ? null : Target.forCodeAssets(os, arch);
 
     final manifestDir = resolveZcashFfiManifestDir(
       packageRoot: input.packageRoot.toFilePath(),
     );
-    final crateInfo = CrateInfo.load(manifestDir);
-    final fileName = input.config.code.targetOS.dylibFileName(
-      crateInfo.libraryName,
-    );
+    final fileName = targetOS.dylibFileName(_libraryName);
 
-    for (final file in CrateHash.enumerateFiles(manifestDir)) {
+    for (final file in crateFiles(manifestDir)) {
       output.dependencies.add(Uri.file(file.path));
     }
 
@@ -93,104 +121,56 @@ void main(List<String> args) async {
       return;
     }
 
-    final configStr =
-        Platform.environment['CARGOKIT_CONFIGURATION'] ?? 'release';
-    final configuration = BuildEnvironment.parseBuildConfiguration(configStr);
-
-    final verbose = Platform.environment['CARGOKIT_VERBOSE'] == '1';
-    if (verbose) {
-      initLogging();
-      enableVerboseLogging();
-    }
-
-    final userOptions = CargokitUserOptions(
-      usePrecompiledBinaries:
-          CargokitUserOptions.defaultUsePrecompiledBinaries(),
-      verboseLogging: verbose,
-      useLocalPrecompiledBinaries: false,
-      cacheLocalBuilds: false,
-    );
-
+    final release = releaseProfile();
     final targetTempDir = path.join(
       input.outputDirectoryShared.toFilePath(),
       'zcash_ffi_rust_build',
     );
     Directory(targetTempDir).createSync(recursive: true);
 
-    if (isAndroid) {
-      final library = await buildAndroidLibrary(
-        manifestDir: manifestDir,
-        targetDir: targetTempDir,
-        architecture: arch,
-        ndkApi: input.config.code.android.targetNdkApi,
-        cCompiler: input.config.code.cCompiler?.compiler,
-        release: configuration != BuildConfiguration.debug,
-      );
-      output.assets.code.add(
-        CodeAsset(
-          package: input.packageName,
-          name: _assetName,
-          linkMode: DynamicLoadingBundled(),
-          file: Uri.file(library),
-        ),
-      );
-      return;
-    }
-
-    if (isIOS) {
-      final library = await buildIOSLibrary(
-        manifestDir: manifestDir,
-        targetDir: targetTempDir,
-        architecture: arch,
-        simulator: input.config.code.iOS.targetSdk == IOSSdk.iPhoneSimulator,
-        deploymentTarget: input.config.code.iOS.targetVersion,
-        release: configuration != BuildConfiguration.debug,
-      );
-      output.assets.code.add(
-        CodeAsset(
-          package: input.packageName,
-          name: _assetName,
-          linkMode: DynamicLoadingBundled(),
-          file: Uri.file(library),
-        ),
-      );
-      return;
-    }
-
-    final environment = BuildEnvironment.fromBuildInput(
-      configuration: configuration,
-      manifestDir: manifestDir,
-      targetTempDir: targetTempDir,
-    );
-
+    final String library;
     try {
-      final provider = ArtifactProvider(
-        environment: environment,
-        userOptions: userOptions,
-      );
-      final artifactMap = await provider.getArtifacts([target!]);
-      final artifacts = artifactMap[target] ?? [];
-      final dylib = artifacts.firstWhere(
-        (artifact) => artifact.finalFileName == fileName,
-        orElse: () => throw StateError(
-          'Build completed but expected artifact $fileName was not found. '
-          'Found: ${artifacts.map((a) => a.finalFileName).join(", ")}',
-        ),
-      );
-
-      output.assets.code.add(
-        CodeAsset(
-          package: input.packageName,
-          name: _assetName,
-          linkMode: DynamicLoadingBundled(),
-          file: Uri.file(dylib.path),
-        ),
-      );
-    } on RustupNotFoundException {
+      if (targetOS == OS.android) {
+        library = await buildAndroidLibrary(
+          manifestDir: manifestDir,
+          targetDir: targetTempDir,
+          architecture: arch,
+          ndkApi: input.config.code.android.targetNdkApi,
+          cCompiler: input.config.code.cCompiler?.compiler,
+          release: release,
+        );
+      } else if (targetOS == OS.iOS) {
+        library = await buildIOSLibrary(
+          manifestDir: manifestDir,
+          targetDir: targetTempDir,
+          architecture: arch,
+          simulator: input.config.code.iOS.targetSdk == IOSSdk.iPhoneSimulator,
+          deploymentTarget: input.config.code.iOS.targetVersion,
+          release: release,
+        );
+      } else {
+        library = await buildHostLibrary(
+          manifestDir: manifestDir,
+          targetDir: targetTempDir,
+          rustTriple: hostRustTriple(targetOS.toString(), arch),
+          libraryFileName: fileName,
+          release: release,
+        );
+      }
+    } on ProcessException catch (e) {
       throw StateError(
-        'Rust toolchain not found. Install rustup from https://rustup.rs '
-        'and ensure rustup is available on PATH.',
+        'Could not run ${e.executable}: ${e.message}. Install rustup from '
+        'https://rustup.rs and make sure cargo, rustc and rustup are on PATH.',
       );
     }
+
+    output.assets.code.add(
+      CodeAsset(
+        package: input.packageName,
+        name: _assetName,
+        linkMode: DynamicLoadingBundled(),
+        file: Uri.file(library),
+      ),
+    );
   });
 }

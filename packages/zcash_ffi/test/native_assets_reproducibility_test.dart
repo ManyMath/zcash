@@ -8,56 +8,7 @@ import 'package:test/test.dart';
 
 import '../hook/build.dart' as build_hook;
 
-// The ManyMath/cargokit build_tool commit pinned in pubspec.yaml.
-const _pinnedBuildToolCommit = '7aaeefeefc5ac4a87f48f24230cbe59b1419c9f8';
-
 void main() {
-  group('native-assets reproducibility metadata', () {
-    test('marks the package as intentionally non-publishable', () {
-      final pubspec = _readPackageFile('pubspec.yaml');
-
-      expect(
-        pubspec,
-        contains(RegExp(r'^publish_to:\s*none\s*$', multiLine: true)),
-      );
-    });
-
-    test(
-      'pins build_tool to a 40-character git commit that matches the lockfile',
-      () {
-        final pubspec = _readPackageFile('pubspec.yaml');
-        final lockfile = _readPackageFile('pubspec.lock');
-
-        final pubspecRef = RegExp(
-          r'^\s{6}ref:\s*"?([0-9a-f]{40})"?\s*$',
-          multiLine: true,
-        ).firstMatch(pubspec)?.group(1);
-        final lockfileRef = RegExp(
-          r'^\s{6}ref:\s*"?([0-9a-f]{40})"?\s*$',
-          multiLine: true,
-        ).firstMatch(lockfile)?.group(1);
-        final resolvedRef = RegExp(
-          r'^\s{6}resolved-ref:\s*"?([0-9a-f]{40})"?\s*$',
-          multiLine: true,
-        ).firstMatch(lockfile)?.group(1);
-
-        expect(pubspecRef, _pinnedBuildToolCommit);
-        expect(lockfileRef, _pinnedBuildToolCommit);
-        expect(resolvedRef, _pinnedBuildToolCommit);
-      },
-    );
-
-    test('.gitignore does not ignore the tracked lockfile', () {
-      final gitignoreRules = _readPackageFile('.gitignore')
-          .split('\n')
-          .map((line) => line.trim())
-          .where((line) => line.isNotEmpty && !line.startsWith('#'));
-
-      expect(gitignoreRules, isNot(contains('pubspec.lock')));
-      expect(gitignoreRules, isNot(contains('/pubspec.lock')));
-    });
-  });
-
   group('zcash-ffi manifest path contract', () {
     test(
       'uses the default embedded zcash-ffi crate when no override is set',
@@ -102,7 +53,7 @@ void main() {
       expect(relative, path.normalize(crate.path));
     });
 
-    test('rejects empty override values before cargokit runs', () {
+    test('rejects empty override values before cargo runs', () {
       expect(
         () => build_hook.resolveZcashFfiManifestDir(
           packageRoot: _packageDirectory().path,
@@ -112,7 +63,7 @@ void main() {
       );
     });
 
-    test('rejects nonexistent override paths before cargokit runs', () {
+    test('rejects nonexistent override paths before cargo runs', () {
       final packageRoot = _packageDirectory().path;
       final missingPath = path.join(packageRoot, 'does-not-exist');
 
@@ -129,7 +80,7 @@ void main() {
       );
     });
 
-    test('rejects directories missing Cargo.toml before cargokit runs', () {
+    test('rejects directories missing Cargo.toml before cargo runs', () {
       final temp = Directory.systemTemp.createTempSync(
         'zcash_ffi_manifest_test_',
       );
@@ -155,12 +106,6 @@ Matcher _actionableManifestError(Matcher messageMatcher) {
         contains(build_hook.zcashFfiManifestDirEnvVar),
       )
       .having((e) => e.message, 'message', messageMatcher);
-}
-
-String _readPackageFile(String relativePath) {
-  return File(
-    path.join(_packageDirectory().path, relativePath),
-  ).readAsStringSync();
 }
 
 Directory _packageDirectory() {

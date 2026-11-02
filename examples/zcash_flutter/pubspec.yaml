@@ -25,9 +25,3 @@ dev_dependencies:
 flutter:
 
   uses-material-design: true
-
-# cargokit's build_tool pins exact http/path versions, and a package's
-# overrides do not reach its consumers, so each app repeats these.
-dependency_overrides:
-  http: ^1.6.0
-  path: ^1.9.0
