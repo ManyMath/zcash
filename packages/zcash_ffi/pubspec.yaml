@@ -1,8 +1,17 @@
 name: zcash_ffi
-description: Zcash Dart native-assets bindings and CLI helpers backed by zcash-ffi.
+description: >-
+  dart:ffi bindings to the zcash-ffi Rust crate for key derivation,
+  compact-block scanning, transaction building and lightwalletd sync, with
+  the zcash_tool CLI.
 version: 0.0.8
-repository: https://git.manymath.com/sneurlax/zcash
-publish_to: none
+repository: https://github.com/ManyMath/zcash/tree/main/packages/zcash_ffi
+issue_tracker: https://github.com/ManyMath/zcash/issues
+topics:
+  - zcash
+  - cryptocurrency
+  - wallet
+  - ffi
+  - native-assets
 
 executables:
   zcash_tool:
@@ -11,8 +20,7 @@ environment:
   sdk: '>=3.10.0 <4.0.0'
 
 dependencies:
-  zcash:
-    path: ../zcash
+  zcash: ^0.0.8
   ffi: ^2.1.0
   hooks: ^1.0.2
   code_assets: ^1.0.0

@@ -25,3 +25,9 @@ dev_dependencies:
 flutter:
 
   uses-material-design: true
+
+# zcash_ffi depends on the hosted zcash package; point it at the checkout so
+# the example builds against the same tree.
+dependency_overrides:
+  zcash:
+    path: ../../packages/zcash

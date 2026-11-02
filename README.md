@@ -21,6 +21,7 @@ cargo test --release                 # default features
 cargo test --release --all-features
 cargo clippy --all-targets --all-features
 ```
+
 ## Live suites
 
 The suites in `packages/zcash_ffi/test/integration` skip unless enabled. They

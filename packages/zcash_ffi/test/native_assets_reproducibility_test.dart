@@ -9,6 +9,40 @@ import 'package:test/test.dart';
 import '../hook/build.dart' as build_hook;
 
 void main() {
+  group('pub.dev publishability', () {
+    test('does not opt out of publishing', () {
+      final pubspec = _readPackageFile('pubspec.yaml');
+
+      expect(
+        pubspec,
+        isNot(contains(RegExp(r'^publish_to:', multiLine: true))),
+      );
+    });
+
+    test('depends only on hosted packages', () {
+      final pubspec = _readPackageFile('pubspec.yaml');
+
+      expect(pubspec, isNot(contains(RegExp(r'^\s+git:', multiLine: true))));
+      expect(
+        pubspec,
+        isNot(contains(RegExp(r'^\s+path:\s*(\.{0,2}/|$)', multiLine: true))),
+      );
+      expect(
+        pubspec,
+        isNot(contains(RegExp(r'^dependency_overrides:', multiLine: true))),
+      );
+    });
+
+    test('does not ignore the crate the hook builds', () {
+      final gitignoreRules = _readPackageFile('.gitignore')
+          .split('\n')
+          .map((line) => line.trim())
+          .where((line) => line.isNotEmpty && !line.startsWith('#'));
+
+      expect(gitignoreRules, isNot(contains(startsWith('native'))));
+    });
+  });
+
   group('zcash-ffi manifest path contract', () {
     test(
       'uses the default embedded zcash-ffi crate when no override is set',
@@ -106,6 +140,12 @@ Matcher _actionableManifestError(Matcher messageMatcher) {
         contains(build_hook.zcashFfiManifestDirEnvVar),
       )
       .having((e) => e.message, 'message', messageMatcher);
+}
+
+String _readPackageFile(String relativePath) {
+  return File(
+    path.join(_packageDirectory().path, relativePath),
+  ).readAsStringSync();
 }
 
 Directory _packageDirectory() {

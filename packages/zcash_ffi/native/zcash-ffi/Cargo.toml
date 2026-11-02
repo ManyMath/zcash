@@ -4,7 +4,7 @@ version = "0.0.2"
 edition = "2021"
 rust-version = "1.89"
 description = "Zcash FFI utilities for use by Dart."
-repository = "https://git.manymath.com/sneurlax/zcash"
+repository = "https://github.com/ManyMath/zcash"
 license = "MIT"
 
 [lib]

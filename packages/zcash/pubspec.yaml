@@ -1,7 +1,16 @@
 name: zcash
-description: Pure Dart Zcash models, clients, and utilities.
+description: >-
+  Pure Dart Zcash models and node clients for Zebra and zcashd JSON-RPC and
+  lightwalletd gRPC, plus the wallet value objects shared with zcash_ffi.
 version: 0.0.8
-repository: https://git.manymath.com/sneurlax/zcash
+repository: https://github.com/ManyMath/zcash/tree/main/packages/zcash
+issue_tracker: https://github.com/ManyMath/zcash/issues
+topics:
+  - zcash
+  - cryptocurrency
+  - wallet
+  - lightwalletd
+  - json-rpc
 
 environment:
   sdk: '>=3.10.0 <4.0.0'
