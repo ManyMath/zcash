@@ -1,8 +1,10 @@
-## Unreleased
+## 0.0.3
 
-- Depend on `hooks: ^2.2.0` and `code_assets: ^2.0.0` so an app can use this
-  package together with `tract_flutter`, which needs `hooks` 2. The build
-  hook needed no source changes.
+- Moved the build hook dependencies to `hooks: ^2.2.0` and
+  `code_assets: ^2.0.0` (from `^1.0.2` and `^1.0.0`). An app can now depend on
+  this package together with `tract_flutter`, whose `tract` dependency needs
+  `hooks` 2; with 0.0.2 pub could not resolve the two together. The build hook
+  in `hook/build.dart` needed no source change.
 
 ## 0.0.2
 
