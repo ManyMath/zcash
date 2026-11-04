@@ -1,3 +1,9 @@
+## Unreleased
+
+- Depend on `hooks: ^2.2.0` and `code_assets: ^2.0.0` so an app can use this
+  package together with `tract_flutter`, which needs `hooks` 2. The build
+  hook needed no source changes.
+
 ## 0.0.2
 
 - Removed the `zcash_tool` executable. It continues as the unpublished
