@@ -35,13 +35,13 @@ void main() {
       expect(p.label, 'Donation');
     });
 
-    test('multi-payment indexes 0 and 1', () {
+    test('multi-payment uses an empty index and index 1', () {
       const addr0 =
           'zs1zqa7llmm3m3l8wglp7c2zjuygymhqe76a88nvjhpqfpjhef0jcnzrpxq';
       const addr1 =
           'zs1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqsqkztjk';
       final req = parseZcashUri(
-        'zcash:?address.0=$addr0&amount.0=1.0&address.1=$addr1&amount.1=0.5',
+        'zcash:?address=$addr0&amount=1.0&address.1=$addr1&amount.1=0.5',
       );
       expect(req, isNotNull);
       expect(req!.payments, hasLength(2));
@@ -63,7 +63,7 @@ void main() {
     test('scheme is case-insensitive', () {
       const addr =
           'zs1zqa7llmm3m3l8wglp7c2zjuygymhqe76a88nvjhpqfpjhef0jcnzrpxq';
-      final req = parseZcashUri('zcash:$addr');
+      final req = parseZcashUri('ZCaSh:$addr');
       expect(req, isNotNull);
     });
 
@@ -79,13 +79,65 @@ void main() {
     });
 
     test('missing address for index returns null', () {
-      expect(parseZcashUri('zcash:?amount.0=1.0'), isNull);
+      expect(parseZcashUri('zcash:?amount.2=1.0'), isNull);
     });
 
     test('duplicate address param returns null', () {
       const addr =
           'zs1zqa7llmm3m3l8wglp7c2zjuygymhqe76a88nvjhpqfpjhef0jcnzrpxq';
-      expect(parseZcashUri('zcash:$addr?address.0=otheraddr'), isNull);
+      expect(parseZcashUri('zcash:$addr?address=otheraddr'), isNull);
+    });
+
+    test('duplicate raw query keys are rejected before URI map collapse', () {
+      const addr =
+          'zs1zqa7llmm3m3l8wglp7c2zjuygymhqe76a88nvjhpqfpjhef0jcnzrpxq';
+      expect(parseZcashUri('zcash:$addr?amount=1&amount=2'), isNull);
+      expect(parseZcashUri('zcash:$addr?amount=1&%61mount=2'), isNull);
+    });
+
+    test('unknown required parameters are rejected', () {
+      const addr =
+          'zs1zqa7llmm3m3l8wglp7c2zjuygymhqe76a88nvjhpqfpjhef0jcnzrpxq';
+      expect(parseZcashUri('zcash:$addr?req-future=1'), isNull);
+    });
+
+    test('payment indexes are canonical nonzero values and may be sparse', () {
+      const addr =
+          'zs1zqa7llmm3m3l8wglp7c2zjuygymhqe76a88nvjhpqfpjhef0jcnzrpxq';
+      final sparse = parseZcashUri(
+        'zcash:?address=$addr&address.2=$addr&message.2=Second',
+      );
+      expect(sparse, isNotNull);
+      expect(sparse!.payments, hasLength(2));
+      expect(sparse.payments[1].message, 'Second');
+      expect(parseZcashUri('zcash:?address.0=$addr'), isNull);
+      expect(parseZcashUri('zcash:?address.00=$addr'), isNull);
+      expect(parseZcashUri('zcash:?address.0001=$addr'), isNull);
+      expect(parseZcashUri('zcash:?address.10000=$addr'), isNull);
+    });
+
+    test('percent encoding is limited to qchar parameter values', () {
+      const addr =
+          'zs1zqa7llmm3m3l8wglp7c2zjuygymhqe76a88nvjhpqfpjhef0jcnzrpxq';
+      expect(parseZcashUri('zcash:$addr?%61mount=1'), isNull);
+      expect(parseZcashUri('zcash:%7A${addr.substring(1)}?amount=1'), isNull);
+      expect(parseZcashUri('zcash:$addr?amount=1%2E5'), isNull);
+      expect(parseZcashUri('zcash:$addr?memo=AQ%49D'), isNull);
+
+      final request = parseZcashUri(
+        'zcash:$addr?label=A%20label&message=two+words&note=a%3Db',
+      );
+      expect(request, isNotNull);
+      expect(request!.payments.single.label, 'A label');
+      expect(request.payments.single.message, 'two+words');
+      expect(request.payments.single.other['note'], 'a=b');
+    });
+
+    test('a transparent payment cannot carry a memo', () {
+      expect(
+        parseZcashUri('zcash:t1Rv3KSTF8D7hDMMZfcE87ZYZMQ2Np2mfUE?memo=AQID'),
+        isNull,
+      );
     });
 
     test('memo > 512 bytes returns null', () {
@@ -104,6 +156,14 @@ void main() {
       final req = parseZcashUri('zcash:$addr?memo=$encoded');
       expect(req, isNotNull);
       expect(req!.payments.first.memo!.length, 512);
+    });
+
+    test('memo requires unpadded base64url without standard alphabet', () {
+      const addr =
+          'zs1zqa7llmm3m3l8wglp7c2zjuygymhqe76a88nvjhpqfpjhef0jcnzrpxq';
+      expect(parseZcashUri('zcash:$addr?memo=AQID='), isNull);
+      expect(parseZcashUri('zcash:$addr?memo=AQ+I'), isNull);
+      expect(parseZcashUri('zcash:$addr?memo=AQ/I'), isNull);
     });
 
     test('amount with 8 decimal places parses correctly', () {
@@ -156,23 +216,31 @@ void main() {
       expect(p.label, 'Test payment');
     });
 
-    test('round-trip: multi-payment indexes 0 and 1', () {
+    test('round-trip: per-payment binary memos, labels, and messages', () {
       final req = ZcashPaymentRequest(
         payments: [
           ZcashPaymentTarget(
             address:
                 'zs1zqa7llmm3m3l8wglp7c2zjuygymhqe76a88nvjhpqfpjhef0jcnzrpxq',
             amountZatoshis: BigInt.from(100000000),
+            memo: Uint8List.fromList([0, 255, 1]),
+            label: 'First',
+            message: 'First payment',
           ),
           ZcashPaymentTarget(
             address:
                 'zs1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqsqkztjk',
             amountZatoshis: BigInt.from(50000000),
+            memo: Uint8List.fromList([2, 0, 254]),
+            label: 'Second',
             message: 'Split payment',
           ),
         ],
       );
       final uri = formatZcashUri(req);
+      expect(uri, contains('address='));
+      expect(uri, isNot(contains('address.0=')));
+      expect(uri, contains('address.1='));
       final parsed = parseZcashUri(uri)!;
       expect(parsed.payments, hasLength(2));
       for (var i = 0; i < 2; i++) {
@@ -181,21 +249,37 @@ void main() {
           parsed.payments[i].amountZatoshis,
           req.payments[i].amountZatoshis,
         );
+        expect(parsed.payments[i].memo, orderedEquals(req.payments[i].memo!));
+        expect(parsed.payments[i].label, req.payments[i].label);
+        expect(parsed.payments[i].message, req.payments[i].message);
       }
-      expect(parsed.payments[1].message, 'Split payment');
     });
 
-    test('round-trip: other params preserved', () {
+    test('round-trip: optional other params preserved', () {
       const addr =
           'zs1zqa7llmm3m3l8wglp7c2zjuygymhqe76a88nvjhpqfpjhef0jcnzrpxq';
       final req = ZcashPaymentRequest(
         payments: [
-          ZcashPaymentTarget(address: addr, other: {'req-foo': 'bar'}),
+          ZcashPaymentTarget(address: addr, other: {'foo': 'bar'}),
         ],
       );
       final uri = formatZcashUri(req);
       final p = parseZcashUri(uri)!.payments.first;
-      expect(p.other['req-foo'], 'bar');
+      expect(p.other['foo'], 'bar');
+    });
+
+    test('format rejects unknown required other params', () {
+      final request = ZcashPaymentRequest(
+        payments: [
+          ZcashPaymentTarget(
+            address:
+                'zs1zqa7llmm3m3l8wglp7c2zjuygymhqe76a88nvjhpqfpjhef0jcnzrpxq',
+            other: {'req-future': 'value'},
+          ),
+        ],
+      );
+
+      expect(() => formatZcashUri(request), throwsArgumentError);
     });
 
     test('throws for transparent address with memo', () {
