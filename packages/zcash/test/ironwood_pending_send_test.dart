@@ -74,7 +74,205 @@ IronwoodPreparedSend _prepared(IronwoodSendPlan plan) => IronwoodPreparedSend(
   ),
 );
 
+ProposalOutput _paymentOutput(IronwoodDestinationPool destination) {
+  final isSapling = destination == IronwoodDestinationPool.sapling;
+  if (!isSapling && destination != IronwoodDestinationPool.transparent) {
+    throw ArgumentError.value(destination, 'destination');
+  }
+  final receiver = isSapling
+      ? ZcashAddressReceiverType.sapling
+      : ZcashAddressReceiverType.p2pkh;
+  return resolveProposalOutput(
+    recipient: ProposalRecipient(
+      address: isSapling
+          ? 'zregtestExactSaplingReceiver'
+          : 'tmExactTransparentReceiver',
+      amountZatoshis: 50000,
+      pool: isSapling
+          ? ProposalOutputPool.sapling
+          : ProposalOutputPool.transparent,
+    ),
+    address: ZcashAddressMetadata(
+      network: ZcashAddressNetwork.regtest,
+      receiverType: receiver,
+      pool: isSapling ? ZcashAddressPool.sapling : ZcashAddressPool.transparent,
+      receivers: ZcashAddressReceiverPresence(
+        sprout: false,
+        orchard: false,
+        sapling: isSapling,
+        transparent: !isSapling,
+        transparentKind: isSapling ? null : 'p2pkh',
+        unknown: 0,
+        total: 1,
+      ),
+    ),
+    network: ZcashAddressNetwork.regtest,
+    targetHeight: 300,
+    transactionExpiryHeight: 340,
+    currentUnixTime: 1000,
+  );
+}
+
+IronwoodPreparedPayment _preparedPayment(
+  IronwoodDestinationPool destination, {
+  String txid = _txid,
+}) {
+  final output = _paymentOutput(destination);
+  final plan = IronwoodPaymentPlan.fromScan(
+    scan: _scan([_note('a1' * 32, 100000)]),
+    output: output,
+    targetHeight: 300,
+    expiryHeight: 340,
+    feeForSpends: _fee,
+  );
+  final isSapling = destination == IronwoodDestinationPool.sapling;
+  return IronwoodPreparedPayment(
+    plan: plan,
+    transaction: IronwoodBuildResult(
+      network: ZcashAddressNetwork.regtest,
+      transactionHex: 'ee' * 20,
+      txid: txid,
+      version: 'v6',
+      expiryHeight: 340,
+      feeZatoshis: plan.feeZatoshis,
+      feeRule: 'zip317',
+      proofValidity: 'real',
+      ironwoodAnchor: plan.anchorHex,
+      ironwoodAnchorSource: 'anchor',
+      vin: 0,
+      vout: isSapling ? 0 : 1,
+      saplingOutputs: isSapling ? 2 : 0,
+      ironwoodActions: 1,
+      ironwoodSpends: plan.notes.length,
+      totalInputZatoshis: plan.inputZatoshis,
+      ironwoodInputZatoshis: plan.inputZatoshis,
+      nonIronwoodOutputZatoshis: plan.amountZatoshis,
+      ironwoodOutputZatoshis: plan.changeZatoshis,
+      rng: 'system',
+    ),
+  );
+}
+
 void main() {
+  for (final destination in const [
+    IronwoodDestinationPool.transparent,
+    IronwoodDestinationPool.sapling,
+  ]) {
+    test(
+      '${destination.name} payment remains exact and reserved across restart',
+      () {
+        final payment = _preparedPayment(destination);
+        final pending = IronwoodPendingSendState()
+          ..addPreparedPayment(payment, createdHeight: 299);
+
+        final restored = IronwoodPendingSendState.fromJson(
+          (jsonDecode(jsonEncode(pending.toJson())) as Map)
+              .cast<String, Object?>(),
+        );
+        final record = restored.records.single;
+        expect(record.actualDestinationPool, destination);
+        expect(record.recipient, payment.plan.output.encodedAddress);
+        expect(record.sourcePool, ShieldedPendingSourcePool.ironwood);
+        expect(record.selectedNullifiers, payment.plan.spentNullifiers);
+        expect(restored.reservedNullifiersAt(300), {'a1' * 32});
+        expect(
+          restored.requireBroadcastablePayment(payment, chainHeight: 300),
+          same(record),
+        );
+      },
+    );
+  }
+
+  test(
+    'a rejected transparent payment releases its exact reservation',
+    () async {
+      final payment = _preparedPayment(IronwoodDestinationPool.transparent);
+      final pending = IronwoodPendingSendState()
+        ..addPreparedPayment(payment, createdHeight: 299);
+
+      await expectLater(
+        broadcastIronwoodPayment(
+          payment: payment,
+          pendingSends: pending,
+          chainHeight: 300,
+          isRejection: (_) => true,
+          submit: (_) async => throw StateError('mempool rejection'),
+        ),
+        throwsA(
+          isA<IronwoodBroadcastException>().having(
+            (error) => error.refusal,
+            'refusal',
+            IronwoodBroadcastRefusal.rejected,
+          ),
+        ),
+      );
+
+      expect(pending.records, isEmpty);
+      expect(pending.reservedNullifiersAt(300), isEmpty);
+    },
+  );
+
+  test(
+    'an indeterminate Sapling payment remains reserved after restart',
+    () async {
+      final payment = _preparedPayment(IronwoodDestinationPool.sapling);
+      final pending = IronwoodPendingSendState()
+        ..addPreparedPayment(payment, createdHeight: 299);
+
+      await expectLater(
+        broadcastIronwoodPayment(
+          payment: payment,
+          pendingSends: pending,
+          chainHeight: 300,
+          submit: (_) async => throw StateError('connection reset'),
+        ),
+        throwsA(
+          isA<IronwoodBroadcastException>().having(
+            (error) => error.refusal,
+            'refusal',
+            IronwoodBroadcastRefusal.undetermined,
+          ),
+        ),
+      );
+
+      final restored = IronwoodPendingSendState.fromJson(pending.toJson());
+      expect(
+        restored.records.single.broadcastState,
+        IronwoodPendingBroadcastState.indeterminate,
+      );
+      expect(restored.reservedNullifiersAt(300), {'a1' * 32});
+    },
+  );
+
+  test(
+    'an acknowledged transparent payment returns the exact receipt',
+    () async {
+      final payment = _preparedPayment(IronwoodDestinationPool.transparent);
+      final pending = IronwoodPendingSendState()
+        ..addPreparedPayment(payment, createdHeight: 299);
+
+      final receipt = await broadcastIronwoodPayment(
+        payment: payment,
+        pendingSends: pending,
+        chainHeight: 300,
+        submit: (transactionHex) async {
+          expect(transactionHex, payment.transactionHex);
+          return payment.txid;
+        },
+      );
+
+      expect(receipt.plan, same(payment.plan));
+      expect(receipt.txid, payment.txid);
+      expect(receipt.expiryHeight, payment.expiryHeight);
+      expect(receipt.broadcastAtHeight, 300);
+      expect(receipt.committedNullifiers, payment.plan.spentNullifiers);
+      expect(
+        pending.records.single.broadcastState,
+        IronwoodPendingBroadcastState.acknowledged,
+      );
+    },
+  );
+
   test('restart before confirmation keeps every selected note reserved', () {
     final notes = [_note('a1' * 32, 100000), _note('a2' * 32, 900000)];
     final scan = _scan(notes);

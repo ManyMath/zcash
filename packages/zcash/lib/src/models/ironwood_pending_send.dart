@@ -111,11 +111,12 @@ class IronwoodPendingSendRecord {
         ? ShieldedPendingSourcePool.ironwood
         : _sourcePool(json['source_pool']);
     final broadcast = _broadcastState(json['broadcast_state']);
-    if (destination != IronwoodDestinationPool.ironwood) {
+    if (destination == IronwoodDestinationPool.orchard ||
+        documentVersion == 1 &&
+            destination != IronwoodDestinationPool.ironwood) {
       throw const IronwoodPendingSendException(
         IronwoodPendingSendRefusal.malformed,
-        'this first pending-send record version only accepts an actual '
-        'Ironwood destination',
+        'the pending-send destination is not valid for this record version',
       );
     }
     _validate(
@@ -243,6 +244,60 @@ class IronwoodPendingSendState
     );
   }
 
+  /// Durably reserves an Ironwood-funded payment routed to any ordinary
+  /// post-NU6.3 output pool. Orchard is deliberately absent: it is closed to
+  /// ordinary sends and only ZIP 318's separately-shaped migration may spend
+  /// Orchard into Ironwood.
+  void addPreparedPayment(
+    IronwoodPreparedPayment payment, {
+    required int createdHeight,
+  }) {
+    final destination = _paymentDestination(
+      payment.plan.output.actualOutputPool,
+    );
+    if (_records.any(
+      (record) => record.txid.toLowerCase() == payment.txid.toLowerCase(),
+    )) {
+      throw const IronwoodPendingSendException(
+        IronwoodPendingSendRefusal.duplicateTransaction,
+        'this Ironwood payment is already in pending-send state',
+      );
+    }
+    final nullifiers = payment.plan.spentNullifiers;
+    final alreadyReserved = reservedNullifiersAt(createdHeight);
+    if (nullifiers.any(alreadyReserved.contains)) {
+      throw const IronwoodPendingSendException(
+        IronwoodPendingSendRefusal.notesAlreadyReserved,
+        'an Ironwood note selected by this payment is already reserved',
+      );
+    }
+    _validate(
+      transactionHex: payment.transactionHex,
+      txid: payment.txid,
+      nullifiers: nullifiers,
+      recipient: payment.plan.output.encodedAddress,
+      amount: payment.plan.amountZatoshis,
+      fee: payment.plan.feeZatoshis,
+      expiry: payment.expiryHeight,
+      created: createdHeight,
+    );
+    _records.add(
+      IronwoodPendingSendRecord._(
+        transactionHex: payment.transactionHex,
+        txid: payment.txid,
+        selectedNullifiers: nullifiers,
+        sourcePool: ShieldedPendingSourcePool.ironwood,
+        recipient: payment.plan.output.encodedAddress,
+        actualDestinationPool: destination,
+        amountZatoshis: payment.plan.amountZatoshis,
+        feeZatoshis: payment.plan.feeZatoshis,
+        expiryHeight: payment.expiryHeight,
+        createdHeight: createdHeight,
+        broadcastState: IronwoodPendingBroadcastState.prepared,
+      ),
+    );
+  }
+
   void addPreparedSaplingPayment(
     SaplingPreparedPayment payment, {
     required int createdHeight,
@@ -319,6 +374,17 @@ class IronwoodPendingSendState
       chainHeight: chainHeight,
     );
   }
+
+  IronwoodPendingSendRecord requireBroadcastablePayment(
+    IronwoodPreparedPayment payment, {
+    int? chainHeight,
+  }) => _requireBroadcastable(
+    txid: payment.txid,
+    transactionHex: payment.transactionHex,
+    nullifiers: payment.plan.spentNullifiers,
+    sourcePool: ShieldedPendingSourcePool.ironwood,
+    chainHeight: chainHeight,
+  );
 
   IronwoodPendingSendRecord _requireBroadcastable({
     required String txid,
@@ -553,10 +619,10 @@ class IronwoodPendingSendState
       final record = IronwoodPendingSendRecord.fromJson(
         entry.cast<String, Object?>(),
       );
-      if (record.actualDestinationPool != IronwoodDestinationPool.ironwood) {
+      if (record.actualDestinationPool == IronwoodDestinationPool.orchard) {
         throw const IronwoodPendingSendException(
           IronwoodPendingSendRefusal.malformed,
-          'this pending-send state contains a non-Ironwood destination',
+          'ordinary pending-send state cannot contain an Orchard destination',
         );
       }
       if (state._records.any(
@@ -685,6 +751,17 @@ IronwoodDestinationPool _destination(Object? value) {
     'unknown Ironwood pending-send destination pool',
   );
 }
+
+IronwoodDestinationPool _paymentDestination(ProposalOutputPool pool) =>
+    switch (pool) {
+      ProposalOutputPool.transparent => IronwoodDestinationPool.transparent,
+      ProposalOutputPool.sapling => IronwoodDestinationPool.sapling,
+      ProposalOutputPool.ironwood => IronwoodDestinationPool.ironwood,
+      ProposalOutputPool.orchard => throw const IronwoodPendingSendException(
+        IronwoodPendingSendRefusal.malformed,
+        'ordinary post-NU6.3 payments cannot create Orchard outputs',
+      ),
+    };
 
 ShieldedPendingSourcePool _sourcePool(Object? value) {
   for (final candidate in ShieldedPendingSourcePool.values) {

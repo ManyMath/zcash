@@ -57,6 +57,37 @@ class IronwoodBroadcastReceipt {
   bool isConfirmedBy(ZcashScanResult scan) => confirmationIn(scan) != null;
 }
 
+class IronwoodPaymentBroadcastReceipt {
+  const IronwoodPaymentBroadcastReceipt({
+    required this.plan,
+    required this.txid,
+    required this.expiryHeight,
+    this.broadcastAtHeight,
+  });
+
+  final IronwoodPaymentPlan plan;
+  final String txid;
+  final int expiryHeight;
+  final int? broadcastAtHeight;
+
+  String get scanTxId => reverseTxidByteOrder(txid);
+  Set<String> get committedNullifiers => plan.spentNullifiers;
+  bool hasExpiredAt(int chainHeight) => chainHeight >= expiryHeight;
+
+  ZcashObservedSpend? confirmationIn(ZcashScanResult scan) {
+    for (final spend in scan.spends) {
+      if (spend.pool == 'ironwood' &&
+          spend.tx.toLowerCase() == scanTxId.toLowerCase() &&
+          committedNullifiers.contains(spend.nullifier)) {
+        return spend;
+      }
+    }
+    return null;
+  }
+
+  bool isConfirmedBy(ZcashScanResult scan) => confirmationIn(scan) != null;
+}
+
 /// ZIP 318 migration transfers are limited by [Zip318BroadcastSession].
 Future<IronwoodBroadcastReceipt> broadcastIronwoodSend({
   required IronwoodPreparedSend send,
@@ -66,24 +97,77 @@ Future<IronwoodBroadcastReceipt> broadcastIronwoodSend({
   bool Function(Object error)? isRejection,
 }) async {
   pendingSends?.requireBroadcastable(send, chainHeight: chainHeight);
-  if (chainHeight != null && chainHeight >= send.expiryHeight) {
+  await _submitIronwoodArtifact(
+    txid: send.txid,
+    transactionHex: send.transactionHex,
+    expiryHeight: send.expiryHeight,
+    submit: submit,
+    chainHeight: chainHeight,
+    pendingSends: pendingSends,
+    isRejection: isRejection,
+  );
+
+  return IronwoodBroadcastReceipt(
+    plan: send.plan,
+    txid: send.txid,
+    expiryHeight: send.expiryHeight,
+    broadcastAtHeight: chainHeight,
+  );
+}
+
+Future<IronwoodPaymentBroadcastReceipt> broadcastIronwoodPayment({
+  required IronwoodPreparedPayment payment,
+  required Future<String> Function(String transactionHex) submit,
+  int? chainHeight,
+  IronwoodPendingSendState? pendingSends,
+  bool Function(Object error)? isRejection,
+}) async {
+  pendingSends?.requireBroadcastablePayment(payment, chainHeight: chainHeight);
+  await _submitIronwoodArtifact(
+    txid: payment.txid,
+    transactionHex: payment.transactionHex,
+    expiryHeight: payment.expiryHeight,
+    submit: submit,
+    chainHeight: chainHeight,
+    pendingSends: pendingSends,
+    isRejection: isRejection,
+  );
+
+  return IronwoodPaymentBroadcastReceipt(
+    plan: payment.plan,
+    txid: payment.txid,
+    expiryHeight: payment.expiryHeight,
+    broadcastAtHeight: chainHeight,
+  );
+}
+
+Future<void> _submitIronwoodArtifact({
+  required String txid,
+  required String transactionHex,
+  required int expiryHeight,
+  required Future<String> Function(String transactionHex) submit,
+  required int? chainHeight,
+  required IronwoodPendingSendState? pendingSends,
+  required bool Function(Object error)? isRejection,
+}) async {
+  if (chainHeight != null && chainHeight >= expiryHeight) {
     throw IronwoodBroadcastException(
       IronwoodBroadcastRefusal.expired,
       'this payment can last be mined in a block at height '
-      '${send.expiryHeight} and the chain is already at $chainHeight, so the '
+      '$expiryHeight and the chain is already at $chainHeight, so the '
       'next block is past it and no block that could contain it will ever be '
       'produced. '
       'Plan it again against the current tip; its notes are free',
     );
   }
-  pendingSends?.markSubmitting(send.txid);
+  pendingSends?.markSubmitting(txid);
 
   final String acknowledged;
   try {
-    acknowledged = await submit(send.transactionHex);
+    acknowledged = await submit(transactionHex);
   } catch (error) {
     if (isRejection != null && isRejection(error)) {
-      pendingSends?.releaseRejected(send.txid);
+      pendingSends?.releaseRejected(txid);
       throw IronwoodBroadcastException(
         IronwoodBroadcastRefusal.rejected,
         'the node rejected this payment. It reached no mempool, so its '
@@ -91,20 +175,20 @@ Future<IronwoodBroadcastReceipt> broadcastIronwoodSend({
         cause: error,
       );
     }
-    pendingSends?.markIndeterminate(send.txid);
+    pendingSends?.markIndeterminate(txid);
     throw IronwoodBroadcastException(
       IronwoodBroadcastRefusal.undetermined,
       'the payment may or may not have been broadcast. Keep its notes '
       'committed until a scan sees them spent or the chain passes height '
-      '${send.expiryHeight} — re-selecting them now risks publishing a second '
+      '$expiryHeight — re-selecting them now risks publishing a second '
       'transaction over the same nullifiers',
       cause: error,
     );
   }
 
   if (acknowledged.isNotEmpty &&
-      acknowledged.toLowerCase() != send.txid.toLowerCase()) {
-    pendingSends?.markIndeterminate(send.txid);
+      acknowledged.toLowerCase() != txid.toLowerCase()) {
+    pendingSends?.markIndeterminate(txid);
     throw IronwoodBroadcastException(
       IronwoodBroadcastRefusal.txidMismatch,
       'the node acknowledged a different transaction id. A transaction id is '
@@ -114,12 +198,5 @@ Future<IronwoodBroadcastReceipt> broadcastIronwoodSend({
       cause: acknowledged,
     );
   }
-  pendingSends?.markAcknowledged(send.txid);
-
-  return IronwoodBroadcastReceipt(
-    plan: send.plan,
-    txid: send.txid,
-    expiryHeight: send.expiryHeight,
-    broadcastAtHeight: chainHeight,
-  );
+  pendingSends?.markAcknowledged(txid);
 }
