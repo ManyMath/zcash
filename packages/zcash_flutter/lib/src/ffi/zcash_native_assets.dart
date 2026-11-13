@@ -73,6 +73,17 @@ external Pointer<Utf8> _zcashFfiSeedToTransparentXpub(
   int accountIndex,
 );
 
+@Native<
+  Pointer<Utf8> Function(Pointer<Utf8>, Pointer<Utf8>, Uint32, Uint32, Uint32)
+>(symbol: 'zcash_ffi_seed_to_transparent_spending_key')
+external Pointer<Utf8> _zcashFfiSeedToTransparentSpendingKey(
+  Pointer<Utf8> seedHex,
+  Pointer<Utf8> network,
+  int accountIndex,
+  int childIndex,
+  int scope,
+);
+
 @Native<Pointer<Utf8> Function(Pointer<Utf8>, Pointer<Utf8>, Uint32)>(
   symbol: 'zcash_ffi_ufvk_to_address',
 )
@@ -291,6 +302,37 @@ String zcashNativeSeedToTransparentXpub({
     context: 'seed_to_transparent_xpub',
     redactSensitive: [seedHex],
   );
+}
+
+Map<String, Object?> zcashNativeSeedToTransparentSpendingKey({
+  required String seedHex,
+  required String network,
+  int accountIndex = 0,
+  int childIndex = 0,
+  int scope = 0,
+}) {
+  _checkUint32Index(accountIndex, 'accountIndex');
+  _checkUint32Index(childIndex, 'childIndex');
+  final seedPtr = seedHex.toNativeUtf8();
+  final networkPtr = network.toNativeUtf8();
+  try {
+    return parseNativeJsonObject(
+      _takeString(
+        _zcashFfiSeedToTransparentSpendingKey(
+          seedPtr,
+          networkPtr,
+          accountIndex,
+          childIndex,
+          scope,
+        ),
+      ),
+      context: 'seed_to_transparent_spending_key',
+      redactSensitive: [seedHex],
+    );
+  } finally {
+    calloc.free(seedPtr);
+    calloc.free(networkPtr);
+  }
 }
 
 ZcashNativeAddressSet zcashNativeUfvkToAddress({

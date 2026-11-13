@@ -56,6 +56,34 @@ void main() {
       expect(metadata.ufvk, startsWith('uview1'));
     });
 
+    test('derives a viewing-key child through the packaged code asset', () {
+      final bindings = ZcashFfiBindings.resolve(const {});
+      final viewingKeys = deriveNativeViewingKeys(
+        seedHex: '00' * 32,
+        network: ZcashNetwork.mainnet,
+        bindings: bindings,
+      );
+      final address = deriveNativeTransparentAddressFromViewingKey(
+        viewingKeyHex: viewingKeys.transparent.internalIvk!,
+        network: ZcashNetwork.mainnet,
+        childIndex: 7,
+        scope: ZcashTransparentKeyScope.internal,
+        bindings: bindings,
+      );
+      final spendingKey = deriveNativeTransparentSpendingKey(
+        seedHex: '00' * 32,
+        network: ZcashNetwork.mainnet,
+        childIndex: 7,
+        scope: ZcashTransparentKeyScope.internal,
+        bindings: bindings,
+      );
+      try {
+        expect(address, spendingKey.address);
+      } finally {
+        spendingKey.destroy();
+      }
+    });
+
     test('prefers ZCASH_FFI_LIB over the code asset', () {
       expect(
         () => ZcashFfiBindings.resolve(const {

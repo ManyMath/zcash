@@ -42,6 +42,87 @@ void main() {
         expect(set.transparentAddress, equals(_expectedMainnetTAddr));
       });
 
+      test(
+        'deriveNativeTransparentSpendingKey binds the secret to its address',
+        () {
+          final key = deriveNativeTransparentSpendingKey(
+            seedHex: _seed,
+            network: ZcashNetwork.mainnet,
+          );
+
+          expect(key.address, _expectedMainnetTAddr);
+          expect(key.secretKeyHex, hasLength(64));
+          expect(key.accountIndex, 0);
+          expect(key.childIndex, 0);
+          expect(key.scope, ZcashTransparentKeyScope.external);
+          expect(key.toString(), isNot(contains(key.secretKeyHex)));
+
+          final next = deriveNativeTransparentSpendingKey(
+            seedHex: _seed,
+            network: ZcashNetwork.mainnet,
+            childIndex: 1,
+          );
+          expect(next.address, isNot(key.address));
+          expect(next.secretKeyHex, isNot(key.secretKeyHex));
+        },
+      );
+
+      test(
+        'transparent viewing keys derive public external and internal children',
+        () {
+          final viewing = deriveNativeViewingKeys(
+            seedHex: _seed,
+            network: ZcashNetwork.mainnet,
+          ).transparent;
+
+          for (final scope in ZcashTransparentKeyScope.values) {
+            final address = deriveNativeTransparentAddressFromViewingKey(
+              viewingKeyHex: switch (scope) {
+                ZcashTransparentKeyScope.external => viewing.externalIvk!,
+                ZcashTransparentKeyScope.internal => viewing.internalIvk!,
+              },
+              network: ZcashNetwork.mainnet,
+              childIndex: 7,
+              scope: scope,
+            );
+            final spendingKey = deriveNativeTransparentSpendingKey(
+              seedHex: _seed,
+              network: ZcashNetwork.mainnet,
+              childIndex: 7,
+              scope: scope,
+            );
+            try {
+              expect(address, spendingKey.address);
+            } finally {
+              spendingKey.destroy();
+            }
+          }
+        },
+      );
+
+      test(
+        'UA exposes the exact signable transparent child on regtest',
+        () async {
+          final ua = await deriveAddress(
+            seedHex: _seed,
+            network: ZcashNetwork.regtest,
+          );
+          final key = deriveNativeTransparentSpendingKey(
+            seedHex: _seed,
+            network: ZcashNetwork.regtest,
+            childIndex: ua.nextValidIndex,
+          );
+          try {
+            expect(ua.requestedIndex, 0);
+            expect(key.address, ua.transparentAddress);
+            expect(key.childIndex, ua.nextValidIndex);
+          } finally {
+            key.destroy();
+          }
+          expect(() => key.secretKeyHex, throwsStateError);
+        },
+      );
+
       test('deriveNativeDiversifierSearch returns structured metadata', () {
         final ufvkRaw = ZcashFfiBindings.instance.seedToAccountUfvk(
           _seed,

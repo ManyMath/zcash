@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:zcash/zcash.dart';
 
@@ -49,19 +50,69 @@ class UnifiedAddressSet {
 
   final String? addressEncoding;
 
+  /// The requested and actual diversifier indices. A UA search can advance
+  /// past an index whose shielded diversifier is invalid; its transparent
+  /// receiver is therefore the external child at [nextValidIndex], not
+  /// necessarily child zero.
+  final int requestedIndex;
+  final int nextValidIndex;
+
   const UnifiedAddressSet({
     required this.ua,
     this.saplingAddress,
     this.orchardAddress,
     this.transparentAddress,
     this.addressEncoding,
+    this.requestedIndex = 0,
+    this.nextValidIndex = 0,
   });
 
   @override
   String toString() =>
       'UnifiedAddressSet(ua: $ua, sapling: $saplingAddress, '
       'orchard: $orchardAddress, transparent: $transparentAddress, '
-      'encoding: $addressEncoding)';
+      'encoding: $addressEncoding, index: $nextValidIndex)';
+}
+
+enum ZcashTransparentKeyScope { external, internal }
+
+/// Ephemeral transparent signing material. This object deliberately has no
+/// JSON/serialization API and redacts its secret from [toString]. Call
+/// [destroy] as soon as the native builder has consumed the key.
+final class ZcashTransparentSpendingKey {
+  ZcashTransparentSpendingKey._({
+    required this.address,
+    required this.accountIndex,
+    required this.childIndex,
+    required this.scope,
+    required Uint8List secretBytes,
+  }) : _secretBytes = secretBytes;
+
+  final String address;
+  final int accountIndex;
+  final int childIndex;
+  final ZcashTransparentKeyScope scope;
+  final Uint8List _secretBytes;
+  bool _destroyed = false;
+
+  String get secretKeyHex {
+    if (_destroyed) {
+      throw StateError('transparent spending key has been destroyed');
+    }
+    return _secretBytes
+        .map((byte) => byte.toRadixString(16).padLeft(2, '0'))
+        .join();
+  }
+
+  void destroy() {
+    _secretBytes.fillRange(0, _secretBytes.length, 0);
+    _destroyed = true;
+  }
+
+  @override
+  String toString() =>
+      'ZcashTransparentSpendingKey(address: $address, account: $accountIndex, '
+      'child: $childIndex, scope: ${scope.name}, secret: <redacted>)';
 }
 
 /// [seedHex] is the 64-byte BIP 39 seed in hex, not the phrase.
@@ -120,6 +171,16 @@ Future<UnifiedAddressSet> deriveAddress({
     addressEncoding: optionalNativeStringFromObject(
       addrMap,
       'address_encoding',
+      context: 'ufvk_to_address/DynamicLibrary',
+    ),
+    requestedIndex: _requiredNativeInt(
+      addrMap,
+      'requested_index',
+      context: 'ufvk_to_address/DynamicLibrary',
+    ),
+    nextValidIndex: _requiredNativeInt(
+      addrMap,
+      'next_valid_index',
       context: 'ufvk_to_address/DynamicLibrary',
     ),
   );
@@ -240,6 +301,114 @@ Future<String> deriveTransparentAddress({
     'address',
     context: 'transparent_address/DynamicLibrary',
     redactSensitive: [xpub],
+  );
+}
+
+/// Derives one transparent receiver using public incoming viewing material.
+///
+/// [viewingKeyHex] is the serialized external or internal IVK returned by
+/// [deriveNativeViewingKeys]. No seed or spending key is accepted, derived, or
+/// persisted by this operation.
+String deriveNativeTransparentAddressFromViewingKey({
+  required String viewingKeyHex,
+  required ZcashNetwork network,
+  required int childIndex,
+  required ZcashTransparentKeyScope scope,
+  ZcashFfiBindings? bindings,
+}) {
+  _checkUint32Index(childIndex, 'childIndex');
+  final raw = (bindings ?? ZcashFfiBindings.instance).transparentAddressFromIvk(
+    viewingKeyHex,
+    network._ffiParam,
+    childIndex,
+    scope.index,
+  );
+  final json = parseNativeJsonObject(
+    raw,
+    context: 'transparent_address_from_ivk/DynamicLibrary',
+    redactSensitive: [viewingKeyHex],
+  );
+  final nativeScope = requiredNativeStringFromObject(
+    json,
+    'scope',
+    context: 'transparent_address_from_ivk/DynamicLibrary',
+  );
+  if (nativeScope != scope.name ||
+      _requiredNativeInt(
+            json,
+            'child_index',
+            context: 'transparent_address_from_ivk/DynamicLibrary',
+          ) !=
+          childIndex) {
+    throw StateError('native transparent receiver identity mismatch');
+  }
+  return requiredNativeStringFromObject(
+    json,
+    'address',
+    context: 'transparent_address_from_ivk/DynamicLibrary',
+  );
+}
+
+ZcashTransparentSpendingKey deriveNativeTransparentSpendingKey({
+  required String seedHex,
+  required ZcashNetwork network,
+  int accountIndex = 0,
+  int childIndex = 0,
+  ZcashTransparentKeyScope scope = ZcashTransparentKeyScope.external,
+  ZcashFfiBindings? bindings,
+}) {
+  _checkUint32Index(accountIndex, 'accountIndex');
+  _checkUint32Index(childIndex, 'childIndex');
+  final ffi = bindings ?? ZcashFfiBindings.instance;
+  final raw = ffi.seedToTransparentSpendingKey(
+    seedHex,
+    network._ffiParam,
+    accountIndex,
+    childIndex,
+    scope.index,
+  );
+  final json = parseNativeJsonObject(
+    raw,
+    context: 'seed_to_transparent_spending_key/DynamicLibrary',
+    redactSensitive: [seedHex],
+  );
+  final secret = requiredNativeStringFromObject(
+    json,
+    'secret_key',
+    context: 'seed_to_transparent_spending_key/DynamicLibrary',
+  );
+  if (secret.length != 64 || !RegExp(r'^[0-9a-fA-F]+$').hasMatch(secret)) {
+    throw const FormatException('native transparent spending key is malformed');
+  }
+  final nativeScope = requiredNativeStringFromObject(
+    json,
+    'scope',
+    context: 'seed_to_transparent_spending_key/DynamicLibrary',
+  );
+  if (nativeScope != scope.name) {
+    throw StateError('native transparent spending-key scope mismatch');
+  }
+  return ZcashTransparentSpendingKey._(
+    address: requiredNativeStringFromObject(
+      json,
+      'address',
+      context: 'seed_to_transparent_spending_key/DynamicLibrary',
+    ),
+    accountIndex: _requiredNativeInt(
+      json,
+      'account_index',
+      context: 'seed_to_transparent_spending_key/DynamicLibrary',
+    ),
+    childIndex: _requiredNativeInt(
+      json,
+      'child_index',
+      context: 'seed_to_transparent_spending_key/DynamicLibrary',
+    ),
+    scope: scope,
+    secretBytes: Uint8List.fromList([
+      for (var offset = 0; offset < secret.length; offset += 2)
+        int.parse(secret.substring(offset, offset + 2), radix: 16),
+    ]),
   );
 }
 
@@ -693,4 +862,14 @@ void _checkUint32Index(int value, String name) {
   if (value < 0 || value > 0xffffffff) {
     throw RangeError.range(value, 0, 0xffffffff, name);
   }
+}
+
+int _requiredNativeInt(
+  Map<String, Object?> json,
+  String key, {
+  required String context,
+}) {
+  final value = json[key];
+  if (value is int) return value;
+  throw FormatException('$context missing integer field $key');
 }

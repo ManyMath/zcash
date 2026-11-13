@@ -170,6 +170,70 @@ fn free_string_accepts_null_pointer() {
 }
 
 #[test]
+fn transparent_spending_key_is_bound_to_the_requested_child_address() {
+    let seed = cptr(TEST_SEED_HEX);
+    let network = cptr("regtest");
+    let key = result_value(zcash_ffi_seed_to_transparent_spending_key(
+        seed.as_ptr(),
+        network.as_ptr(),
+        0,
+        7,
+        0,
+    ));
+    let xpub = result_value(zcash_ffi_seed_to_transparent_xpub(
+        seed.as_ptr(),
+        network.as_ptr(),
+        0,
+    ));
+    let xpub = cptr(xpub["xpub"].as_str().unwrap());
+    let expected = result_value(zcash_ffi_transparent_address(
+        xpub.as_ptr(),
+        network.as_ptr(),
+        7,
+    ));
+
+    assert_eq!(key["address"], expected["address"]);
+    assert_eq!(key["secret_key"].as_str().unwrap().len(), 64);
+    assert_eq!(key["account_index"], 0);
+    assert_eq!(key["child_index"], 7);
+    assert_eq!(key["scope"], "external");
+    assert!(!key.to_string().contains(TEST_SEED_HEX));
+}
+
+#[test]
+fn transparent_viewing_keys_derive_exact_external_and_internal_children() {
+    let seed = cptr(TEST_SEED_HEX);
+    let network = cptr("regtest");
+    let viewing = viewing_keys_value(TEST_SEED_HEX, &network, 0);
+
+    for (scope, scope_index) in [("external", 0), ("internal", 1)] {
+        let ivk = cptr(
+            viewing["transparent"][format!("{scope}_ivk")]
+                .as_str()
+                .unwrap(),
+        );
+        let actual = result_value(zcash_ffi_transparent_address_from_ivk(
+            ivk.as_ptr(),
+            network.as_ptr(),
+            7,
+            scope_index,
+        ));
+        let expected = result_value(zcash_ffi_seed_to_transparent_spending_key(
+            seed.as_ptr(),
+            network.as_ptr(),
+            0,
+            7,
+            scope_index,
+        ));
+
+        assert_eq!(actual["address"], expected["address"]);
+        assert_eq!(actual["child_index"], 7);
+        assert_eq!(actual["scope"], scope);
+        assert!(actual.get("secret_key").is_none());
+    }
+}
+
+#[test]
 fn string_returning_exports_can_be_called_repeatedly_after_free() {
     let seed = cptr(TEST_SEED_HEX);
     let test = cptr("test");

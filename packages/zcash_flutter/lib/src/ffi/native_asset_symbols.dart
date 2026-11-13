@@ -144,6 +144,17 @@ external Pointer<Utf8> _zcashFfiSeedToTransparentXpub(
   int p2,
 );
 
+@Native<
+  Pointer<Utf8> Function(Pointer<Utf8>, Pointer<Utf8>, Uint32, Uint32, Uint32)
+>(symbol: 'zcash_ffi_seed_to_transparent_spending_key')
+external Pointer<Utf8> _zcashFfiSeedToTransparentSpendingKey(
+  Pointer<Utf8> p0,
+  Pointer<Utf8> p1,
+  int p2,
+  int p3,
+  int p4,
+);
+
 @Native<Pointer<Utf8> Function(Pointer<Utf8>, Pointer<Utf8>, Uint32)>(
   symbol: 'zcash_ffi_seed_to_viewing_keys',
 )
@@ -170,6 +181,16 @@ external Pointer<Utf8> _zcashFfiTransparentAddress(
   Pointer<Utf8> p0,
   Pointer<Utf8> p1,
   int p2,
+);
+
+@Native<Pointer<Utf8> Function(Pointer<Utf8>, Pointer<Utf8>, Uint32, Uint32)>(
+  symbol: 'zcash_ffi_transparent_address_from_ivk',
+)
+external Pointer<Utf8> _zcashFfiTransparentAddressFromIvk(
+  Pointer<Utf8> p0,
+  Pointer<Utf8> p1,
+  int p2,
+  int p3,
 );
 
 @Native<Pointer<Utf8> Function(Pointer<Utf8>, Pointer<Utf8>, Uint32)>(
@@ -317,6 +338,19 @@ final Map<String, Pointer<Void> Function()> _addresses = {
             >
           >(_zcashFfiSeedToTransparentXpub)
           .cast(),
+  'zcash_ffi_seed_to_transparent_spending_key': () =>
+      Native.addressOf<
+            NativeFunction<
+              Pointer<Utf8> Function(
+                Pointer<Utf8>,
+                Pointer<Utf8>,
+                Uint32,
+                Uint32,
+                Uint32,
+              )
+            >
+          >(_zcashFfiSeedToTransparentSpendingKey)
+          .cast(),
   'zcash_ffi_seed_to_viewing_keys': () =>
       Native.addressOf<
             NativeFunction<
@@ -339,6 +373,18 @@ final Map<String, Pointer<Void> Function()> _addresses = {
               Pointer<Utf8> Function(Pointer<Utf8>, Pointer<Utf8>, Uint32)
             >
           >(_zcashFfiTransparentAddress)
+          .cast(),
+  'zcash_ffi_transparent_address_from_ivk': () =>
+      Native.addressOf<
+            NativeFunction<
+              Pointer<Utf8> Function(
+                Pointer<Utf8>,
+                Pointer<Utf8>,
+                Uint32,
+                Uint32,
+              )
+            >
+          >(_zcashFfiTransparentAddressFromIvk)
           .cast(),
   'zcash_ffi_ufvk_to_address': () =>
       Native.addressOf<

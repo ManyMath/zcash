@@ -130,6 +130,13 @@ void main() {
       );
       expect(xpub, startsWith('tpub'));
       expect(transparentAddress, startsWith('tm'));
+      final spendingKey = zcashNativeSeedToTransparentSpendingKey(
+        seedHex: _seed,
+        network: 'regtest',
+      );
+      expect(spendingKey['address'], transparentAddress);
+      expect(spendingKey['secret_key'], hasLength(64));
+      expect(spendingKey.toString(), isNot(contains(_seed)));
       final transparentMetadata = zcashNativeDecodeAddress(
         address: transparentAddress,
         network: 'regtest',

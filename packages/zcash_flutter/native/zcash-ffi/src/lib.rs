@@ -2684,6 +2684,116 @@ pub extern "C" fn zcash_ffi_seed_to_transparent_xpub(
     json_success(json!({ "xpub": xpub_str }))
 }
 
+/// Derives one BIP-44 transparent child spending key and its bound P2PKH
+/// address. The caller must keep the returned secret ephemeral and must match
+/// the returned address against the UTXO being signed.
+#[no_mangle]
+pub extern "C" fn zcash_ffi_seed_to_transparent_spending_key(
+    seed_ptr: *const c_char,
+    network_ptr: *const c_char,
+    account_index: u32,
+    child_index: u32,
+    scope: u32,
+) -> *mut c_char {
+    let seed_hex = match c_str_to_str(seed_ptr) {
+        Ok(s) => s,
+        Err(FfiStringError::Null) => return json_err("null_pointer", "null seed pointer"),
+        Err(FfiStringError::MalformedUtf8) => {
+            return json_err("malformed_utf8", "seed is not valid UTF-8")
+        }
+    };
+    let mut seed_bytes = match hex::decode(seed_hex) {
+        Ok(b) => b,
+        Err(_) => return json_err("invalid_hex", "seed is not valid hex"),
+    };
+    if seed_bytes.len() < 32 {
+        seed_bytes.fill(0);
+        return json_err("invalid_seed", "seed must be at least 32 bytes");
+    }
+    let network_label = match c_str_to_str(network_ptr) {
+        Ok(s) => s,
+        Err(FfiStringError::Null) => {
+            seed_bytes.fill(0);
+            return json_err("null_pointer", "null network pointer");
+        }
+        Err(FfiStringError::MalformedUtf8) => {
+            seed_bytes.fill(0);
+            return json_err("malformed_utf8", "network is not valid UTF-8");
+        }
+    };
+    let net = match parse_network_label(network_label) {
+        Some(n) => n,
+        None => {
+            seed_bytes.fill(0);
+            return json_err(
+                "unsupported_network",
+                "network must be 'main', 'test', or 'regtest'",
+            );
+        }
+    };
+    let account_id = match AccountId::try_from(account_index) {
+        Ok(id) => id,
+        Err(_) => {
+            seed_bytes.fill(0);
+            return json_err("invalid_account", "account_index out of range");
+        }
+    };
+    let child = match NonHardenedChildIndex::from_index(child_index) {
+        Some(index) => index,
+        None => {
+            seed_bytes.fill(0);
+            return json_err("invalid_child_index", "child_index must be < 2^31");
+        }
+    };
+    let account_key = match net {
+        Network::MainNetwork => AccountPrivKey::from_seed(&MainNetwork, &seed_bytes, account_id),
+        Network::TestNetwork => AccountPrivKey::from_seed(&TestNetwork, &seed_bytes, account_id),
+    };
+    seed_bytes.fill(0);
+    let account_key = match account_key {
+        Ok(key) => key,
+        Err(error) => {
+            return json_err(
+                "derivation_error",
+                &format!("transparent key derivation error: {:?}", error),
+            )
+        }
+    };
+    let secret_key = match scope {
+        0 => account_key.derive_external_secret_key(child),
+        1 => account_key.derive_internal_secret_key(child),
+        _ => {
+            return json_err(
+                "invalid_scope",
+                "scope must be 0 (external) or 1 (internal)",
+            )
+        }
+    };
+    let secret_key = match secret_key {
+        Ok(key) => key,
+        Err(error) => {
+            return json_err(
+                "derivation_error",
+                &format!("transparent child derivation error: {:?}", error),
+            )
+        }
+    };
+    let public_key = secp256k1::PublicKey::from_secret_key(&secret_key);
+    let transparent_address = TransparentAddress::from_pubkey(&public_key);
+    let address = match net {
+        Network::MainNetwork => Address::Transparent(transparent_address).encode(&MainNetwork),
+        Network::TestNetwork => Address::Transparent(transparent_address).encode(&TestNetwork),
+    };
+
+    json_success(json!({
+        "secret_key": hex::encode(secret_key.to_secret_bytes()),
+        "address": address,
+        "account_index": account_index,
+        "child_index": child_index,
+        "scope": if scope == 0 { "external" } else { "internal" },
+    }))
+}
+
 fn derive_transparent_xpub(
     seed: &[u8],
     net: &Network,
@@ -2896,6 +3006,102 @@ pub extern "C" fn zcash_ffi_transparent_address(
         Err(e) => return json_err("invalid_xpub", &e),
     };
     json_success(json!({ "address": result }))
+}
+
+/// Derives one transparent child receiver from serialized incoming viewing
+/// material. The IVK is the 65-byte `chain_code || compressed_pubkey` payload
+/// returned by `zcash_ffi_seed_to_viewing_keys`; no spending key is accepted or
+/// returned by this API.
+#[no_mangle]
+pub extern "C" fn zcash_ffi_transparent_address_from_ivk(
+    ivk_ptr: *const c_char,
+    network_ptr: *const c_char,
+    child_index: u32,
+    scope: u32,
+) -> *mut c_char {
+    let ivk_hex = match c_str_to_str(ivk_ptr) {
+        Ok(s) => s,
+        Err(FfiStringError::Null) => return json_err("null_pointer", "null ivk pointer"),
+        Err(FfiStringError::MalformedUtf8) => {
+            return json_err("malformed_utf8", "ivk is not valid UTF-8")
+        }
+    };
+    let network_label = match c_str_to_str(network_ptr) {
+        Ok(s) => s,
+        Err(FfiStringError::Null) => return json_err("null_pointer", "null network pointer"),
+        Err(FfiStringError::MalformedUtf8) => {
+            return json_err("malformed_utf8", "network is not valid UTF-8")
+        }
+    };
+    let net = match parse_network_label(network_label) {
+        Some(n) => n,
+        None => {
+            return json_err(
+                "unsupported_network",
+                "network must be 'main', 'test', or 'regtest'",
+            )
+        }
+    };
+    let child = match NonHardenedChildIndex::from_index(child_index) {
+        Some(index) => index,
+        None => return json_err("invalid_child_index", "child_index must be < 2^31"),
+    };
+    let decoded = match hex::decode(ivk_hex) {
+        Ok(bytes) => bytes,
+        Err(_) => return json_err("invalid_ivk", "ivk is not valid hex"),
+    };
+    let key_data: [u8; 65] = match decoded.try_into() {
+        Ok(data) => data,
+        Err(_) => return json_err("invalid_ivk", "ivk must be exactly 65 bytes"),
+    };
+
+    let (scope_label, address) = match scope {
+        0 => {
+            let ivk = match zcash_transparent::keys::ExternalIvk::deserialize(&key_data) {
+                Ok(ivk) => ivk,
+                Err(e) => return json_err("invalid_ivk", &format!("invalid external ivk: {e:?}")),
+            };
+            match ivk.derive_address(child) {
+                Ok(address) => ("external", address),
+                Err(e) => {
+                    return json_err(
+                        "derivation_error",
+                        &format!("address derivation error: {e:?}"),
+                    )
+                }
+            }
+        }
+        1 => {
+            let ivk = match zcash_transparent::keys::InternalIvk::deserialize(&key_data) {
+                Ok(ivk) => ivk,
+                Err(e) => return json_err("invalid_ivk", &format!("invalid internal ivk: {e:?}")),
+            };
+            match ivk.derive_address(child) {
+                Ok(address) => ("internal", address),
+                Err(e) => {
+                    return json_err(
+                        "derivation_error",
+                        &format!("address derivation error: {e:?}"),
+                    )
+                }
+            }
+        }
+        _ => {
+            return json_err(
+                "invalid_scope",
+                "scope must be external (0) or internal (1)",
+            )
+        }
+    };
+    let encoded = match net {
+        Network::MainNetwork => Address::Transparent(address).encode(&MainNetwork),
+        Network::TestNetwork => Address::Transparent(address).encode(&TestNetwork),
+    };
+    json_success(json!({
+        "address": encoded,
+        "child_index": child_index,
+        "scope": scope_label,
+    }))
 }
 
 fn derive_transparent_addr(

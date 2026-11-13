@@ -128,6 +128,22 @@ class ZcashFfiBindings {
             Pointer<Utf8> Function(Pointer<Utf8>, Pointer<Utf8>, int)
           >();
 
+  late final _seedToTransparentSpendingKey =
+      _symbol<
+            NativeFunction<
+              Pointer<Utf8> Function(
+                Pointer<Utf8>,
+                Pointer<Utf8>,
+                Uint32,
+                Uint32,
+                Uint32,
+              )
+            >
+          >('zcash_ffi_seed_to_transparent_spending_key')
+          .asFunction<
+            Pointer<Utf8> Function(Pointer<Utf8>, Pointer<Utf8>, int, int, int)
+          >();
+
   late final _ufvkToAddress =
       _symbol<
             NativeFunction<
@@ -146,6 +162,21 @@ class ZcashFfiBindings {
           >('zcash_ffi_transparent_address')
           .asFunction<
             Pointer<Utf8> Function(Pointer<Utf8>, Pointer<Utf8>, int)
+          >();
+
+  late final _transparentAddressFromIvk =
+      _symbol<
+            NativeFunction<
+              Pointer<Utf8> Function(
+                Pointer<Utf8>,
+                Pointer<Utf8>,
+                Uint32,
+                Uint32,
+              )
+            >
+          >('zcash_ffi_transparent_address_from_ivk')
+          .asFunction<
+            Pointer<Utf8> Function(Pointer<Utf8>, Pointer<Utf8>, int, int)
           >();
 
   late final _decodeAddress =
@@ -366,6 +397,31 @@ class ZcashFfiBindings {
     }
   }
 
+  String seedToTransparentSpendingKey(
+    String seedHex,
+    String network,
+    int account,
+    int childIndex,
+    int scope,
+  ) {
+    final seedPtr = seedHex.toNativeUtf8();
+    final netPtr = network.toNativeUtf8();
+    try {
+      return _takeString(
+        _seedToTransparentSpendingKey(
+          seedPtr,
+          netPtr,
+          account,
+          childIndex,
+          scope,
+        ),
+      );
+    } finally {
+      calloc.free(seedPtr);
+      calloc.free(netPtr);
+    }
+  }
+
   String ufvkToAddress(String ufvk, String network, int diversifierIndex) {
     final ufvkPtr = ufvk.toNativeUtf8();
     final netPtr = network.toNativeUtf8();
@@ -384,6 +440,24 @@ class ZcashFfiBindings {
       return _takeString(_transparentAddress(xpubPtr, netPtr, childIndex));
     } finally {
       calloc.free(xpubPtr);
+      calloc.free(netPtr);
+    }
+  }
+
+  String transparentAddressFromIvk(
+    String viewingKeyHex,
+    String network,
+    int childIndex,
+    int scope,
+  ) {
+    final keyPtr = viewingKeyHex.toNativeUtf8();
+    final netPtr = network.toNativeUtf8();
+    try {
+      return _takeString(
+        _transparentAddressFromIvk(keyPtr, netPtr, childIndex, scope),
+      );
+    } finally {
+      calloc.free(keyPtr);
       calloc.free(netPtr);
     }
   }
