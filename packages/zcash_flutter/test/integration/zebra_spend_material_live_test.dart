@@ -16,7 +16,10 @@ const _seedHex =
 const _accountFingerprint = 'spend-material-live-account-0';
 
 void main() {
-  const nu63Activation = 130;
+  final consensusSchedule = ZebraConsensusSchedule.stagedNu63(
+    activationHeight: 130,
+  );
+  final nu63Activation = consensusSchedule.nativeRegtestNu63ActivationHeight!;
   final ffiPath = Platform.environment['ZCASH_FFI_LIB'] ?? '';
   final enabled =
       Platform.environment.containsKey('ZEBRA_INTEGRATION') &&
@@ -34,7 +37,7 @@ void main() {
       LightwalletdHarness? lightwalletd;
       try {
         zebra = await ZebraHarness.start(
-          nu63ActivationHeight: nu63Activation,
+          schedule: consensusSchedule,
           minerAddress: kIronwoodProofMinerAddress,
         );
         await zebra.mineBlocks(101);

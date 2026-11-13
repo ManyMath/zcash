@@ -12,7 +12,10 @@ import 'harness.dart';
 // and ironwood-tx-build.
 void main() {
   // The height-1 coinbase matures at 101; NU6.3 is staged at 130.
-  const nu63Activation = 130;
+  final consensusSchedule = ZebraConsensusSchedule.stagedNu63(
+    activationHeight: 130,
+  );
+  final nu63Activation = consensusSchedule.nativeRegtestNu63ActivationHeight!;
   const maturityHeight = 101;
 
   final ffiLib = Platform.environment['ZCASH_FFI_LIB'] ?? '';
@@ -39,7 +42,7 @@ void main() {
     if (!enabled) return;
     ffi = ZcashFfiBindings.open(ffiLib);
     harness = await ZebraHarness.start(
-      nu63ActivationHeight: nu63Activation,
+      schedule: consensusSchedule,
       minerAddress: kIronwoodProofMinerAddress,
     );
     await harness!.mineBlocks(maturityHeight);

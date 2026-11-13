@@ -16,7 +16,10 @@ import 'lightwalletd_harness.dart';
 // ironwood-tx-build and ironwood-note-discovery.
 void main() {
   // The height-1 coinbase matures at 101; NU6.3 is staged at 130.
-  const nu63Activation = 130;
+  final consensusSchedule = ZebraConsensusSchedule.stagedNu63(
+    activationHeight: 130,
+  );
+  final nu63Activation = consensusSchedule.nativeRegtestNu63ActivationHeight!;
   const maturityHeight = 101;
 
   final ffiLib = Platform.environment['ZCASH_FFI_LIB'] ?? '';
@@ -79,7 +82,7 @@ void main() {
     if (!enabled) return;
     ffi = ZcashFfiBindings.open(ffiLib);
     harness = await ZebraHarness.start(
-      nu63ActivationHeight: nu63Activation,
+      schedule: consensusSchedule,
       minerAddress: kIronwoodProofMinerAddress,
     );
     await harness!.mineBlocks(maturityHeight);
@@ -102,7 +105,7 @@ void main() {
     'Live Ironwood discovery through lightwalletd',
     () {
       test('lightwalletd follows an NU6.3 chain', () async {
-        if (harness == null) return;
+        if (harness == null) fail('live Zebra setup did not complete');
 
         final tip = await harness!.client.getBlockCount();
         expect(
@@ -119,7 +122,7 @@ void main() {
       });
 
       test('a transparent sweep into Ironwood is mined', () async {
-        if (harness == null) return;
+        if (harness == null) fail('live Zebra setup did not complete');
 
         final tip = await harness!.client.getBlockCount();
         final coins = await _oneMatureCoin(harness!, tip);
@@ -146,11 +149,7 @@ void main() {
         );
         expect(txid, prepared.txid);
 
-        final hash = (await harness!.mineBlocks(1)).single;
-        expect(
-          (await harness!.client.getBlock(hash)).transactions,
-          contains(txid),
-        );
+        await _mineAcceptedTransaction(harness!, txid);
 
         shieldHeight = await harness!.client.getBlockCount();
         shieldedZatoshis = prepared.shieldedZatoshis;
@@ -158,7 +157,9 @@ void main() {
       });
 
       test('the server carries the Ironwood field the node does', () async {
-        if (harness == null || shieldHeight == null) return;
+        if (harness == null || shieldHeight == null) {
+          fail('the initial Ironwood sweep prerequisite did not complete');
+        }
         final height = shieldHeight!;
 
         await lightwalletd!.waitForSyncHeight(
@@ -215,7 +216,9 @@ void main() {
       });
 
       test('the note is found by scanning what lightwalletd served', () async {
-        if (harness == null || shieldHeight == null) return;
+        if (harness == null || shieldHeight == null) {
+          fail('the initial Ironwood sweep prerequisite did not complete');
+        }
         final height = shieldHeight!;
 
         final range = BlockRange()
@@ -258,7 +261,9 @@ void main() {
       });
 
       test('the two sources agree note for note', () async {
-        if (harness == null || shieldHeight == null) return;
+        if (harness == null || shieldHeight == null) {
+          fail('the initial Ironwood sweep prerequisite did not complete');
+        }
         final height = shieldHeight!;
 
         final range = BlockRange()
@@ -311,7 +316,9 @@ void main() {
       test(
         'a second sweep into Ironwood lands further along the chain',
         () async {
-          if (harness == null || shieldHeight == null) return;
+          if (harness == null || shieldHeight == null) {
+            fail('the initial Ironwood sweep prerequisite did not complete');
+          }
 
           await harness!.mineBlocks(2);
           final tip = await harness!.client.getBlockCount();
@@ -335,11 +342,7 @@ void main() {
           final txid = await harness!.client.sendRawTransaction(
             prepared.transactionHex,
           );
-          final hash = (await harness!.mineBlocks(1)).single;
-          expect(
-            (await harness!.client.getBlock(hash)).transactions,
-            contains(txid),
-          );
+          await _mineAcceptedTransaction(harness!, txid);
 
           secondShieldHeight = await harness!.client.getBlockCount();
           secondShieldedZatoshis = prepared.shieldedZatoshis;
@@ -360,7 +363,9 @@ void main() {
 
       test('a mid-chain range scanned from zero roots at an anchor no chain '
           'has had', () async {
-        if (harness == null || secondShieldHeight == null) return;
+        if (harness == null || secondShieldHeight == null) {
+          fail('the second Ironwood sweep prerequisite did not complete');
+        }
 
         final served = await _fetchRange(
           lightwalletd!,
@@ -389,7 +394,9 @@ void main() {
       });
 
       test('the cursor carries the tree from one range into the next', () async {
-        if (harness == null || secondShieldHeight == null) return;
+        if (harness == null || secondShieldHeight == null) {
+          fail('the second Ironwood sweep prerequisite did not complete');
+        }
 
         final start = shieldHeight!;
         final split = shieldHeight! + 1;
@@ -471,7 +478,9 @@ void main() {
       });
 
       test('a range that does not continue the sync is refused', () async {
-        if (harness == null || secondShieldHeight == null) return;
+        if (harness == null || secondShieldHeight == null) {
+          fail('the second Ironwood sweep prerequisite did not complete');
+        }
 
         final cursor = ZcashLightwalletdSyncCursor.fromTreeState(
           await harness!.client.getTreeState('${shieldHeight! - 1}'),
@@ -498,7 +507,7 @@ void main() {
         'the node mines a spend of a note discovered across the sync',
         () async {
           if (harness == null || syncedScan == null || unrootedScan == null) {
-            return;
+            fail('the rooted/unrooted scan prerequisites did not complete');
           }
 
           final unrooted = unrootedScan!.notes.singleWhere(
@@ -571,13 +580,7 @@ void main() {
           final txid = await harness!.client.sendRawTransaction(
             built.transactionHex,
           );
-          final hash = (await harness!.mineBlocks(1)).single;
-          expect(
-            (await harness!.client.getBlock(hash)).transactions,
-            contains(txid),
-            reason:
-                'a witness is only proven by a transaction the network accepts',
-          );
+          await _mineAcceptedTransaction(harness!, txid);
 
           spendHeight = await harness!.client.getBlockCount();
           spentNullifier = note.nullifier;
@@ -588,7 +591,9 @@ void main() {
       test(
         'a spend is observed by scanning what lightwalletd served',
         () async {
-          if (harness == null || spendHeight == null) return;
+          if (harness == null || spendHeight == null) {
+            fail('the Ironwood spend prerequisite did not complete');
+          }
 
           await harness!.mineBlocks(1);
           final end = await harness!.client.getBlockCount();
@@ -640,7 +645,9 @@ void main() {
       );
 
       test('a watch set filed under another pool sees nothing', () async {
-        if (harness == null || spendHeight == null) return;
+        if (harness == null || spendHeight == null) {
+          fail('the Ironwood spend prerequisite did not complete');
+        }
 
         final end = await harness!.client.getBlockCount();
         final served = await _fetchRange(
@@ -673,7 +680,9 @@ void main() {
       test(
         'the sync reaches the tip, with a third note in the store',
         () async {
-          if (harness == null || syncCursor == null) return;
+          if (harness == null || syncCursor == null) {
+            fail('the continuous sync prerequisite did not complete');
+          }
 
           final tip = await harness!.client.getBlockCount();
           final prepared = await _sweepIntoIronwood(
@@ -681,8 +690,11 @@ void main() {
             ffi!,
             nu63Activation,
           );
-          await harness!.client.sendRawTransaction(prepared.transactionHex);
-          await harness!.mineBlocks(1);
+          final txid = await harness!.client.sendRawTransaction(
+            prepared.transactionHex,
+          );
+          expect(txid, prepared.txid);
+          await _mineAcceptedTransaction(harness!, txid);
           thirdShieldHeight = await harness!.client.getBlockCount();
           thirdShieldTxid = prepared.txid;
           expect(thirdShieldHeight, greaterThan(tip));
@@ -736,7 +748,9 @@ void main() {
       );
 
       test('the node reorgs onto a chain that paid a different sweep', () async {
-        if (harness == null || thirdShieldHeight == null) return;
+        if (harness == null || thirdShieldHeight == null) {
+          fail('the third Ironwood sweep prerequisite did not complete');
+        }
 
         abandonedTipHeight = await harness!.client.getBlockCount();
         abandonedTipHash = syncCursor!.trail.hashAt(abandonedTipHeight!);
@@ -763,8 +777,11 @@ void main() {
           ffi!,
           nu63Activation,
         );
-        await harness!.client.sendRawTransaction(replacement.transactionHex);
-        await harness!.mineBlocks(1);
+        final replacementTxid = await harness!.client.sendRawTransaction(
+          replacement.transactionHex,
+        );
+        expect(replacementTxid, replacement.txid);
+        await _mineAcceptedTransaction(harness!, replacementTxid);
         forkedSweepHeight = await harness!.client.getBlockCount();
         forkedSweepZatoshis = replacement.shieldedZatoshis;
         expect(
@@ -814,7 +831,9 @@ void main() {
       test(
         'a sync carrying no hash re-anchors onto the fork with no error',
         () async {
-          if (harness == null || forkHeight == null) return;
+          if (harness == null || forkHeight == null) {
+            fail('the first reorg prerequisite did not complete');
+          }
 
           final blind = ZcashLightwalletdSyncCursor(
             nextHeight: syncCursor!.nextHeight,
@@ -858,7 +877,9 @@ void main() {
       );
 
       test('the sync that kept a hash refuses the same blocks', () async {
-        if (harness == null || forkHeight == null) return;
+        if (harness == null || forkHeight == null) {
+          fail('the first reorg prerequisite did not complete');
+        }
 
         final newTip = await harness!.client.getBlockCount();
         final forked = await _fetchRange(
@@ -888,7 +909,9 @@ void main() {
       test(
         'the wallet finds the fork point, and the money follows the chain',
         () async {
-          if (harness == null || forkHeight == null) return;
+          if (harness == null || forkHeight == null) {
+            fail('the first reorg prerequisite did not complete');
+          }
 
           final recovery = await ZcashReorgRecovery.find(
             trail: syncCursor!.trail,
@@ -979,15 +1002,20 @@ void main() {
       );
 
       test('the loop syncs a range, and the wallet is written down', () async {
-        if (harness == null || syncCursor == null) return;
+        if (harness == null || syncCursor == null) {
+          fail('the resumed sync prerequisite did not complete');
+        }
 
         final prepared = await _sweepIntoIronwood(
           harness!,
           ffi!,
           nu63Activation,
         );
-        await harness!.client.sendRawTransaction(prepared.transactionHex);
-        await harness!.mineBlocks(1);
+        final txid = await harness!.client.sendRawTransaction(
+          prepared.transactionHex,
+        );
+        expect(txid, prepared.txid);
+        await _mineAcceptedTransaction(harness!, txid);
         fourthShieldHeight = await harness!.client.getBlockCount();
         fourthShieldedZatoshis = prepared.shieldedZatoshis;
         await harness!.mineBlocks(2);
@@ -1024,7 +1052,9 @@ void main() {
       }, timeout: const Timeout(Duration(minutes: 5)));
 
       test('reopening from the documents is not a rescan', () async {
-        if (harness == null || cursorDocument == null) return;
+        if (harness == null || cursorDocument == null) {
+          fail('the persisted sync prerequisite did not complete');
+        }
 
         final restoredCursor = ZcashLightwalletdSyncCursor.fromJson(
           (jsonDecode(cursorDocument!) as Map).cast<String, Object?>(),
@@ -1080,7 +1110,9 @@ void main() {
       test(
         'the reopened wallet recovers from a reorg its trail remembers',
         () async {
-          if (harness == null || restoredSync == null) return;
+          if (harness == null || restoredSync == null) {
+            fail('the restored sync prerequisite did not complete');
+          }
 
           final sync = restoredSync!;
 
@@ -1098,8 +1130,11 @@ void main() {
             ffi!,
             nu63Activation,
           );
-          await harness!.client.sendRawTransaction(replacement.transactionHex);
-          await harness!.mineBlocks(1);
+          final replacementTxid = await harness!.client.sendRawTransaction(
+            replacement.transactionHex,
+          );
+          expect(replacementTxid, replacement.txid);
+          await _mineAcceptedTransaction(harness!, replacementTxid);
           secondForkSweepZatoshis = replacement.shieldedZatoshis;
           while (await harness!.client.getBlockCount() <= preReorgTip + 1) {
             await harness!.mineBlocks(2);
@@ -1193,7 +1228,7 @@ void main() {
           if (harness == null ||
               syncCursor == null ||
               fourthShieldHeight == null) {
-            return;
+            fail('the restored reorg prerequisite did not complete');
           }
 
           await harness!.mineBlocks(2);
@@ -1323,6 +1358,58 @@ Future<String?> _awaitServedBlockHash(
     await Future<void>.delayed(const Duration(milliseconds: 500));
   }
   return last;
+}
+
+Future<void> waitForTemplateTransaction(
+  ZebraHarness harness,
+  String txid, {
+  Duration timeout = const Duration(seconds: 60),
+}) async {
+  final expected = txid.toLowerCase();
+  final deadline = DateTime.now().add(timeout);
+  var mempoolCount = 0;
+  var templateCount = 0;
+  var seenInMempool = false;
+  while (DateTime.now().isBefore(deadline)) {
+    final mempool = await harness.client.getRawMempool();
+    final template = await harness.client.getBlockTemplate();
+    final templateTxids = <String>{
+      for (final transaction in template.transactions)
+        for (final key in const ['hash', 'txid'])
+          if (transaction[key] is String)
+            (transaction[key] as String).toLowerCase(),
+    };
+    mempoolCount = mempool.length;
+    templateCount = template.transactions.length;
+    seenInMempool = mempool.any(
+      (candidate) => candidate.toLowerCase() == expected,
+    );
+    if (templateTxids.contains(expected)) return;
+    await Future<void>.delayed(const Duration(milliseconds: 250));
+  }
+  throw StateError(
+    'accepted transaction did not reach a block template before timeout '
+    '(seenInMempool=$seenInMempool, mempoolCount=$mempoolCount, '
+    'templateTransactionCount=$templateCount)',
+  );
+}
+
+Future<String> _mineAcceptedTransaction(
+  ZebraHarness harness,
+  String txid,
+) async {
+  await waitForTemplateTransaction(harness, txid);
+  final hash = (await harness.mineBlocks(1)).single;
+  final mined = await harness.client.getBlock(hash);
+  if (!mined.transactions.any(
+    (candidate) => candidate.toLowerCase() == txid.toLowerCase(),
+  )) {
+    throw StateError(
+      'a transaction present in the selected template was absent from the '
+      'mined block (blockTransactionCount=${mined.transactions.length})',
+    );
+  }
+  return hash;
 }
 
 Future<ShieldingPreparedSend> _sweepIntoIronwood(

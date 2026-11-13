@@ -1,8 +1,10 @@
 library;
 
 import 'dart:async';
+import 'dart:collection';
 import 'dart:io';
 import 'dart:typed_data';
+
 import 'package:crypto/crypto.dart';
 import 'package:zcash_flutter/zcash_flutter.dart';
 
@@ -24,11 +26,161 @@ const kIronwoodProofUnifiedAddress =
 const kIronwoodProofMinerSecretKeyHex =
     '1111111111111111111111111111111111111111111111111111111111111111';
 
+typedef ZebraProcessStarter =
+    Future<Process> Function(
+      String executable,
+      List<String> arguments,
+      Map<String, String> environment,
+    );
+
+enum ZebraUpgrade {
+  overwinter('Overwinter'),
+  sapling('Sapling'),
+  blossom('Blossom'),
+  heartwood('Heartwood'),
+  canopy('Canopy'),
+  nu5('NU5'),
+  nu6('NU6'),
+  nu61('NU6.1'),
+  nu62('NU6.2'),
+  nu63('NU6.3'),
+  nu7('NU7');
+
+  const ZebraUpgrade(this.configName);
+
+  final String configName;
+}
+
+/// One immutable consensus schedule shared by the node and native builders.
+final class ZebraConsensusSchedule {
+  ZebraConsensusSchedule._(this._nu63ActivationHeight);
+
+  static final standard = ZebraConsensusSchedule._(null);
+
+  factory ZebraConsensusSchedule.stagedNu63({required int activationHeight}) {
+    if (activationHeight < 2) {
+      throw ArgumentError.value(
+        activationHeight,
+        'activationHeight',
+        'a staged chain activates NU6.3 above genesis; at height 1 the chain '
+            'has always been activated and no Orchard note can exist on it',
+      );
+    }
+    return ZebraConsensusSchedule._(activationHeight);
+  }
+
+  final int? _nu63ActivationHeight;
+
+  late final Map<ZebraUpgrade, int> activationHeights = UnmodifiableMapView({
+    ZebraUpgrade.overwinter: 1,
+    ZebraUpgrade.sapling: 1,
+    ZebraUpgrade.blossom: 1,
+    ZebraUpgrade.heartwood: 1,
+    ZebraUpgrade.canopy: 1,
+    ZebraUpgrade.nu5: 1,
+    ZebraUpgrade.nu6: 1,
+    if (_nu63ActivationHeight != null) ...{
+      ZebraUpgrade.nu61: 1,
+      ZebraUpgrade.nu62: 1,
+      ZebraUpgrade.nu63: _nu63ActivationHeight,
+    },
+  });
+
+  int? activationHeight(ZebraUpgrade upgrade) => activationHeights[upgrade];
+
+  /// Pass this exact value to native regtest builders for this node.
+  int? get nativeRegtestNu63ActivationHeight => _nu63ActivationHeight;
+
+  bool get stagesNu63 => _nu63ActivationHeight != null;
+
+  void validateReportedActivationHeights(Map<String, int> reported) {
+    for (final entry in activationHeights.entries) {
+      final name = entry.key.configName;
+      final actual = reported[name];
+      if (actual != entry.value) {
+        throw StateError(
+          'zebrad reported $name activation height $actual, but the node and '
+          'native regtest schedule requires ${entry.value}',
+        );
+      }
+    }
+  }
+
+  String toZebraToml() => activationHeights.entries
+      .map((entry) => '${_tomlName(entry.key)} = ${entry.value}')
+      .join('\n');
+
+  static String _tomlName(ZebraUpgrade upgrade) =>
+      upgrade.configName.contains('.')
+      ? '"${upgrade.configName}"'
+      : upgrade.configName;
+}
+
+final class ZebraStartupException implements Exception {
+  ZebraStartupException._({
+    required this.schedule,
+    required this.stderr,
+    required this.unsupportedUpgrade,
+    required List<String> supportedUpgradeNames,
+  }) : supportedUpgradeNames = List.unmodifiable(supportedUpgradeNames);
+
+  factory ZebraStartupException.fromStderr({
+    required ZebraConsensusSchedule schedule,
+    required String stderr,
+  }) {
+    final unsupportedMatch = RegExp(
+      r'''unknown (?:variant|field)\s+[`'\"]([^`'\"]+)[`'\"],?\s+expected one of\s+([^\r\n]+)''',
+      caseSensitive: false,
+    ).firstMatch(stderr);
+    final supported = <String>[];
+    if (unsupportedMatch != null) {
+      final inventory = unsupportedMatch
+          .group(2)!
+          .split(RegExp(r'\s+for key\s+', caseSensitive: false))
+          .first;
+      supported.addAll(
+        RegExp(
+          r'''[`'\"]([^`'\"]+)[`'\"]''',
+        ).allMatches(inventory).map((match) => match.group(1)!),
+      );
+    }
+    return ZebraStartupException._(
+      schedule: schedule,
+      stderr: stderr.trim(),
+      unsupportedUpgrade: unsupportedMatch?.group(1),
+      supportedUpgradeNames: supported,
+    );
+  }
+
+  final ZebraConsensusSchedule schedule;
+  final String stderr;
+  final String? unsupportedUpgrade;
+  final List<String> supportedUpgradeNames;
+
+  @override
+  String toString() {
+    final unsupported = unsupportedUpgrade;
+    if (unsupported == null) {
+      return 'ZebraStartupException: zebrad exited before becoming ready. '
+          '$stderr';
+    }
+    final requested = schedule.activationHeights.keys
+        .map((upgrade) => upgrade.configName)
+        .join(', ');
+    return 'ZebraStartupException: zebrad rejected requested upgrade '
+        '$unsupported. Requested schedule: $requested. Supported upgrades '
+        'reported by this binary: ${supportedUpgradeNames.join(', ')}. '
+        'NU6.3 and NU7 are distinct consensus upgrades; the harness will not '
+        'substitute one for the other, and node/native parameters must match.';
+  }
+}
+
 class ZebraHarness {
   final Process _process;
   final ZebraClient client;
   final String zebraVersion;
   final Directory _tmpDir;
+  Future<void>? _shutdownFuture;
 
   final int rpcPort;
 
@@ -41,21 +193,26 @@ class ZebraHarness {
     required Directory tmpDir,
     required this.rpcPort,
     required this.p2pPort,
-    required this.nu63ActivationHeight,
+    required this.schedule,
   }) : _process = process,
        _tmpDir = tmpDir;
 
+  final ZebraConsensusSchedule schedule;
+
   /// ZIP 258: no value may enter Orchard once NU6.3 is active.
-  final int? nu63ActivationHeight;
+  int? get nu63ActivationHeight => schedule.nativeRegtestNu63ActivationHeight;
 
   bool get isStagedNu63Chain => nu63ActivationHeight != null;
 
   static Future<ZebraHarness> start({
     String? peerAddress,
-    int? nu63ActivationHeight,
+    ZebraConsensusSchedule? schedule,
     String minerAddress = kRegtestMinerAddress,
+    String? zebraBinary,
+    ZebraProcessStarter? processStarter,
   }) async {
-    final bin = Platform.environment['ZEBRA_BIN'];
+    final consensus = schedule ?? ZebraConsensusSchedule.standard;
+    final bin = zebraBinary ?? Platform.environment['ZEBRA_BIN'];
     final usesDocker = bin == null || bin.isEmpty;
     final image = usesDocker
         ? requireDigestPinnedDockerImage(
@@ -69,80 +226,75 @@ class ZebraHarness {
     final rpcPort = await _freePort();
     final p2pPort = await _freePort();
     final tmpDir = await Directory.systemTemp.createTemp('zebra-regtest-');
-    await Process.run('chmod', ['755', tmpDir.path]);
-    if (nu63ActivationHeight != null && nu63ActivationHeight < 2) {
-      throw ArgumentError.value(
-        nu63ActivationHeight,
-        'nu63ActivationHeight',
-        'a staged chain activates NU6.3 above genesis; at height 1 the chain '
-            'has always been activated and no Orchard note can exist on it',
+    Process? process;
+    ZebraClient? ownedClient;
+    try {
+      await Process.run('chmod', ['755', tmpDir.path]);
+      await _writeConfig(
+        tmpDir.path,
+        rpcPort,
+        p2pPort,
+        peerAddress,
+        consensus,
+        minerAddress,
       );
+
+      final executable = usesDocker ? 'docker' : bin;
+      final arguments = usesDocker
+          ? [
+              'run',
+              '--rm',
+              '--network=host',
+              '-v',
+              '${tmpDir.path}:/cfg',
+              image!,
+              'zebrad',
+              '--config',
+              '/cfg/zebrad.toml',
+              'start',
+            ]
+          : ['--config', '${tmpDir.path}/zebrad.toml', 'start'];
+      final childEnv = _childEnvironment();
+      final startProcess = processStarter ?? _startProcess;
+      process = await startProcess(executable, arguments, childEnv);
+
+      process.stdout.listen((_) {});
+      final stderrTail = <String>[];
+      process.stderr.listen((chunk) {
+        stderrTail.add(String.fromCharCodes(chunk));
+        if (stderrTail.length > 40) stderrTail.removeAt(0);
+      });
+
+      final zebraClient = ZebraClient(port: rpcPort);
+      ownedClient = zebraClient;
+      await _awaitReady(
+        zebraClient,
+        process,
+        () => stderrTail.join(),
+        consensus,
+      );
+
+      final info = await zebraClient.getInfo();
+      final ver = _extractVersion(info.build);
+      final chain = await zebraClient.getBlockchainInfo();
+      consensus.validateReportedActivationHeights({
+        for (final upgrade in chain.upgrades.values)
+          upgrade.name: upgrade.activationHeight,
+      });
+
+      return ZebraHarness._(
+        process: process,
+        client: zebraClient,
+        zebraVersion: ver,
+        tmpDir: tmpDir,
+        rpcPort: rpcPort,
+        p2pPort: p2pPort,
+        schedule: consensus,
+      );
+    } catch (_) {
+      await _cleanup(process: process, client: ownedClient, tmpDir: tmpDir);
+      rethrow;
     }
-    await _writeConfig(
-      tmpDir.path,
-      rpcPort,
-      p2pPort,
-      peerAddress,
-      nu63ActivationHeight,
-      minerAddress,
-    );
-
-    late Process process;
-    final childEnv = _childEnvironment();
-    if (!usesDocker) {
-      process = await Process.start(
-        bin,
-        ['--config', '${tmpDir.path}/zebrad.toml', 'start'],
-        environment: childEnv,
-        includeParentEnvironment: false,
-      );
-    } else {
-      process = await Process.start(
-        'docker',
-        [
-          'run',
-          '--rm',
-          '--network=host',
-          '-v',
-          '${tmpDir.path}:/cfg',
-          image!,
-          'zebrad',
-          '--config',
-          '/cfg/zebrad.toml',
-          'start',
-        ],
-        environment: childEnv,
-        includeParentEnvironment: false,
-      );
-    }
-
-    process.stdout.listen((_) {});
-    final stderrTail = <String>[];
-    process.stderr.listen((chunk) {
-      stderrTail.add(String.fromCharCodes(chunk));
-      if (stderrTail.length > 40) stderrTail.removeAt(0);
-    });
-
-    final zebraClient = ZebraClient(port: rpcPort);
-    await _awaitReady(
-      zebraClient,
-      process,
-      () => stderrTail.join(),
-      nu63ActivationHeight,
-    );
-
-    final info = await zebraClient.getInfo();
-    final ver = _extractVersion(info.build);
-
-    return ZebraHarness._(
-      process: process,
-      client: zebraClient,
-      zebraVersion: ver,
-      tmpDir: tmpDir,
-      rpcPort: rpcPort,
-      p2pPort: p2pPort,
-      nu63ActivationHeight: nu63ActivationHeight,
-    );
   }
 
   bool meetsMinVersion(String min) => _cmpVersion(zebraVersion, min) >= 0;
@@ -215,18 +367,43 @@ class ZebraHarness {
     return _hashEncodeReversed(_sha256dStub(header));
   }
 
-  Future<void> shutdown() async {
-    _process.kill(ProcessSignal.sigterm);
-    await _process.exitCode.timeout(
-      const Duration(seconds: 12),
-      onTimeout: () {
-        _process.kill(ProcessSignal.sigkill);
-        return -1;
-      },
-    );
-    client.close();
+  Future<void> shutdown() => _shutdownFuture ??= _cleanup(
+    process: _process,
+    client: client,
+    tmpDir: _tmpDir,
+  );
+
+  static Future<Process> _startProcess(
+    String executable,
+    List<String> arguments,
+    Map<String, String> environment,
+  ) => Process.start(
+    executable,
+    arguments,
+    environment: environment,
+    includeParentEnvironment: false,
+  );
+
+  static Future<void> _cleanup({
+    required Process? process,
+    required ZebraClient? client,
+    required Directory tmpDir,
+  }) async {
+    if (process != null) {
+      process.kill(ProcessSignal.sigterm);
+      await process.exitCode.timeout(
+        const Duration(seconds: 12),
+        onTimeout: () {
+          process.kill(ProcessSignal.sigkill);
+          return -1;
+        },
+      );
+    }
+    client?.close();
     try {
-      await _tmpDir.delete(recursive: true);
+      if (await tmpDir.exists()) {
+        await tmpDir.delete(recursive: true);
+      }
     } catch (_) {}
   }
 
@@ -250,15 +427,13 @@ class ZebraHarness {
     int rpcPort,
     int p2pPort,
     String? peerAddress,
-    int? nu63ActivationHeight,
+    ZebraConsensusSchedule schedule,
     String minerAddress,
   ) async {
     final initialPeers = peerAddress == null ? '' : '"$peerAddress"';
     final targetSize = peerAddress == null ? 0 : 1;
     // Dotted upgrade names must be quoted; bare NU6.3 is a TOML dotted key.
-    final stagedUpgrades = nu63ActivationHeight == null
-        ? ''
-        : '"NU6.1" = 1\n"NU6.2" = 1\n"NU6.3" = $nu63ActivationHeight\n';
+    final activationHeights = schedule.toZebraToml();
     final src =
         '''
 [network]
@@ -269,14 +444,7 @@ initial_mainnet_peers = []
 initial_testnet_peers = [$initialPeers]
 
 [network.testnet_parameters.activation_heights]
-Overwinter = 1
-Sapling = 1
-Blossom = 1
-Heartwood = 1
-Canopy = 1
-NU5 = 1
-NU6 = 1
-$stagedUpgrades
+$activationHeights
 [rpc]
 listen_addr = "127.0.0.1:$rpcPort"
 enable_cookie_auth = false
@@ -296,7 +464,7 @@ miner_address = "$minerAddress"
     ZebraClient client,
     Process process,
     String Function() stderrTail,
-    int? nu63ActivationHeight,
+    ZebraConsensusSchedule schedule,
   ) async {
     var exited = false;
     unawaited(process.exitCode.then((_) => exited = true));
@@ -309,22 +477,15 @@ miner_address = "$minerAddress"
         return;
       } catch (_) {
         if (exited) {
-          throw StateError(_startupFailure(stderrTail(), nu63ActivationHeight));
+          throw ZebraStartupException.fromStderr(
+            schedule: schedule,
+            stderr: stderrTail(),
+          );
         }
         await Future<void>.delayed(const Duration(milliseconds: 500));
       }
     }
     throw TimeoutException('zebrad not ready after ${_kReadinessTimeout}s');
-  }
-
-  static String _startupFailure(String stderr, int? nu63ActivationHeight) {
-    final staged = nu63ActivationHeight != null;
-    final hint = staged
-        ? '\nThis config stages NU6.3 at height $nu63ActivationHeight. A '
-              'pre-Ironwood zebrad rejects an activation-heights table naming '
-              'NU6.3; set ZEBRA_BIN to an Ironwood-aware build.'
-        : '';
-    return 'zebrad exited before becoming ready.$hint\n${stderr.trim()}';
   }
 
   static String _extractVersion(String build) {

@@ -14,12 +14,18 @@ void main() {
 
   setUpAll(() async {
     if (!Platform.environment.containsKey('ZEBRA_INTEGRATION')) return;
-    harness = await ZebraHarness.start(nu63ActivationHeight: activationHeight);
+    harness = await ZebraHarness.start(
+      schedule: ZebraConsensusSchedule.stagedNu63(
+        activationHeight: activationHeight,
+      ),
+    );
   });
 
   tearDownAll(() async {
     if (harness == null) return;
-    await harness!.shutdown();
+    final running = harness!;
+    await Future.wait([running.shutdown(), running.shutdown()]);
+    await running.shutdown();
     harness = null;
   });
 
@@ -37,8 +43,8 @@ void main() {
         isNotNull,
         reason:
             'the chain must carry NU6.3 (branch id 0x37a5165b) as an upgrade; '
-            'its absence means this zebrad predates Ironwood and the chain '
-            'cannot represent the pool at all. Upgrades seen: '
+            'its absence means this binary cannot represent the exact '
+            'node/native schedule under test. Upgrades seen: '
             '${info.upgrades.keys.toList()}',
       );
       expect(nu63!.activationHeight, activationHeight);
