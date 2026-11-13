@@ -22,6 +22,7 @@ export 'src/models/scan.dart';
 export 'src/models/shielded_capability.dart';
 export 'src/models/orchard_data_classification.dart';
 export 'src/models/spend.dart';
+export 'src/models/spend_material.dart';
 export 'src/models/proposal.dart';
 export 'src/models/transparent_build.dart';
 export 'src/models/sapling_build.dart';
