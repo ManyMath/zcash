@@ -53,6 +53,20 @@ void main() {
       );
     });
 
+    test('equal-value candidates are selected by deterministic outpoint', () {
+      TransparentInputSelection select(List<AddressUtxo> order) =>
+          TransparentInputSelection.select(
+            coins: _coins(utxos: order, chainHeight: 500),
+            amountZatoshis: 50000,
+            feeForCoins: _stubFee,
+          );
+      final low = _utxo(satoshis: 100000, height: 10, txid: '11');
+      final high = _utxo(satoshis: 100000, height: 10, txid: 'ee');
+
+      expect(select([high, low]).coins.single.outpoint, '${low.txid}:0');
+      expect(select([low, high]).coins.single.outpoint, '${low.txid}:0');
+    });
+
     test('spending a coinbase coin with change left is refused', () {
       final coin = _utxo(satoshis: 100000, height: 10);
       expect(

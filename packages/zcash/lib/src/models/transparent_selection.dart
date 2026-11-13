@@ -65,8 +65,7 @@ class TransparentInputSelection {
       );
     }
 
-    final candidates = [...coins.spendable]
-      ..sort((a, b) => a.satoshis.compareTo(b.satoshis));
+    final candidates = [...coins.spendable]..sort(_compareCoinSelectionOrder);
 
     final chosen = <TrackedTransparentCoin>[];
     var total = 0;
@@ -120,8 +119,7 @@ class TransparentInputSelection {
     required TransparentCoinSet coins,
     required int Function(List<TrackedTransparentCoin> spends) feeForCoins,
   }) {
-    final chosen = [...coins.spendable]
-      ..sort((a, b) => a.satoshis.compareTo(b.satoshis));
+    final chosen = [...coins.spendable]..sort(_compareCoinSelectionOrder);
     if (chosen.isEmpty) {
       _refuseShortfall(coins, 0, 1);
     }
@@ -171,4 +169,12 @@ class TransparentInputSelection {
       'cover $amountZatoshis plus its fee',
     );
   }
+}
+
+int _compareCoinSelectionOrder(
+  TrackedTransparentCoin a,
+  TrackedTransparentCoin b,
+) {
+  final byValue = a.satoshis.compareTo(b.satoshis);
+  return byValue != 0 ? byValue : a.outpoint.compareTo(b.outpoint);
 }

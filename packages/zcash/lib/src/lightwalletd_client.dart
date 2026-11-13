@@ -3,7 +3,7 @@ import 'dart:typed_data';
 import 'package:fixnum/fixnum.dart';
 import 'package:grpc/grpc.dart';
 
-import 'grpc/service.pbgrpc.dart';
+import 'grpc/service.pbgrpc.dart' hide Duration;
 import 'grpc/compact_formats.pb.dart';
 
 export 'grpc/compact_formats.pb.dart';
@@ -39,10 +39,12 @@ class LightwalletdClientException implements Exception {
 class LightwalletdClient {
   final ClientChannel? _channel;
   final CompactTxStreamerClient _stub;
+  final Duration rpcTimeout;
 
   LightwalletdClient._({
     ClientChannel? channel,
     required CompactTxStreamerClient stub,
+    required this.rpcTimeout,
   }) : _channel = channel,
        _stub = stub;
 
@@ -51,7 +53,11 @@ class LightwalletdClient {
     int port = 9067,
     bool useTls = true,
     ChannelCredentials? credentials,
+    Duration rpcTimeout = const Duration(seconds: 30),
   }) {
+    if (rpcTimeout <= Duration.zero) {
+      throw ArgumentError.value(rpcTimeout, 'rpcTimeout', 'must be positive');
+    }
     final creds =
         credentials ??
         (useTls
@@ -65,17 +71,30 @@ class LightwalletdClient {
     return LightwalletdClient._(
       channel: channel,
       stub: CompactTxStreamerClient(channel),
+      rpcTimeout: rpcTimeout,
     );
   }
 
-  factory LightwalletdClient.fromStub(CompactTxStreamerClient stub) =>
-      LightwalletdClient._(stub: stub);
+  factory LightwalletdClient.fromStub(
+    CompactTxStreamerClient stub, {
+    Duration rpcTimeout = const Duration(seconds: 30),
+  }) {
+    if (rpcTimeout <= Duration.zero) {
+      throw ArgumentError.value(rpcTimeout, 'rpcTimeout', 'must be positive');
+    }
+    return LightwalletdClient._(stub: stub, rpcTimeout: rpcTimeout);
+  }
 
-  Future<LightdInfo> getInfo() => _stub.getLightdInfo(Empty());
+  CallOptions get _callOptions => CallOptions(timeout: rpcTimeout);
 
-  Future<BlockID> getLatestBlock() => _stub.getLatestBlock(ChainSpec());
+  Future<LightdInfo> getInfo() =>
+      _stub.getLightdInfo(Empty(), options: _callOptions);
 
-  Future<CompactBlock> getBlock(BlockID id) => _stub.getBlock(id);
+  Future<BlockID> getLatestBlock() =>
+      _stub.getLatestBlock(ChainSpec(), options: _callOptions);
+
+  Future<CompactBlock> getBlock(BlockID id) =>
+      _stub.getBlock(id, options: _callOptions);
 
   Stream<CompactBlock> getBlockRange(BlockRange range) {
     final rangeLabel = _validateHeightRange(range, method: 'GetBlockRange');
@@ -86,8 +105,14 @@ class LightwalletdClient {
     BlockRange range,
     String rangeLabel,
   ) async* {
+    if (range.poolTypes.isNotEmpty) {
+      await _assertPoolTypesSupported(rangeLabel);
+    }
     try {
-      await for (final block in _stub.getBlockRange(range)) {
+      await for (final block in _stub.getBlockRange(
+        range,
+        options: _callOptions,
+      )) {
         yield block;
       }
     } on Object catch (error) {
@@ -100,12 +125,34 @@ class LightwalletdClient {
     }
   }
 
-  Stream<CompactBlock> getBlockRangeByHeight(int start, int end) =>
-      getBlockRange(
-        BlockRange()
-          ..start = (BlockID()..height = Int64(start))
-          ..end = (BlockID()..height = Int64(end)),
+  Stream<CompactBlock> getBlockRangeByHeight(
+    int start,
+    int end, {
+    Iterable<PoolType> poolTypes = const [],
+  }) => getBlockRange(
+    BlockRange()
+      ..start = (BlockID()..height = Int64(start))
+      ..end = (BlockID()..height = Int64(end))
+      ..poolTypes.addAll(poolTypes),
+  );
+
+  Future<void> _assertPoolTypesSupported(String rangeLabel) async {
+    final version = (await getInfo()).lightwalletProtocolVersion;
+    final match = RegExp(
+      r'^v?(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$',
+    ).firstMatch(version);
+    final supported =
+        match != null &&
+        (int.parse(match.group(1)!) > 0 || int.parse(match.group(2)!) >= 4);
+    if (!supported) {
+      throw LightwalletdClientException(
+        'server does not advertise lightwallet protocol v0.4.0 or newer; '
+        'non-default compact-block pool requests are unsafe',
+        method: 'GetBlockRange',
+        range: rangeLabel,
       );
+    }
+  }
 
   Future<TreeState> getTreeStateAtHeight(int height) =>
       getTreeState(BlockID()..height = Int64(height));
@@ -130,7 +177,29 @@ class LightwalletdClient {
   }
 
   Stream<GetAddressUtxosReply> getTaddressUtxos(GetAddressUtxosArg arg) =>
-      _stub.getAddressUtxosStream(arg);
+      _stub.getAddressUtxosStream(arg, options: _callOptions);
+
+  Future<List<GetAddressUtxosReply>> getAddressUtxos(
+    List<String> addresses, {
+    int startHeight = 0,
+    int maxEntries = 0,
+  }) {
+    if (addresses.isEmpty || addresses.any((address) => address.isEmpty)) {
+      throw ArgumentError.value(
+        addresses,
+        'addresses',
+        'must contain at least one non-empty transparent address',
+      );
+    }
+    if (startHeight < 0 || maxEntries < 0) {
+      throw ArgumentError('startHeight and maxEntries must be non-negative');
+    }
+    final request = GetAddressUtxosArg()
+      ..addresses.addAll(addresses)
+      ..startHeight = Int64(startHeight)
+      ..maxEntries = maxEntries;
+    return _stub.getAddressUtxosStream(request, options: _callOptions).toList();
+  }
 
   Stream<CompactTx> getMempoolTx(GetMempoolTxRequest request) =>
       _stub.getMempoolTx(request);

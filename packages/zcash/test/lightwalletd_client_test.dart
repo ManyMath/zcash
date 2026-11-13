@@ -27,6 +27,7 @@ import 'package:zcash/lightwalletd_protos.dart'
         GetAddressUtxosReplyList,
         GetAddressUtxosArg,
         GetAddressUtxosReply,
+        PoolType,
         PingResponse;
 
 Server? _server;
@@ -395,6 +396,54 @@ void main() {
       expect(blocks.last.height, Int64(104));
     });
 
+    test('requests transparent compact data by pool type', () async {
+      final fake = _FakeStreamer(
+        lightdInfo: LightdInfo()..lightwalletProtocolVersion = 'v0.6.0',
+        blocks: [CompactBlock()..height = Int64(100)],
+      );
+      await _stopServer();
+      await _startServer(fake);
+
+      await _client!
+          .getBlockRangeByHeight(
+            100,
+            100,
+            poolTypes: const [PoolType.TRANSPARENT],
+          )
+          .toList();
+
+      expect(fake.lastBlockRangeRequest!.poolTypes, [PoolType.TRANSPARENT]);
+    });
+
+    test(
+      'refuses pool filtering when the server does not advertise it',
+      () async {
+        final fake = _FakeStreamer(
+          lightdInfo: LightdInfo()..lightwalletProtocolVersion = 'v0.3.6',
+        );
+        await _stopServer();
+        await _startServer(fake);
+
+        await expectLater(
+          _client!
+              .getBlockRangeByHeight(
+                100,
+                100,
+                poolTypes: const [PoolType.TRANSPARENT],
+              )
+              .toList(),
+          throwsA(
+            isA<LightwalletdClientException>().having(
+              (error) => error.message,
+              'message',
+              contains('v0.4.0'),
+            ),
+          ),
+        );
+        expect(fake.lastBlockRangeRequest, isNull);
+      },
+    );
+
     test('allows the inclusive genesis range 0..0', () async {
       await _stopServer();
       await _startServer(
@@ -481,6 +530,60 @@ void main() {
       expect(resp.errorMessage, 'invalid transaction');
     });
   });
+
+  group('LightwalletdClient.getAddressUtxos', () {
+    late _FakeStreamer fake;
+
+    setUp(() {
+      fake = _FakeStreamer(
+        addressUtxos: [
+          GetAddressUtxosReply()
+            ..address = 'tmAccount'
+            ..txid = List<int>.generate(32, (index) => index)
+            ..index = 3
+            ..script = [0x51]
+            ..valueZat = Int64(45000)
+            ..height = Int64(77),
+        ],
+      );
+      return _startServer(fake);
+    });
+
+    tearDown(_stopServer);
+
+    test('returns the complete bounded UTXO snapshot request', () async {
+      final replies = await _client!.getAddressUtxos(
+        const ['tmAccount'],
+        startHeight: 40,
+        maxEntries: 200,
+      );
+
+      expect(replies, hasLength(1));
+      expect(replies.single.valueZat, Int64(45000));
+      expect(fake.lastAddressUtxosRequest!.addresses, ['tmAccount']);
+      expect(fake.lastAddressUtxosRequest!.startHeight, Int64(40));
+      expect(fake.lastAddressUtxosRequest!.maxEntries, 200);
+    });
+
+    test('enforces the configured RPC deadline', () async {
+      await _stopServer();
+      await _startServer(
+        _FakeStreamer(addressUtxoDelay: const Duration(seconds: 1)),
+      );
+      await _client!.close();
+      _client = LightwalletdClient(
+        host: 'localhost',
+        port: _server!.port!,
+        useTls: false,
+        rpcTimeout: const Duration(milliseconds: 20),
+      );
+
+      expect(
+        _client!.getAddressUtxos(const ['tmAccount']),
+        throwsA(isA<GrpcError>()),
+      );
+    });
+  });
 }
 
 class _FakeStreamer extends CompactTxStreamerServiceBase {
@@ -491,6 +594,10 @@ class _FakeStreamer extends CompactTxStreamerServiceBase {
   final lwd.TreeState? latestTreeState;
   final List<SubtreeRoot>? subtreeRoots;
   final Object? rangeError;
+  final List<GetAddressUtxosReply>? addressUtxos;
+  final Duration? addressUtxoDelay;
+  GetAddressUtxosArg? lastAddressUtxosRequest;
+  BlockRange? lastBlockRangeRequest;
 
   _FakeStreamer({
     this.lightdInfo,
@@ -500,6 +607,8 @@ class _FakeStreamer extends CompactTxStreamerServiceBase {
     this.latestTreeState,
     this.subtreeRoots,
     this.rangeError,
+    this.addressUtxos,
+    this.addressUtxoDelay,
   });
 
   @override
@@ -522,6 +631,7 @@ class _FakeStreamer extends CompactTxStreamerServiceBase {
 
   @override
   Stream<CompactBlock> getBlockRange(ServiceCall call, BlockRange request) {
+    lastBlockRangeRequest = request.deepCopy();
     final error = rangeError;
     if (error != null) return Stream<CompactBlock>.error(error);
     return Stream.fromIterable(blocks ?? []);
@@ -605,7 +715,12 @@ class _FakeStreamer extends CompactTxStreamerServiceBase {
   Stream<GetAddressUtxosReply> getAddressUtxosStream(
     ServiceCall call,
     GetAddressUtxosArg request,
-  ) => const Stream.empty();
+  ) async* {
+    lastAddressUtxosRequest = request.deepCopy();
+    final delay = addressUtxoDelay;
+    if (delay != null) await Future<void>.delayed(delay);
+    yield* Stream.fromIterable(addressUtxos ?? const []);
+  }
 
   @override
   Future<PingResponse> ping(ServiceCall call, lwd.Duration request) async =>

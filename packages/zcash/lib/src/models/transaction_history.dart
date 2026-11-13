@@ -2,6 +2,7 @@ import 'note_store.dart';
 import 'scan.dart';
 import 'spend.dart';
 import 'transaction.dart';
+import 'transparent_state.dart';
 
 class ZcashHistoryEntry {
   const ZcashHistoryEntry({
@@ -12,6 +13,8 @@ class ZcashHistoryEntry {
     required this.pools,
     required this.unvaluedSpends,
     this.blockHash,
+    this.timestamp,
+    this.feeZatoshis,
   });
 
   final String protocolTxid;
@@ -28,6 +31,10 @@ class ZcashHistoryEntry {
 
   final String? blockHash;
 
+  final int? timestamp;
+
+  final int? feeZatoshis;
+
   int get netZatoshis => receivedZatoshis - spentZatoshis;
 
   bool get isOutgoing => spentZatoshis > 0 || unvaluedSpends > 0;
@@ -41,6 +48,7 @@ class ZcashTransactionHistory {
     SaplingNoteStore? sapling,
     OrchardNoteStore? orchard,
     IronwoodNoteStore? ironwood,
+    ZcashTransparentState? transparent,
   }) {
     final notes = <ZcashScannedNote>[
       ...?sapling?.notes,
@@ -82,6 +90,36 @@ class ZcashTransactionHistory {
         builder.spent += consumed.value;
       }
     }
+    final transparentOutputs =
+        transparent?.outputs ?? const <ZcashTransparentOutput>[];
+    for (final output in transparentOutputs) {
+      entry(output.protocolTxid, output.minedHeight)
+        ..received += output.valueZatoshis
+        ..pools.add('transparent')
+        ..recordCanonicalBlock(
+          height: output.minedHeight,
+          blockHash: output.blockHash,
+        )
+        ..recordMetadata(
+          timestamp: output.blockTime,
+          feeZatoshis: output.creationFeeZatoshis,
+        );
+
+      final spendingTxid = output.spendingProtocolTxid;
+      final spentHeight = output.spentHeight;
+      if (spendingTxid == null || spentHeight == null) continue;
+      entry(spendingTxid, spentHeight)
+        ..spent += output.valueZatoshis
+        ..pools.add('transparent')
+        ..recordCanonicalBlock(
+          height: spentHeight,
+          blockHash: output.spentBlockHash,
+        )
+        ..recordMetadata(
+          timestamp: output.spentBlockTime,
+          feeZatoshis: output.feeZatoshis,
+        );
+    }
 
     final entries = [for (final b in builders.values) b.build()]
       ..sort((a, b) {
@@ -106,6 +144,8 @@ class _EntryBuilder {
   var unvalued = 0;
   final pools = <String>{};
   String? blockHash;
+  int? timestamp;
+  int? feeZatoshis;
 
   void recordCanonicalBlock({required int height, required String? blockHash}) {
     if (height != this.height) {
@@ -122,6 +162,27 @@ class _EntryBuilder {
     this.blockHash ??= blockHash;
   }
 
+  void recordMetadata({required int? timestamp, required int? feeZatoshis}) {
+    final existingTimestamp = this.timestamp;
+    if (timestamp != null &&
+        existingTimestamp != null &&
+        timestamp != existingTimestamp) {
+      throw ZcashModelException(
+        'one transaction was recorded with two different block timestamps',
+      );
+    }
+    final existingFee = this.feeZatoshis;
+    if (feeZatoshis != null &&
+        existingFee != null &&
+        feeZatoshis != existingFee) {
+      throw ZcashModelException(
+        'one transaction was recorded with two different fees',
+      );
+    }
+    this.timestamp ??= timestamp;
+    this.feeZatoshis ??= feeZatoshis;
+  }
+
   ZcashHistoryEntry build() => ZcashHistoryEntry(
     protocolTxid: tx,
     height: height,
@@ -130,5 +191,7 @@ class _EntryBuilder {
     pools: Set.unmodifiable(pools),
     unvaluedSpends: unvalued,
     blockHash: blockHash,
+    timestamp: timestamp,
+    feeZatoshis: feeZatoshis,
   );
 }

@@ -8,6 +8,7 @@ import 'scan.dart';
 import 'spend.dart';
 import 'transaction_history.dart';
 import 'transparent_coins.dart';
+import 'transparent_state.dart';
 import 'tree_state.dart';
 
 class ZcashWalletSyncState {
@@ -18,8 +19,15 @@ class ZcashWalletSyncState {
     required this.sapling,
     required this.orchard,
     required this.ironwood,
+    ZcashTransparentState? transparent,
     IronwoodPendingSendState? pendingIronwoodSends,
-  }) : pendingIronwoodSends =
+  }) : transparent =
+           transparent ??
+           ZcashTransparentState.empty(
+             network: network,
+             accountFingerprint: accountFingerprint,
+           ),
+       pendingIronwoodSends =
            pendingIronwoodSends ?? IronwoodPendingSendState(),
        _cursor = cursor {
     _checkPositions();
@@ -29,6 +37,7 @@ class ZcashWalletSyncState {
     required ZcashLightwalletdSyncCursor cursor,
     required ZcashAddressNetwork network,
     required String accountFingerprint,
+    ZcashTransparentState? transparent,
   }) => ZcashWalletSyncState(
     cursor: cursor,
     network: network,
@@ -36,9 +45,10 @@ class ZcashWalletSyncState {
     sapling: SaplingNoteStore(),
     orchard: OrchardNoteStore(),
     ironwood: IronwoodNoteStore(),
+    transparent: transparent,
   );
 
-  static const int version = 2;
+  static const int version = 3;
 
   final ZcashAddressNetwork network;
 
@@ -47,6 +57,7 @@ class ZcashWalletSyncState {
   final SaplingNoteStore sapling;
   final OrchardNoteStore orchard;
   final IronwoodNoteStore ironwood;
+  final ZcashTransparentState transparent;
   final IronwoodPendingSendState pendingIronwoodSends;
 
   ZcashLightwalletdSyncCursor _cursor;
@@ -59,13 +70,14 @@ class ZcashWalletSyncState {
         sapling: sapling,
         orchard: orchard,
         ironwood: ironwood,
-        transparent: transparent,
+        transparent: transparent ?? this.transparent.coinSet,
       );
 
   ZcashTransactionHistory history() => ZcashTransactionHistory.fromStores(
     sapling: sapling,
     orchard: orchard,
     ironwood: ironwood,
+    transparent: transparent,
   );
 
   ZcashChainSync syncThrough({
@@ -136,15 +148,17 @@ class ZcashWalletSyncState {
       'sapling': sapling.toJson(),
       'orchard': orchard.toJson(),
       'ironwood': ironwood.toJson(),
+      'transparent': transparent.toJson(),
       'pending_ironwood_sends': pendingIronwoodSends.toJson(),
     };
   }
 
   factory ZcashWalletSyncState.fromJson(Map<String, Object?> json) {
     final documentVersion = json['wallet_sync_version'];
-    if (documentVersion != version) {
+    if (documentVersion != 2 && documentVersion != version) {
       throw ZcashModelException(
-        'wallet_sync_version ${documentVersion ?? '(absent)'} is not $version. '
+        'wallet_sync_version ${documentVersion ?? '(absent)'} is not 2 or '
+        '$version. '
         'A wallet restored from a schema this build only half understands '
         'answers a balance, and a balance is exactly the thing nobody '
         're-checks.',
@@ -178,6 +192,12 @@ class ZcashWalletSyncState {
       sapling: SaplingNoteStore.fromJson(_object(json, 'sapling')),
       orchard: OrchardNoteStore.fromJson(_object(json, 'orchard')),
       ironwood: IronwoodNoteStore.fromJson(_object(json, 'ironwood')),
+      transparent: documentVersion == 2
+          ? ZcashTransparentState.empty(
+              network: network,
+              accountFingerprint: fingerprint,
+            )
+          : ZcashTransparentState.fromJson(_object(json, 'transparent')),
       pendingIronwoodSends: json['pending_ironwood_sends'] == null
           ? IronwoodPendingSendState()
           : IronwoodPendingSendState.fromJson(
@@ -246,6 +266,18 @@ class ZcashWalletSyncState {
       if (held == null || held == accountFingerprint) continue;
       throw ZcashModelException(
         'the ${entry.key} store has been accumulating a different account than '
+        'this wallet names',
+      );
+    }
+    if (transparent.network != network) {
+      throw ZcashModelException(
+        'the transparent state belongs to ${transparent.network.name}, not '
+        'this wallet\'s ${network.name} network',
+      );
+    }
+    if (transparent.accountFingerprint != accountFingerprint) {
+      throw const ZcashModelException(
+        'the transparent state has been accumulating a different account than '
         'this wallet names',
       );
     }

@@ -127,6 +127,9 @@ void main() {
       expect(wallet.sapling.coveredThrough, isNull);
       expect(wallet.orchard.coveredThrough, isNull);
       expect(wallet.ironwood.coveredThrough, isNull);
+      expect(wallet.transparent.network, ZcashAddressNetwork.regtest);
+      expect(wallet.transparent.accountFingerprint, _fingerprint);
+      expect(wallet.transparent.outputs, isEmpty);
     });
 
     test('a synced wallet writes down the position it reached', () async {
@@ -339,6 +342,23 @@ void main() {
   });
 
   group('the document', () {
+    test(
+      'migrates a version 2 wallet to empty account-bound transparent state',
+      () {
+        final old = _walletCovering(11, 200).toJson()
+          ..['wallet_sync_version'] = 2
+          ..remove('transparent');
+
+        final restored = ZcashWalletSyncState.fromJson(old);
+
+        expect(restored.transparent.network, ZcashAddressNetwork.regtest);
+        expect(restored.transparent.accountFingerprint, _fingerprint);
+        expect(restored.transparent.outputs, isEmpty);
+        expect(restored.toJson()['wallet_sync_version'], 3);
+        expect(restored.toJson()['transparent'], isA<Map<String, Object?>>());
+      },
+    );
+
     test('refuses an absent or unknown version', () {
       final document = _walletCovering(11, 200).toJson();
 
@@ -374,6 +394,30 @@ void main() {
         () => ZcashWalletSyncState.fromJson({
           ...document,
           'network': 'another-chain',
+        }),
+        throwsA(isA<ZcashModelException>()),
+      );
+    });
+
+    test('refuses transparent state bound to another network or account', () {
+      final document = _walletCovering(11, 200).toJson();
+      final transparent = (document['transparent']! as Map)
+          .cast<String, Object?>();
+
+      expect(
+        () => ZcashWalletSyncState.fromJson({
+          ...document,
+          'transparent': {...transparent, 'network': 'mainnet'},
+        }),
+        throwsA(isA<ZcashModelException>()),
+      );
+      expect(
+        () => ZcashWalletSyncState.fromJson({
+          ...document,
+          'transparent': {
+            ...transparent,
+            'account_fingerprint': 'another-account',
+          },
         }),
         throwsA(isA<ZcashModelException>()),
       );

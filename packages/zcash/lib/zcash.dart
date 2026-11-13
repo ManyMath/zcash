@@ -40,6 +40,8 @@ export 'src/models/account_balance.dart';
 export 'src/models/note_store.dart';
 export 'src/models/note_memo.dart';
 export 'src/models/transparent_coins.dart';
+export 'src/models/transparent_state.dart';
+export 'src/models/transparent_sync.dart';
 export 'src/models/transparent_selection.dart';
 export 'src/models/sapling_selection.dart';
 export 'src/models/sapling_send.dart';
