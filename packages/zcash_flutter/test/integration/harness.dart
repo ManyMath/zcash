@@ -307,6 +307,54 @@ class ZebraHarness {
     return hashes;
   }
 
+  Future<void> waitForTemplateTransaction(
+    String txid, {
+    Duration timeout = const Duration(seconds: 60),
+  }) async {
+    final expected = txid.toLowerCase();
+    final deadline = DateTime.now().add(timeout);
+    var mempoolCount = 0;
+    var templateCount = 0;
+    var seenInMempool = false;
+    while (DateTime.now().isBefore(deadline)) {
+      final mempool = await client.getRawMempool();
+      final template = await client.getBlockTemplate();
+      final templateTxids = <String>{
+        for (final transaction in template.transactions)
+          for (final key in const ['hash', 'txid'])
+            if (transaction[key] is String)
+              (transaction[key] as String).toLowerCase(),
+      };
+      mempoolCount = mempool.length;
+      templateCount = template.transactions.length;
+      seenInMempool = mempool.any(
+        (candidate) => candidate.toLowerCase() == expected,
+      );
+      if (templateTxids.contains(expected)) return;
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+    }
+    throw StateError(
+      'accepted transaction did not reach a block template before timeout '
+      '(seenInMempool=$seenInMempool, mempoolCount=$mempoolCount, '
+      'templateTransactionCount=$templateCount)',
+    );
+  }
+
+  Future<String> mineAcceptedTransaction(String txid) async {
+    await waitForTemplateTransaction(txid);
+    final hash = (await mineBlocks(1)).single;
+    final mined = await client.getBlock(hash);
+    if (!mined.transactions.any(
+      (candidate) => candidate.toLowerCase() == txid.toLowerCase(),
+    )) {
+      throw StateError(
+        'a transaction present in the selected template was absent from the '
+        'mined block (blockTransactionCount=${mined.transactions.length})',
+      );
+    }
+    return hash;
+  }
+
   Future<String> _mineOne() async {
     final tpl = await client.getBlockTemplate();
     final coinbase = tpl.coinbaseTxn;

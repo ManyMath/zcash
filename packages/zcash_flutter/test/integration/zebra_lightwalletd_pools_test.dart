@@ -103,7 +103,9 @@ void main() {
     'Live Sapling and Orchard discovery through lightwalletd',
     () {
       test('an Orchard note is created below activation', () async {
-        if (harness == null) return;
+        if (harness == null) {
+          fail('the live Zebra harness did not start');
+        }
 
         final tip = await harness!.client.getBlockCount();
         expect(
@@ -140,7 +142,7 @@ void main() {
         final txid = await harness!.client.sendRawTransaction(
           built.transactionHex,
         );
-        final hash = (await harness!.mineBlocks(1)).single;
+        final hash = await harness!.mineAcceptedTransaction(txid);
         expect(
           (await harness!.client.getBlock(hash)).transactions,
           contains(txid),
@@ -152,7 +154,9 @@ void main() {
       });
 
       test('a Sapling note is created above activation', () async {
-        if (harness == null || orchardHeight == null) return;
+        if (harness == null || orchardHeight == null) {
+          fail('the pre-activation Orchard note prerequisite did not complete');
+        }
 
         await _mineTo(harness!, nu63Activation + 2);
         final tip = await harness!.client.getBlockCount();
@@ -189,7 +193,7 @@ void main() {
         final txid = await harness!.client.sendRawTransaction(
           built.transactionHex,
         );
-        final hash = (await harness!.mineBlocks(1)).single;
+        final hash = await harness!.mineAcceptedTransaction(txid);
         expect(
           (await harness!.client.getBlock(hash)).transactions,
           contains(txid),
@@ -206,7 +210,11 @@ void main() {
       });
 
       test('the server carries the Orchard fields the node does', () async {
-        if (harness == null || saplingHeight == null) return;
+        if (harness == null || saplingHeight == null) {
+          fail(
+            'the staged Orchard/Sapling funding prerequisites did not complete',
+          );
+        }
 
         final served = await _fetchRange(
           lightwalletd!,
@@ -238,7 +246,11 @@ void main() {
       });
 
       test('the server carries the Sapling fields the node does', () async {
-        if (harness == null || saplingHeight == null) return;
+        if (harness == null || saplingHeight == null) {
+          fail(
+            'the staged Orchard/Sapling funding prerequisites did not complete',
+          );
+        }
 
         final served = await _fetchRange(
           lightwalletd!,
@@ -267,57 +279,62 @@ void main() {
         );
       });
 
-      test(
-        'both notes are found by syncing the range that holds them',
-        () async {
-          if (harness == null || saplingHeight == null) return;
+      test('both notes are found by syncing the range that holds them', () async {
+        if (harness == null || saplingHeight == null) {
+          fail(
+            'the staged Orchard/Sapling funding prerequisites did not complete',
+          );
+        }
 
-          final cursor = ZcashLightwalletdSyncCursor.fromTreeState(
-            await harness!.client.getTreeState('${orchardHeight! - 1}'),
-          );
-          final served = await _fetchRange(
-            lightwalletd!,
-            start: orchardHeight!,
-            end: saplingHeight!,
-          );
-          final scanned = _scan(
-            ffi!,
-            ffiLib,
-            cursor.scanInputFor(
-              served,
-              network: 'regtest',
-              includeSaplingWitnesses: true,
-              includeOrchardWitnesses: true,
-            ),
-          );
+        final cursor = ZcashLightwalletdSyncCursor.fromTreeState(
+          await harness!.client.getTreeState('${orchardHeight! - 1}'),
+        );
+        final served = await _fetchRange(
+          lightwalletd!,
+          start: orchardHeight!,
+          end: saplingHeight!,
+        );
+        final scanned = _scan(
+          ffi!,
+          ffiLib,
+          cursor.scanInputFor(
+            served,
+            network: 'regtest',
+            includeSaplingWitnesses: true,
+            includeOrchardWitnesses: true,
+          ),
+        );
 
-          final orchard = scanned.notes.singleWhere((n) => n.pool == 'orchard');
-          expect(orchard.value, orchardValue);
-          expect(orchard.height, orchardHeight);
-          expect(orchard.witness, isNotNull);
+        final orchard = scanned.notes.singleWhere((n) => n.pool == 'orchard');
+        expect(orchard.value, orchardValue);
+        expect(orchard.height, orchardHeight);
+        expect(orchard.witness, isNotNull);
 
-          final sapling = scanned.notes.singleWhere((n) => n.pool == 'sapling');
-          expect(sapling.value, saplingValue);
-          expect(sapling.height, saplingHeight);
-          expect(sapling.witness, isNotNull);
+        final sapling = scanned.notes.singleWhere((n) => n.pool == 'sapling');
+        expect(sapling.value, saplingValue);
+        expect(sapling.height, saplingHeight);
+        expect(sapling.witness, isNotNull);
 
-          expect(
-            scanned.notes.where((n) => n.pool == 'ironwood'),
-            isEmpty,
-            reason:
-                'nothing on this chain made an Ironwood note, and a scan that '
-                'reported one would be reading the Orchard field twice',
-          );
-          expect(
-            scanned.saplingAnchor,
-            isNot(scanned.orchardAnchor),
-            reason: 'two pools, two trees, two roots',
-          );
-        },
-      );
+        expect(
+          scanned.notes.where((n) => n.pool == 'ironwood'),
+          isEmpty,
+          reason:
+              'nothing on this chain made an Ironwood note, and a scan that '
+              'reported one would be reading the Orchard field twice',
+        );
+        expect(
+          scanned.saplingAnchor,
+          isNot(scanned.orchardAnchor),
+          reason: 'two pools, two trees, two roots',
+        );
+      });
 
       test('the two sources agree note for note, in both pools', () async {
-        if (harness == null || saplingHeight == null) return;
+        if (harness == null || saplingHeight == null) {
+          fail(
+            'the staged Orchard/Sapling funding prerequisites did not complete',
+          );
+        }
 
         final cursor = ZcashLightwalletdSyncCursor.fromTreeState(
           await harness!.client.getTreeState('${orchardHeight! - 1}'),
@@ -370,7 +387,11 @@ void main() {
       });
 
       test('one call syncs both pools into one wallet', () async {
-        if (harness == null || saplingHeight == null) return;
+        if (harness == null || saplingHeight == null) {
+          fail(
+            'the staged Orchard/Sapling funding prerequisites did not complete',
+          );
+        }
 
         await harness!.mineBlocks(2);
         final tip = await harness!.client.getBlockCount();
@@ -435,7 +456,9 @@ void main() {
       }, timeout: const Timeout(Duration(minutes: 5)));
 
       test('reopening the document is not a rescan, in either pool', () async {
-        if (harness == null || walletDocument == null) return;
+        if (harness == null || walletDocument == null) {
+          fail('the persisted two-pool wallet prerequisite did not complete');
+        }
 
         final restored = ZcashWalletSyncState.fromJson(
           (jsonDecode(walletDocument!) as Map).cast<String, Object?>(),
@@ -486,7 +509,9 @@ void main() {
       test(
         'a reorg below the restart, in the pool that made the note',
         () async {
-          if (harness == null || reopenedSync == null) return;
+          if (harness == null || reopenedSync == null) {
+            fail('the reopened two-pool sync prerequisite did not complete');
+          }
           final wallet = reopened!;
           final sync = reopenedSync!;
 
@@ -526,7 +551,7 @@ void main() {
                 'the replacement spends the abandoned transaction\'s coin, so '
                 'the node cannot hold both',
           );
-          await harness!.mineBlocks(1);
+          await harness!.mineAcceptedTransaction(replacement.txid);
           expect(await harness!.client.getBlockCount(), saplingHeight);
           replacementSaplingTxid = replacement.txid;
           replacementSaplingValue = replacement.totalOutputZatoshis;
@@ -636,7 +661,9 @@ void main() {
       );
 
       test('a wallet restored half-rolled-back is refused', () async {
-        if (harness == null || reopened == null) return;
+        if (harness == null || reopened == null) {
+          fail('the reopened two-pool wallet prerequisite did not complete');
+        }
 
         final document = (jsonDecode(jsonEncode(reopened!.toJson())) as Map)
             .cast<String, Object?>();

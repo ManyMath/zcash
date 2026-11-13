@@ -142,8 +142,9 @@ void main() {
         prepared.transactionHex,
       );
       expect(txid, prepared.txid);
+      expect(await harness!.client.getRawMempool(), contains(txid));
 
-      final hash = (await harness!.mineBlocks(1)).single;
+      final hash = await harness!.mineAcceptedTransaction(txid);
       expect(
         (await harness!.client.getBlock(hash)).transactions,
         contains(txid),
@@ -246,7 +247,8 @@ void main() {
         final txid = await harness!.client.sendRawTransaction(
           built.transactionHex,
         );
-        final hash = (await harness!.mineBlocks(1)).single;
+        expect(await harness!.client.getRawMempool(), contains(txid));
+        final hash = await harness!.mineAcceptedTransaction(txid);
         expect(
           (await harness!.client.getBlock(hash)).transactions,
           contains(txid),

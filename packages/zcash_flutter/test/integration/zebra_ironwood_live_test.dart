@@ -4,8 +4,10 @@ library;
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
+
 import 'package:test/test.dart';
 import 'package:zcash_flutter/zcash_flutter.dart';
+
 import 'harness.dart';
 
 // Needs an Ironwood-aware ZEBRA_BIN and a ZCASH_FFI_LIB with orchard-tx-build
@@ -56,7 +58,9 @@ void main() {
 
   group('Live NU6.3 staged-chain builds', () {
     test('a matured coinbase is spendable by the suite key', () async {
-      if (harness == null) return;
+      if (harness == null) {
+        fail('the live Zebra harness did not start');
+      }
       final utxos = await harness!.client.getAddressUtxos([
         kIronwoodProofMinerAddress,
       ]);
@@ -75,7 +79,9 @@ void main() {
     test(
       'a v5 Orchard shielding transaction is accepted below NU6.3',
       () async {
-        if (harness == null || coinbase == null) return;
+        if (harness == null || coinbase == null) {
+          fail('the matured coinbase prerequisite did not complete');
+        }
         final tip = await harness!.client.getBlockCount();
         expect(
           tip,
@@ -125,7 +131,7 @@ void main() {
         expect(txid, built.txid);
         expect(await harness!.client.getRawMempool(), contains(built.txid));
 
-        final hash = (await harness!.mineBlocks(1)).single;
+        final hash = await harness!.mineAcceptedTransaction(txid);
         final block = await harness!.client.getBlock(hash);
         expect(
           block.transactions,
@@ -137,7 +143,11 @@ void main() {
     );
 
     test('the mined Orchard output is in the chain tree state', () async {
-      if (harness == null || preActivationTxid == null) return;
+      if (harness == null || preActivationTxid == null) {
+        fail(
+          'the pre-activation Orchard transaction prerequisite did not complete',
+        );
+      }
       final tip = await harness!.client.getBlockCount();
       final treeState = await harness!.client.getTreeState('$tip');
       expect(
@@ -150,7 +160,11 @@ void main() {
     });
 
     test('the same transaction is rejected once NU6.3 activates', () async {
-      if (harness == null || preActivationTxHex == null) return;
+      if (harness == null || preActivationTxHex == null) {
+        fail(
+          'the pre-activation Orchard transaction prerequisite did not complete',
+        );
+      }
       await _mineTo(harness!, nu63Activation);
       final info = await harness!.client.getBlockchainInfo();
       expect(info.upgrades['37a5165b']!.status, 'active');
@@ -164,7 +178,9 @@ void main() {
     test(
       'a v6 Ironwood shielding transaction is accepted above NU6.3',
       () async {
-        if (harness == null) return;
+        if (harness == null) {
+          fail('the live Zebra harness did not start');
+        }
         final tip = await harness!.client.getBlockCount();
         expect(tip, greaterThanOrEqualTo(nu63Activation));
 
@@ -209,7 +225,7 @@ void main() {
         );
         expect(txid, built.txid);
 
-        final hash = (await harness!.mineBlocks(1)).single;
+        final hash = await harness!.mineAcceptedTransaction(txid);
         final block = await harness!.client.getBlock(hash);
         expect(
           block.transactions,
@@ -223,7 +239,11 @@ void main() {
     );
 
     test('a ZIP 318 canonical migration moves the note into Ironwood', () async {
-      if (harness == null || shieldBlockHeight == null) return;
+      if (harness == null || shieldBlockHeight == null) {
+        fail(
+          'the discovered pre-activation Orchard note prerequisite did not complete',
+        );
+      }
 
       final rawBlock = await harness!.client.getRawBlock('$shieldBlockHeight');
       final converted = ZcashCompactBlockConversion.fromJson(
@@ -311,7 +331,7 @@ void main() {
       );
       expect(txid, built.txid);
 
-      final hash = (await harness!.mineBlocks(1)).single;
+      final hash = await harness!.mineAcceptedTransaction(txid);
       final block = await harness!.client.getBlock(hash);
       expect(
         block.transactions,
@@ -327,7 +347,9 @@ void main() {
     });
 
     test('the migrated funds are visible in the Ironwood pool', () async {
-      if (harness == null || migrationBlockHeight == null) return;
+      if (harness == null || migrationBlockHeight == null) {
+        fail('the mined ZIP 318 migration prerequisite did not complete');
+      }
 
       final rawBlocks = <String>[
         for (var h = shieldBlockHeight!; h <= migrationBlockHeight!; h++)
@@ -411,7 +433,11 @@ void main() {
     });
 
     test('the migrated Ironwood note can be spent', () async {
-      if (harness == null || migratedIronwoodNote == null) return;
+      if (harness == null || migratedIronwoodNote == null) {
+        fail(
+          'the discovered migrated Ironwood note prerequisite did not complete',
+        );
+      }
 
       final note = migratedIronwoodNote!;
       const change = 400000;
@@ -496,7 +522,7 @@ void main() {
       );
       expect(txid, built.txid);
 
-      final hash = (await harness!.mineBlocks(1)).single;
+      final hash = await harness!.mineAcceptedTransaction(txid);
       final block = await harness!.client.getBlock(hash);
       expect(
         block.transactions,
@@ -539,7 +565,9 @@ void main() {
     });
 
     test('the spent Ironwood note is observed spent by a scan', () async {
-      if (harness == null || ironwoodSpendBlockHeight == null) return;
+      if (harness == null || ironwoodSpendBlockHeight == null) {
+        fail('the mined Ironwood spend prerequisite did not complete');
+      }
 
       final note = migratedIronwoodNote!;
       final nullifier = note.nullifier;
@@ -659,7 +687,9 @@ void main() {
     });
 
     test('the wallet\'s Ironwood balance reflects the spend', () async {
-      if (harness == null || ironwoodSpendBlockHeight == null) return;
+      if (harness == null || ironwoodSpendBlockHeight == null) {
+        fail('the mined Ironwood spend prerequisite did not complete');
+      }
 
       final rawBlocks = <String>[
         for (var h = shieldBlockHeight!; h <= ironwoodSpendBlockHeight!; h++)
@@ -735,7 +765,9 @@ void main() {
     });
 
     test('a payment is selected, priced, built and mined', () async {
-      if (harness == null || ironwoodSpendBlockHeight == null) return;
+      if (harness == null || ironwoodSpendBlockHeight == null) {
+        fail('the spend-observation prerequisite did not complete');
+      }
 
       final rawBlocks = <String>[
         for (var h = shieldBlockHeight!; h <= ironwoodSpendBlockHeight!; h++)
@@ -848,7 +880,7 @@ void main() {
       final txid = await harness!.client.sendRawTransaction(
         built.transactionHex,
       );
-      final hash = (await harness!.mineBlocks(1)).single;
+      final hash = await harness!.mineAcceptedTransaction(txid);
       final block = await harness!.client.getBlock(hash);
       expect(
         block.transactions,
@@ -862,7 +894,9 @@ void main() {
     });
 
     test('the send API pays out of a scan in one call', () async {
-      if (harness == null || paymentBlockHeight == null) return;
+      if (harness == null || paymentBlockHeight == null) {
+        fail('the mined Ironwood payment prerequisite did not complete');
+      }
 
       final rawBlocks = <String>[
         for (var h = shieldBlockHeight!; h <= paymentBlockHeight!; h++)
@@ -989,7 +1023,7 @@ void main() {
         prepared.transactionHex,
       );
       expect(txid, prepared.txid);
-      final hash = (await harness!.mineBlocks(1)).single;
+      final hash = await harness!.mineAcceptedTransaction(txid);
       final block = await harness!.client.getBlock(hash);
       expect(
         block.transactions,
@@ -1008,7 +1042,7 @@ void main() {
       final reservedTxid = await harness!.client.sendRawTransaction(
         reserved.transactionHex,
       );
-      final reservedHash = (await harness!.mineBlocks(1)).single;
+      final reservedHash = await harness!.mineAcceptedTransaction(reservedTxid);
       expect(
         (await harness!.client.getBlock(reservedHash)).transactions,
         contains(reservedTxid),
@@ -1019,7 +1053,9 @@ void main() {
     });
 
     test('a payment is broadcast and then recognised as confirmed', () async {
-      if (harness == null || paymentBlockHeight == null) return;
+      if (harness == null || paymentBlockHeight == null) {
+        fail('the mined Ironwood payment prerequisite did not complete');
+      }
 
       Future<ZcashScanResult> scanToTip({
         ZcashWatchedNullifiers? watched,
@@ -1093,7 +1129,7 @@ void main() {
         reason: 'the two encodings of one hash are not the same string',
       );
 
-      final hash = (await harness!.mineBlocks(1)).single;
+      final hash = await harness!.mineAcceptedTransaction(receipt.txid);
       expect(
         (await harness!.client.getBlock(hash)).transactions,
         contains(receipt.txid),
@@ -1128,7 +1164,9 @@ void main() {
     });
 
     test('a store resolves a note no single scan can', () async {
-      if (harness == null || paymentBlockHeight == null) return;
+      if (harness == null || paymentBlockHeight == null) {
+        fail('the mined Ironwood payment prerequisite did not complete');
+      }
 
       Future<ZcashScanResult> scanRange(
         int from,
@@ -1183,7 +1221,14 @@ void main() {
 
       final heldBefore = store.noteSet.unspentZatoshis;
       expect(heldBefore, greaterThan(0));
-      expect(store.noteSet.spendableZatoshis, 0);
+      final spendableBefore = store.noteSet.spendableZatoshis;
+      expect(
+        spendableBefore,
+        greaterThan(0),
+        reason:
+            'the store preserves the scan witnesses needed to spend after the '
+            'discovery call returns',
+      );
 
       final available = IronwoodNoteSet.fromScan(
         notes: discovery.notes,
@@ -1209,7 +1254,7 @@ void main() {
         submit: harness!.client.sendRawTransaction,
         isRejection: (error) => error is ZebraRpcException,
       );
-      await harness!.mineBlocks(1);
+      await harness!.mineAcceptedTransaction(receipt.txid);
       final spendHeight = await harness!.client.getBlockCount();
       expect(spendHeight, discoveryTo + 1);
 
@@ -1261,6 +1306,13 @@ void main() {
       final restored = IronwoodNoteStore.fromJson(
         jsonDecode(jsonEncode(store.toJson())) as Map<String, Object?>,
       );
+      expect(
+        restored.noteSet.spendableZatoshis,
+        spendableBefore,
+        reason:
+            'witness-backed spendability survives the same document round trip '
+            'a wallet restart uses',
+      );
       store.apply(later, accountFingerprint: fingerprint);
       restored.apply(later, accountFingerprint: fingerprint);
 
@@ -1279,13 +1331,18 @@ void main() {
         heldBefore - committedValue + received,
       );
       expect(restored.noteSet.unspentZatoshis, store.noteSet.unspentZatoshis);
+      expect(
+        restored.noteSet.spendableZatoshis,
+        store.noteSet.spendableZatoshis,
+      );
       expect(store.coveredFrom, discoveryFrom);
       expect(store.coveredThrough, spendHeight);
-      expect(store.noteSet.spendableZatoshis, 0);
     });
 
     test('a memo is sent, mined, and read back off the chain', () async {
-      if (harness == null || paymentBlockHeight == null) return;
+      if (harness == null || paymentBlockHeight == null) {
+        fail('the mined Ironwood payment prerequisite did not complete');
+      }
 
       final memo = Uint8List.fromList(utf8.encode('paid, with thanks — 19c'));
 
@@ -1369,7 +1426,7 @@ void main() {
         submit: harness!.client.sendRawTransaction,
         isRejection: (error) => error is ZebraRpcException,
       );
-      final blockHash = (await harness!.mineBlocks(1)).single;
+      final blockHash = await harness!.mineAcceptedTransaction(receipt.txid);
       expect(
         (await harness!.client.getBlock(blockHash)).transactions,
         contains(receipt.txid),
@@ -1478,7 +1535,9 @@ void main() {
     });
 
     test('no Orchard output can be created after activation', () async {
-      if (harness == null) return;
+      if (harness == null) {
+        fail('the live Zebra harness did not start');
+      }
       final tip = await harness!.client.getBlockCount();
       expect(
         () => buildNativeOrchardTransaction(

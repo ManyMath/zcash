@@ -3,8 +3,10 @@ library;
 
 import 'dart:convert';
 import 'dart:io';
+
 import 'package:test/test.dart';
 import 'package:zcash_flutter/zcash_flutter.dart';
+
 import 'harness.dart';
 
 // Needs an Ironwood-aware ZEBRA_BIN, the Sapling MPC parameters in
@@ -62,7 +64,9 @@ void main() {
     'Live Sapling send',
     () {
       test('the chain is past NU6.3 and holds a spendable coinbase', () async {
-        if (harness == null) return;
+        if (harness == null) {
+          fail('the live Zebra harness did not start');
+        }
         final info = await harness!.client.getBlockchainInfo();
         expect(
           info.upgrades['37a5165b']!.status,
@@ -85,7 +89,9 @@ void main() {
       });
 
       test('a transparent coinbase is shielded into the Sapling pool', () async {
-        if (harness == null || saplingAddress == null) return;
+        if (harness == null || saplingAddress == null) {
+          fail('the live Zebra/Sapling address prerequisite did not complete');
+        }
 
         final tip = await harness!.client.getBlockCount();
         final utxos = await harness!.client.getAddressUtxos([
@@ -169,7 +175,7 @@ void main() {
         expect(txid, built.txid);
         expect(await harness!.client.getRawMempool(), contains(built.txid));
 
-        final hash = (await harness!.mineBlocks(1)).single;
+        final hash = await harness!.mineAcceptedTransaction(txid);
         final block = await harness!.client.getBlock(hash);
         expect(
           block.transactions,
@@ -185,7 +191,9 @@ void main() {
       test(
         'the shielded note is discovered by a scan with no lightwalletd',
         () async {
-          if (harness == null || shieldBlockHeight == null) return;
+          if (harness == null || shieldBlockHeight == null) {
+            fail('the Sapling shielding prerequisite did not complete');
+          }
 
           final scanned = _scanRange(ffi!, ffiLib, [
             await harness!.client.getRawBlock('$shieldBlockHeight'),
@@ -227,7 +235,9 @@ void main() {
       );
 
       test('the scanned note is spent, broadcast and mined', () async {
-        if (harness == null || shieldedNote == null) return;
+        if (harness == null || shieldedNote == null) {
+          fail('the scanned Sapling note prerequisite did not complete');
+        }
 
         final note = shieldedNote!;
         final tip = await harness!.client.getBlockCount();
@@ -282,7 +292,7 @@ void main() {
         );
         expect(txid, built.txid);
 
-        final hash = (await harness!.mineBlocks(1)).single;
+        final hash = await harness!.mineAcceptedTransaction(txid);
         final block = await harness!.client.getBlock(hash);
         expect(
           block.transactions,
@@ -298,7 +308,9 @@ void main() {
       });
 
       test('the same spend is refused the second time', () async {
-        if (harness == null || spendTxHex == null) return;
+        if (harness == null || spendTxHex == null) {
+          fail('the mined Sapling spend prerequisite did not complete');
+        }
         await expectLater(
           harness!.client.sendRawTransaction(spendTxHex!),
           throwsA(isA<ZebraRpcException>()),
@@ -306,7 +318,9 @@ void main() {
       });
 
       test('a rescan sees the note spent and the payment arrive', () async {
-        if (harness == null || spendBlockHeight == null) return;
+        if (harness == null || spendBlockHeight == null) {
+          fail('the mined Sapling spend prerequisite did not complete');
+        }
 
         final rawBlocks = <String>[
           for (var h = shieldBlockHeight!; h <= spendBlockHeight!; h++)
@@ -381,7 +395,9 @@ void main() {
       });
 
       test('the send API pays out of a scan in one call', () async {
-        if (harness == null || spendBlockHeight == null) return;
+        if (harness == null || spendBlockHeight == null) {
+          fail('the mined Sapling spend prerequisite did not complete');
+        }
 
         final tip = await harness!.client.getBlockCount();
         final rawBlocks = <String>[
@@ -442,7 +458,7 @@ void main() {
           prepared.transactionHex,
         );
         expect(txid, prepared.txid);
-        final hash = (await harness!.mineBlocks(1)).single;
+        final hash = await harness!.mineAcceptedTransaction(txid);
         expect(
           (await harness!.client.getBlock(hash)).transactions,
           contains(txid),
@@ -504,7 +520,7 @@ void main() {
         );
 
         await harness!.client.sendRawTransaction(first.transactionHex);
-        final firstHash = (await harness!.mineBlocks(1)).single;
+        final firstHash = await harness!.mineAcceptedTransaction(first.txid);
         expect(
           (await harness!.client.getBlock(firstHash)).transactions,
           contains(first.txid),
@@ -520,7 +536,9 @@ void main() {
         final reservedTxid = await harness!.client.sendRawTransaction(
           reserved.transactionHex,
         );
-        final reservedHash = (await harness!.mineBlocks(1)).single;
+        final reservedHash = await harness!.mineAcceptedTransaction(
+          reservedTxid,
+        );
         expect(
           (await harness!.client.getBlock(reservedHash)).transactions,
           contains(reservedTxid),
@@ -531,7 +549,9 @@ void main() {
       });
 
       test('a payment is broadcast and then recognised as confirmed', () async {
-        if (harness == null || spendBlockHeight == null) return;
+        if (harness == null || spendBlockHeight == null) {
+          fail('the mined Sapling spend prerequisite did not complete');
+        }
 
         Future<ZcashScanResult> scanToTip({
           ZcashWatchedNullifiers? watched,
@@ -589,7 +609,7 @@ void main() {
           reason: 'the two encodings of one hash are not the same string',
         );
 
-        final hash = (await harness!.mineBlocks(1)).single;
+        final hash = await harness!.mineAcceptedTransaction(receipt.txid);
         expect(
           (await harness!.client.getBlock(hash)).transactions,
           contains(receipt.txid),
