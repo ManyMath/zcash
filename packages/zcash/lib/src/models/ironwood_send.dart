@@ -242,3 +242,157 @@ class IronwoodPreparedSend {
 
   int get expiryHeight => transaction.expiryHeight;
 }
+
+/// A payment funded only by Ironwood notes, with the destination route kept
+/// separate from note selection. This permits the mandatory Ironwood builder
+/// output to be either the payment itself or wallet change.
+class IronwoodPaymentPlan {
+  IronwoodPaymentPlan._({required this.output, required IronwoodSendPlan base})
+    : _base = base;
+
+  final ProposalOutput output;
+  final IronwoodSendPlan _base;
+
+  List<ZcashScannedNote> get notes => _base.notes;
+  int get amountZatoshis => output.amountZatoshis;
+  int get feeZatoshis => _base.feeZatoshis;
+  int get changeZatoshis => _base.changeZatoshis;
+  String get anchorHex => _base.anchorHex;
+  int get targetHeight => _base.targetHeight;
+  int? get expiryHeight => _base.expiryHeight;
+  int get inputZatoshis => _base.inputZatoshis;
+  Set<String> get spentNullifiers => _base.spentNullifiers;
+
+  static IronwoodPaymentPlan fromScan({
+    required ZcashScanResult scan,
+    required ProposalOutput output,
+    required int targetHeight,
+    required int Function(List<ZcashScannedNote> spends) feeForSpends,
+    IronwoodNoteReservations? reservations,
+    int? maxNotes,
+    int? expiryHeight,
+  }) {
+    final base = IronwoodSendPlan.fromScan(
+      scan: scan,
+      recipientAddress: output.receiverAddress,
+      amountZatoshis: output.amountZatoshis,
+      targetHeight: targetHeight,
+      feeForSpends: feeForSpends,
+      reservations: reservations,
+      maxNotes: maxNotes,
+      expiryHeight: expiryHeight,
+      memo: output.memo,
+    );
+    return IronwoodPaymentPlan._(output: output, base: base);
+  }
+}
+
+class IronwoodPreparedPayment {
+  factory IronwoodPreparedPayment({
+    required IronwoodPaymentPlan plan,
+    required IronwoodBuildResult transaction,
+  }) {
+    void require(String field, int planned, int built) {
+      if (planned != built) {
+        throw IronwoodSendException(
+          IronwoodSendRefusal.planBuildMismatch,
+          'the built transaction $field is $built where the approved payment '
+          'plan says $planned',
+        );
+      }
+    }
+
+    require('fee', plan.feeZatoshis, transaction.feeZatoshis);
+    require('input', plan.inputZatoshis, transaction.ironwoodInputZatoshis);
+    if (transaction.feeRule != 'zip317') {
+      throw IronwoodSendException(
+        IronwoodSendRefusal.planBuildMismatch,
+        'the payment was not built with ZIP 317 fee accounting',
+      );
+    }
+    if (transaction.ironwoodSpends != plan.notes.length) {
+      throw IronwoodSendException(
+        IronwoodSendRefusal.planBuildMismatch,
+        'the build spends ${transaction.ironwoodSpends} Ironwood notes where '
+        'the approved plan selected ${plan.notes.length}',
+      );
+    }
+    if (transaction.ironwoodAnchor.toLowerCase() !=
+        plan.anchorHex.toLowerCase()) {
+      throw IronwoodSendException(
+        IronwoodSendRefusal.planBuildMismatch,
+        'the build uses a different Ironwood anchor than note selection',
+      );
+    }
+
+    switch (plan.output.actualOutputPool) {
+      case ProposalOutputPool.ironwood:
+        require(
+          'Ironwood payment',
+          plan.amountZatoshis,
+          transaction.ironwoodOutputZatoshis,
+        );
+        require(
+          'Ironwood change',
+          plan.changeZatoshis,
+          transaction.ironwoodChangeZatoshis,
+        );
+        require('transparent output count', 0, transaction.vout);
+        require('Sapling output count', 0, transaction.saplingOutputs);
+      case ProposalOutputPool.transparent:
+        require(
+          'transparent payment',
+          plan.amountZatoshis,
+          transaction.nonIronwoodOutputZatoshis,
+        );
+        require(
+          'Ironwood change output',
+          plan.changeZatoshis,
+          transaction.ironwoodOutputZatoshis,
+        );
+        require(
+          'separate Ironwood change',
+          0,
+          transaction.ironwoodChangeZatoshis,
+        );
+        require('transparent output count', 1, transaction.vout);
+        require('Sapling output count', 0, transaction.saplingOutputs);
+      case ProposalOutputPool.sapling:
+        require(
+          'Sapling payment',
+          plan.amountZatoshis,
+          transaction.nonIronwoodOutputZatoshis,
+        );
+        require(
+          'Ironwood change output',
+          plan.changeZatoshis,
+          transaction.ironwoodOutputZatoshis,
+        );
+        require(
+          'separate Ironwood change',
+          0,
+          transaction.ironwoodChangeZatoshis,
+        );
+        require('transparent output count', 0, transaction.vout);
+        require('Sapling output count', 1, transaction.saplingOutputs);
+      case ProposalOutputPool.orchard:
+        throw IronwoodSendException(
+          IronwoodSendRefusal.planBuildMismatch,
+          'ordinary post-NU6.3 payments cannot build an Orchard output',
+        );
+    }
+    return IronwoodPreparedPayment._(plan: plan, transaction: transaction);
+  }
+
+  const IronwoodPreparedPayment._({
+    required this.plan,
+    required this.transaction,
+  });
+
+  final IronwoodPaymentPlan plan;
+  final IronwoodBuildResult transaction;
+
+  String get transactionHex => transaction.transactionHex;
+  String get txid => transaction.txid;
+  int get expiryHeight => transaction.expiryHeight;
+}

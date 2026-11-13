@@ -1273,6 +1273,7 @@ struct UnifiedReceiverInventoryEntry {
     index: usize,
     kind: &'static str,
     pool: &'static str,
+    address: Option<String>,
 }
 
 #[derive(Debug)]
@@ -1429,6 +1430,7 @@ impl UnifiedReceiverInventory {
                     "index": receiver.index,
                     "kind": receiver.kind,
                     "pool": receiver.pool,
+                    "address": receiver.address,
                 })
             }).collect::<Vec<_>>(),
             "counts": {
@@ -1476,14 +1478,31 @@ impl TryFromAddress for UnifiedReceiverInventory {
             })
             .enumerate()
             .map(|(index, receiver)| {
-                let (kind, pool) = match receiver {
-                    unified::Receiver::Orchard(_) => ("orchard", "orchard"),
-                    unified::Receiver::Sapling(_) => ("sapling", "sapling"),
-                    unified::Receiver::P2pkh(_) => ("p2pkh", "transparent"),
-                    unified::Receiver::P2sh(_) => ("p2sh", "transparent"),
-                    unified::Receiver::Unknown { .. } => ("unknown", "unknown"),
+                let (kind, pool, address) = match receiver {
+                    unified::Receiver::Orchard(_) => ("orchard", "orchard", None),
+                    unified::Receiver::Sapling(data) => (
+                        "sapling",
+                        "sapling",
+                        Some(ZcashAddress::from_sapling(net, *data).encode()),
+                    ),
+                    unified::Receiver::P2pkh(data) => (
+                        "p2pkh",
+                        "transparent",
+                        Some(ZcashAddress::from_transparent_p2pkh(net, *data).encode()),
+                    ),
+                    unified::Receiver::P2sh(data) => (
+                        "p2sh",
+                        "transparent",
+                        Some(ZcashAddress::from_transparent_p2sh(net, *data).encode()),
+                    ),
+                    unified::Receiver::Unknown { .. } => ("unknown", "unknown", None),
                 };
-                UnifiedReceiverInventoryEntry { index, kind, pool }
+                UnifiedReceiverInventoryEntry {
+                    index,
+                    kind,
+                    pool,
+                    address,
+                }
             })
             .collect();
 

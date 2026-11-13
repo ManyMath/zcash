@@ -814,8 +814,15 @@ fn populate<P: Parameters + Copy>(
     let sapling = decode_sapling_spends(params, req)?;
     let orchard = decode_orchard_spends(params, req)?;
     let ironwood = decode_ironwood_spends(params, req)?;
+    let sapling_output = has_sapling_output(&params, req)?;
     let build_config = BuildConfig::Standard {
-        sapling_anchor: sapling.as_ref().map(|s| s.anchor),
+        // A zero-spend Sapling bundle still needs a builder. Its anchor does
+        // not authenticate any spend, so the empty root is the canonical
+        // non-secret choice.
+        sapling_anchor: sapling
+            .as_ref()
+            .map(|s| s.anchor)
+            .or_else(|| sapling_output.then(sapling::Anchor::empty_tree)),
         orchard_anchor: orchard.as_ref().map(|o| o.anchor),
         ironwood_anchor: Some(req.anchor),
         orchard_padding: BundlePadding::DEFAULT,
@@ -917,13 +924,10 @@ fn populate<P: Parameters + Copy>(
                 .add_transparent_output(&to, zatoshis(output.value, "value_zatoshis")?)
                 .map_err(|_| err("invalid_output", "could not add transparent output"))?,
             OutputDestination::Sapling(pa) => {
-                let ovk = sapling_ovk.ok_or_else(|| {
-                    err(
-                        "sapling_output_without_spend",
-                        "a Sapling output is only accepted as change from a Sapling \
-                             spend; this build spends no Sapling notes",
-                    )
-                })?;
+                let ovk = match sapling_ovk {
+                    Some(ovk) => ovk,
+                    None => derive_sapling_output_ovk(params, req)?,
+                };
                 builder
                     .add_sapling_output::<Infallible>(
                         Some(ovk),
@@ -947,6 +951,38 @@ fn populate<P: Parameters + Copy>(
         .map_err(|_| err("invalid_output", "could not add the Ironwood output"))?;
 
     Ok((builder, signing_set, sapling_keys, orchard_keys))
+}
+
+fn derive_sapling_output_ovk<P: Parameters + Copy>(
+    params: P,
+    req: &ParsedRequest,
+) -> Result<sapling::keys::OutgoingViewingKey, BuildError> {
+    let seed = req.seed.as_ref().ok_or_else(|| {
+        err(
+            "sapling_output_seed_required",
+            "a Sapling payment requires the account seed so its outgoing viewing \
+                 key can be derived",
+        )
+    })?;
+    let usk = UnifiedSpendingKey::from_seed(&params, seed, req.account).map_err(|_| {
+        err(
+            "derivation_error",
+            "could not derive the Sapling outgoing viewing key from the seed",
+        )
+    })?;
+    Ok(usk.sapling().to_diversifiable_full_viewing_key().fvk().ovk)
+}
+
+fn has_sapling_output<P: Parameters>(params: &P, req: &ParsedRequest) -> Result<bool, BuildError> {
+    for output in &req.outputs {
+        if matches!(
+            decode_output_address(params, &output.address)?,
+            OutputDestination::Sapling(_)
+        ) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 type SaplingSpendKey = sapling::zip32::ExtendedSpendingKey;
@@ -1525,8 +1561,16 @@ where
         None => BuildRng::os(),
     };
 
+    let needs_sapling_prover = !req.sapling_spends.is_empty() || has_sapling_output(&params, req)?;
+    if needs_sapling_prover && req.sapling_params.is_none() {
+        return Err(err(
+            "sapling_params_required",
+            "a Sapling spend or output requires caller-supplied Sapling MPC \
+                 proving parameters (spend_params_path and output_params_path)",
+        ));
+    }
     let result = match &req.sapling_params {
-        Some(p) if !req.sapling_spends.is_empty() => {
+        Some(p) if needs_sapling_prover => {
             let zp = load_sapling_params(p)?;
             builder.build(
                 &signing_set,

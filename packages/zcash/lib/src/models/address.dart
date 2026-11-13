@@ -12,6 +12,8 @@ enum ZcashAddressNetwork {
 }
 
 enum ZcashAddressReceiverType {
+  /// An unrecognized ZIP 316 Receiver Item. Senders treat it as absent; this
+  /// is not an unknown MUST-understand Metadata Item, which parsing rejects.
   unknown,
   sprout,
   p2pkh,
@@ -243,10 +245,16 @@ class ZcashUnifiedAddressReceiver {
   final ZcashAddressReceiverType kind;
   final ZcashAddressPool pool;
 
+  /// The standalone encoding of this receiver, when one exists. Orchard
+  /// receivers intentionally remain inside their Unified Address because
+  /// Ironwood uses the Orchard receiver and Unified Address encoding.
+  final String? address;
+
   const ZcashUnifiedAddressReceiver({
     required this.index,
     required this.kind,
     required this.pool,
+    this.address,
   });
 
   factory ZcashUnifiedAddressReceiver.fromJson(Map<String, dynamic> json) =>
@@ -254,12 +262,14 @@ class ZcashUnifiedAddressReceiver {
         index: (json['index'] as num).toInt(),
         kind: ZcashAddressReceiverType.fromJson(json['kind'] as String),
         pool: ZcashAddressPool.fromJson(json['pool'] as String),
+        address: json['address'] as String?,
       );
 
   Map<String, Object?> toJson() => {
     'index': index,
     'kind': kind.name,
     'pool': pool.name,
+    if (address != null) 'address': address,
   };
 }
 

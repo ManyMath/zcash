@@ -31,14 +31,20 @@ class TransparentBuildOutput {
 
   final int valueZatoshis;
 
+  /// Used by shielded destinations in the mixed-pool Ironwood builder. The
+  /// transparent-only builder rejects/ignores no memo because this stays null.
+  final String? memoHex;
+
   const TransparentBuildOutput({
     required this.address,
     required this.valueZatoshis,
+    this.memoHex,
   });
 
   Map<String, Object?> toRequestJson() => {
     'address': address,
     'value_zatoshis': valueZatoshis,
+    if (memoHex != null) 'memo': memoHex,
   };
 }
 

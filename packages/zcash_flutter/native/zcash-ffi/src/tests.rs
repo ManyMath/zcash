@@ -661,6 +661,21 @@ fn unified_address_receivers_reports_kinds_and_counts() {
     assert!(kinds.contains(&"orchard"));
     assert!(kinds.contains(&"sapling"));
     assert!(kinds.contains(&"p2pkh"));
+    let sapling = receivers
+        .iter()
+        .find(|receiver| receiver["kind"] == "sapling")
+        .unwrap();
+    assert!(sapling["address"].as_str().unwrap().starts_with("zs1"));
+    let transparent = receivers
+        .iter()
+        .find(|receiver| receiver["kind"] == "p2pkh")
+        .unwrap();
+    assert!(transparent["address"].as_str().unwrap().starts_with("t1"));
+    let orchard = receivers
+        .iter()
+        .find(|receiver| receiver["kind"] == "orchard")
+        .unwrap();
+    assert!(orchard["address"].is_null());
     assert!(!inventory.to_string().contains(ua));
     assert!(!inventory.to_string().contains(&ufvk_str));
     assert!(!inventory.to_string().contains(TEST_SEED_HEX));
@@ -3314,7 +3329,7 @@ fn build_ironwood_transaction_validates_sapling_spend_components() {
 
 #[test]
 #[cfg(feature = "ironwood-tx-build")]
-fn build_ironwood_transaction_rejects_sapling_change_without_a_sapling_spend() {
+fn build_ironwood_transaction_accepts_sapling_payment_without_a_sapling_spend() {
     let to = regtest_unified_address();
     let (tree_hex, _) = ironwood_build::test_tree_fixture(1);
     let (sapling_addr, _, _, _) = ironwood_build::test_sapling_note_fixture(
@@ -3325,17 +3340,21 @@ fn build_ironwood_transaction_rejects_sapling_change_without_a_sapling_spend() {
     let request = format!(
         r#"{{"ironwood_build_version":1,"network":"regtest","target_height":10,
                  "ironwood_tree":"{tree}","fee_zatoshis":10000,
+                 "seed":"{seed}","account":0,
+                 "spend_params_path":"/nonexistent/spend",
+                 "output_params_path":"/nonexistent/output",
                  "inputs":[{{"txid":"{txid}","vout":0,"value_zatoshis":100000,"secret_key":"{sk}"}}],
                  "outputs":[{{"address":"{sapling}","value_zatoshis":30000}}],
                  "ironwood_output":{{"address":"{to}","value_zatoshis":60000}}}}"#,
         tree = tree_hex,
+        seed = TEST_SEED_HEX,
         txid = "22".repeat(32),
         sk = BUILD_TEST_SECRET_KEY,
         sapling = sapling_addr,
         to = to,
     );
     let v = build_ironwood_value(&request);
-    assert_eq!(v["category"], "sapling_output_without_spend", "{v}");
+    assert_eq!(v["category"], "params_not_found", "{v}");
 }
 
 #[test]

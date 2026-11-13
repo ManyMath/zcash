@@ -31,6 +31,7 @@ bool zcashAddressIsTransparent(String address) =>
 enum ProposalOutputPool {
   transparent('transparent'),
   sapling('sapling'),
+  ironwood('ironwood'),
   orchard('orchard');
 
   const ProposalOutputPool(this.jsonValue);
@@ -40,6 +41,7 @@ enum ProposalOutputPool {
   factory ProposalOutputPool.fromJson(String value) => switch (value) {
     'transparent' => ProposalOutputPool.transparent,
     'sapling' => ProposalOutputPool.sapling,
+    'ironwood' => ProposalOutputPool.ironwood,
     'orchard' => ProposalOutputPool.orchard,
     _ => throw ZcashModelException('Unknown proposal output pool: $value'),
   };
@@ -47,6 +49,233 @@ enum ProposalOutputPool {
   bool get isSendSupported => this != ProposalOutputPool.orchard;
 
   bool get supportsMemo => this != ProposalOutputPool.transparent;
+}
+
+enum ProposalRoutingRefusal {
+  wrongNetwork,
+  expired,
+  expiryUnchecked,
+  expiryConflict,
+  noSupportedReceiver,
+  missingReceiverAddress,
+  transparentMemo,
+  orchardClosed,
+  texRequiresTwoTransactions,
+}
+
+class ProposalRoutingException implements Exception {
+  const ProposalRoutingException(this.refusal, this.message);
+
+  final ProposalRoutingRefusal refusal;
+  final String message;
+
+  @override
+  String toString() => 'ProposalRoutingException: $message';
+}
+
+/// A recipient after address validation and ZIP 316 receiver selection.
+///
+/// [encodedAddress] remains the exact string supplied by the user. It must not
+/// be replaced with [receiverAddress] in payment history: a Unified Address can
+/// contain several receivers. [actualOutputPool] is the pool written by the
+/// transaction and is deliberately independent of the receiver kind; after
+/// NU6.3 an Orchard receiver is used to create an Ironwood output (ZIP 229).
+class ProposalOutput {
+  ProposalOutput._({
+    required this.encodedAddress,
+    required this.receiverAddress,
+    required this.selectedReceiver,
+    required this.actualOutputPool,
+    required this.amountZatoshis,
+    required this.network,
+    required this.targetHeight,
+    required this.transactionExpiryHeight,
+    required this.addressExpiryTime,
+    required Uint8List? memo,
+  }) : memo = memo == null ? null : Uint8List.fromList(memo);
+
+  final String encodedAddress;
+  final String receiverAddress;
+  final ZcashAddressReceiverType selectedReceiver;
+  final ProposalOutputPool actualOutputPool;
+  final int amountZatoshis;
+  final ZcashAddressNetwork network;
+  final int targetHeight;
+  final int? transactionExpiryHeight;
+  final int? addressExpiryTime;
+  final Uint8List? memo;
+
+  /// Each supported single-recipient route contributes one logical output
+  /// action to ZIP 317. Input and change actions are accounted by the native
+  /// quote against the selected notes.
+  int get zip317OutputActions => 1;
+}
+
+ProposalOutput resolveProposalOutput({
+  required ProposalRecipient recipient,
+  required ZcashAddressMetadata address,
+  required ZcashAddressNetwork network,
+  required int targetHeight,
+  required int? transactionExpiryHeight,
+  required int? currentUnixTime,
+  ZcashUnifiedAddressReceiverInventory? unifiedReceivers,
+}) {
+  Never refuse(ProposalRoutingRefusal reason, String message) =>
+      throw ProposalRoutingException(reason, message);
+
+  if (address.network != network) {
+    refuse(
+      ProposalRoutingRefusal.wrongNetwork,
+      'the recipient belongs to ${address.network.name}, not ${network.name}',
+    );
+  }
+  if (recipient.pool == ProposalOutputPool.orchard) {
+    refuse(
+      ProposalRoutingRefusal.orchardClosed,
+      'ordinary post-NU6.3 sends cannot create Orchard outputs; use the '
+      'recipient Orchard receiver for an Ironwood output',
+    );
+  }
+  final expiryHeight = address.expiryHeight;
+  if (expiryHeight != null) {
+    final chainHeight = targetHeight > 0 ? targetHeight - 1 : 0;
+    if (chainHeight > expiryHeight) {
+      refuse(
+        ProposalRoutingRefusal.expired,
+        'the recipient address expired at height $expiryHeight',
+      );
+    }
+    final txExpiry = transactionExpiryHeight;
+    if (txExpiry == null || txExpiry == 0 || txExpiry > expiryHeight) {
+      refuse(
+        ProposalRoutingRefusal.expiryConflict,
+        'the transaction expiry must be nonzero and no later than recipient '
+        'height $expiryHeight',
+      );
+    }
+  }
+  final expiryTime = address.expiryTime;
+  if (expiryTime != null) {
+    final now = currentUnixTime;
+    if (now == null) {
+      refuse(
+        ProposalRoutingRefusal.expiryUnchecked,
+        'the recipient has a time expiry but no current Unix time was supplied',
+      );
+    }
+    if (now > expiryTime) {
+      refuse(
+        ProposalRoutingRefusal.expired,
+        'the recipient address expired at Unix time $expiryTime',
+      );
+    }
+  }
+
+  ZcashAddressReceiverType selected;
+  ProposalOutputPool actualPool;
+  String receiverAddress;
+  if (address.receiverType == ZcashAddressReceiverType.unified) {
+    final inventory = unifiedReceivers;
+    if (inventory == null) {
+      refuse(
+        ProposalRoutingRefusal.noSupportedReceiver,
+        'Unified Address routing requires its receiver inventory',
+      );
+    }
+    if (inventory.network != network) {
+      refuse(
+        ProposalRoutingRefusal.wrongNetwork,
+        'the Unified Address receiver inventory belongs to another network',
+      );
+    }
+    // ZIP 316 treats unrecognized Receiver Items as absent. Unknown
+    // MUST-understand Metadata Items are different: the native address parser
+    // rejects them before an inventory can be produced.
+    //
+    // Prefer the receiver types this wallet can execute in ZIP 316 order.
+    final orchard = inventory.receivers.where(
+      (receiver) => receiver.kind == ZcashAddressReceiverType.orchard,
+    );
+    final sapling = inventory.receivers.where(
+      (receiver) => receiver.kind == ZcashAddressReceiverType.sapling,
+    );
+    final p2pkh = inventory.receivers.where(
+      (receiver) => receiver.kind == ZcashAddressReceiverType.p2pkh,
+    );
+    final p2sh = inventory.receivers.where(
+      (receiver) => receiver.kind == ZcashAddressReceiverType.p2sh,
+    );
+    if (orchard.isNotEmpty) {
+      selected = ZcashAddressReceiverType.orchard;
+      actualPool = ProposalOutputPool.ironwood;
+      receiverAddress = recipient.address;
+    } else {
+      final receiver = sapling.isNotEmpty
+          ? sapling.first
+          : p2pkh.isNotEmpty
+          ? p2pkh.first
+          : p2sh.isNotEmpty
+          ? p2sh.first
+          : null;
+      if (receiver == null) {
+        refuse(
+          ProposalRoutingRefusal.noSupportedReceiver,
+          'the Unified Address has no Ironwood, Sapling, or transparent receiver',
+        );
+      }
+      final encodedReceiver = receiver.address;
+      if (encodedReceiver == null || encodedReceiver.isEmpty) {
+        refuse(
+          ProposalRoutingRefusal.missingReceiverAddress,
+          'the selected ${receiver.kind.name} receiver has no standalone encoding',
+        );
+      }
+      selected = receiver.kind;
+      actualPool = receiver.pool == ZcashAddressPool.sapling
+          ? ProposalOutputPool.sapling
+          : ProposalOutputPool.transparent;
+      receiverAddress = encodedReceiver;
+    }
+  } else {
+    selected = address.receiverType;
+    receiverAddress = recipient.address;
+    actualPool = switch (selected) {
+      ZcashAddressReceiverType.sapling => ProposalOutputPool.sapling,
+      ZcashAddressReceiverType.p2pkh ||
+      ZcashAddressReceiverType.p2sh => ProposalOutputPool.transparent,
+      ZcashAddressReceiverType.tex => refuse(
+        ProposalRoutingRefusal.texRequiresTwoTransactions,
+        'TEX requires the ZIP 320 two-transaction path, which is not implemented',
+      ),
+      ZcashAddressReceiverType.orchard => refuse(
+        ProposalRoutingRefusal.orchardClosed,
+        'ordinary post-NU6.3 sends cannot create Orchard outputs',
+      ),
+      _ => refuse(
+        ProposalRoutingRefusal.noSupportedReceiver,
+        'the recipient type ${selected.name} is not supported for sends',
+      ),
+    };
+  }
+
+  if (actualPool == ProposalOutputPool.transparent && recipient.memo != null) {
+    refuse(
+      ProposalRoutingRefusal.transparentMemo,
+      'a memo cannot be delivered to a transparent output',
+    );
+  }
+  return ProposalOutput._(
+    encodedAddress: recipient.address,
+    receiverAddress: receiverAddress,
+    selectedReceiver: selected,
+    actualOutputPool: actualPool,
+    amountZatoshis: recipient.amountZatoshis,
+    network: network,
+    targetHeight: targetHeight,
+    transactionExpiryHeight: transactionExpiryHeight,
+    addressExpiryTime: address.expiryTime,
+    memo: recipient.memo,
+  );
 }
 
 enum ProposalFeeRule {
