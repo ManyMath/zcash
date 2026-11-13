@@ -1501,7 +1501,12 @@ fn build_v5_tx_hex(vin: usize, vout: usize) -> (String, String) {
             })
             .collect();
         let vouts: Vec<TxOut> = (0..vout)
-            .map(|_| TxOut::new(Zatoshis::const_from_u64(1000), Script::default()))
+            .map(|_| {
+                TxOut::new(
+                    Zatoshis::const_from_u64(1000),
+                    TransparentAddress::PublicKeyHash([7; 20]).script().into(),
+                )
+            })
             .collect();
         Some(TransparentBundle {
             vin: vins,
@@ -1577,6 +1582,22 @@ fn decode_transaction_v5_transparent_counts() {
     assert_eq!(v["transparent"]["present"], true);
     assert_eq!(v["transparent"]["vin"], 1);
     assert_eq!(v["transparent"]["vout"], 2);
+    assert_eq!(v["transparent"]["is_coinbase"], false);
+    assert_eq!(
+        v["transparent"]["inputs"][0]["prevout_txid"],
+        "0000000000000000000000000000000000000000000000000000000000000000"
+    );
+    assert_eq!(v["transparent"]["inputs"][0]["prevout_index"], 0);
+    assert_eq!(v["transparent"]["outputs"][0]["output_index"], 0);
+    assert_eq!(v["transparent"]["outputs"][0]["value_zatoshis"], 1000);
+    assert_eq!(
+        v["transparent"]["outputs"][0]["script_hex"],
+        format!("76a914{}88ac", "07".repeat(20))
+    );
+    assert_eq!(
+        v["transparent"]["outputs"][0]["address"],
+        ZcashAddress::from_transparent_p2pkh(NetworkType::Test, [7; 20]).encode()
+    );
 }
 
 #[test]

@@ -3439,12 +3439,58 @@ fn decode_transaction_json(bytes: &[u8], network: NetworkType) -> Result<Value, 
     let tx = read_full_transaction(bytes)?;
 
     let transparent = match tx.transparent_bundle() {
-        Some(b) => json!({
-            "present": true,
-            "vin": b.vin.len(),
-            "vout": b.vout.len(),
+        Some(b) => {
+            let is_coinbase = b.vin.len() == 1
+                && b.vin[0].prevout().hash() == &[0; 32]
+                && b.vin[0].prevout().n() == u32::MAX;
+            let inputs = b
+                .vin
+                .iter()
+                .map(|input| {
+                    json!({
+                        "prevout_txid": input.prevout().txid().to_string(),
+                        "prevout_index": input.prevout().n(),
+                    })
+                })
+                .collect::<Vec<_>>();
+            let outputs = b
+                .vout
+                .iter()
+                .enumerate()
+                .map(|(index, output)| {
+                    let address = output.recipient_address().map(|address| match address {
+                        TransparentAddress::PublicKeyHash(hash) => {
+                            ZcashAddress::from_transparent_p2pkh(network, hash).encode()
+                        }
+                        TransparentAddress::ScriptHash(hash) => {
+                            ZcashAddress::from_transparent_p2sh(network, hash).encode()
+                        }
+                    });
+                    json!({
+                        "output_index": index,
+                        "address": address,
+                        "script_hex": hex::encode(&output.script_pubkey().0.0),
+                        "value_zatoshis": output.value().into_u64(),
+                    })
+                })
+                .collect::<Vec<_>>();
+            json!({
+                "present": true,
+                "vin": b.vin.len(),
+                "vout": b.vout.len(),
+                "is_coinbase": is_coinbase,
+                "inputs": inputs,
+                "outputs": outputs,
+            })
+        }
+        None => json!({
+            "present": false,
+            "vin": 0,
+            "vout": 0,
+            "is_coinbase": false,
+            "inputs": [],
+            "outputs": [],
         }),
-        None => json!({ "present": false, "vin": 0, "vout": 0 }),
     };
     let sapling = match tx.sapling_bundle() {
         Some(b) => json!({

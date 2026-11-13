@@ -222,6 +222,58 @@ void main() {
       expect(state.coinSet.totalZatoshis, 0);
     });
 
+    test('reconstructs a fully-spent restored output and its history', () {
+      final account = _account();
+      final state = ZcashTransparentState.fromAccount(
+        account: account,
+        viewingKeys: _viewingKeys(),
+      );
+      final output = ZcashTransparentOutputObservation(
+        address: 'tmDefaultAccountAddress',
+        protocolTxid: '11' * 32,
+        outputIndex: 2,
+        scriptHex: '76a914${'22' * 20}88ac',
+        valueZatoshis: 125000,
+        minedHeight: 90,
+        blockHash: '33' * 32,
+        blockTime: 1700000000,
+        isCoinbase: false,
+      );
+      state.applyRefresh(
+        ZcashTransparentRefresh(
+          network: ZcashAddressNetwork.regtest,
+          accountFingerprint: account.fingerprint,
+          queriedAddresses: const ['tmDefaultAccountAddress'],
+          chainHeight: 101,
+          chainTipHash: '55' * 32,
+          canonicalBlockHashes: {90: '33' * 32, 101: '55' * 32},
+          unspentOutputs: const [],
+          historicalOutputs: [output],
+          observedSpends: [
+            ZcashTransparentSpendObservation(
+              spentOutpoint: output.outpoint,
+              spendingProtocolTxid: '66' * 32,
+              spentHeight: 101,
+              blockHash: '55' * 32,
+              blockTime: 1700000060,
+              feeZatoshis: null,
+            ),
+          ],
+        ),
+      );
+
+      expect(state.unspentOutputs, isEmpty);
+      expect(state.outputs.single.spendState, ZcashTransparentSpendState.spent);
+      final history = ZcashTransactionHistory.fromStores(
+        transparent: state,
+      ).entries;
+      expect(history, hasLength(2));
+      expect(history.first.protocolTxid, '66' * 32);
+      expect(history.first.spentZatoshis, 125000);
+      expect(history.last.protocolTxid, '11' * 32);
+      expect(history.last.receivedZatoshis, 125000);
+    });
+
     test('refuses changed immutable data for a canonical outpoint', () {
       final account = _account();
       final state = ZcashTransparentState.fromAccount(

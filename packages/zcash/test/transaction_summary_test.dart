@@ -16,7 +16,33 @@ void main() {
       'consensus_branch_id_hex': 'c2d6d0b4',
       'lock_time': 0,
       'expiry_height': 0,
-      'transparent': {'present': true, 'vin': 1, 'vout': 2},
+      'transparent': {
+        'present': true,
+        'vin': 1,
+        'vout': 2,
+        'is_coinbase': false,
+        'inputs': [
+          {
+            'prevout_txid':
+                'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+            'prevout_index': 3,
+          },
+        ],
+        'outputs': [
+          {
+            'output_index': 0,
+            'address': 't1example',
+            'script_hex': '76a914${'11' * 20}88ac',
+            'value_zatoshis': 42000,
+          },
+          {
+            'output_index': 1,
+            'address': null,
+            'script_hex': '6a',
+            'value_zatoshis': 1000,
+          },
+        ],
+      },
       'sapling': {'present': false, 'spends': 0, 'outputs': 0},
       'orchard': {'present': true, 'actions': 3},
       'sprout': {'present': false, 'joinsplits': 0},
@@ -32,6 +58,19 @@ void main() {
       expect(summary.transparent.present, isTrue);
       expect(summary.transparent.vin, 1);
       expect(summary.transparent.vout, 2);
+      expect(summary.transparent.isCoinbase, isFalse);
+      expect(summary.transparent.inputs.single.prevoutIndex, 3);
+      expect(
+        summary.transparent.inputs.single.prevoutTxid,
+        'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+      );
+      expect(summary.transparent.outputs.first.address, 't1example');
+      expect(
+        summary.transparent.outputs.first.scriptHex,
+        '76a914${'11' * 20}88ac',
+      );
+      expect(summary.transparent.outputs.first.valueZatoshis, 42000);
+      expect(summary.transparent.outputs.last.address, isNull);
       expect(summary.sapling.present, isFalse);
       expect(summary.orchard.present, isTrue);
       expect(summary.orchard.actions, 3);
@@ -45,6 +84,14 @@ void main() {
       expect(json['version'], 'v5');
       expect(json['consensus_branch_id'], 'nu5');
       expect((json['transparent']! as Map)['vin'], 1);
+      expect(
+        ((json['transparent']! as Map)['inputs']! as List).single,
+        containsPair('prevout_index', 3),
+      );
+      expect(
+        ((json['transparent']! as Map)['outputs']! as List).first,
+        containsPair('value_zatoshis', 42000),
+      );
       expect((json['orchard']! as Map)['actions'], 3);
 
       final reparsed = ZcashTransactionSummary.fromJson(

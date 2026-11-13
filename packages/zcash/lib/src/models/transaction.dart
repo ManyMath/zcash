@@ -64,15 +64,71 @@ enum ZcashTransactionVersion {
   };
 }
 
+class ZcashTransparentInputSummary {
+  final String prevoutTxid;
+  final int prevoutIndex;
+
+  const ZcashTransparentInputSummary({
+    required this.prevoutTxid,
+    required this.prevoutIndex,
+  });
+
+  factory ZcashTransparentInputSummary.fromJson(Map<String, dynamic> json) =>
+      ZcashTransparentInputSummary(
+        prevoutTxid: json['prevout_txid'] as String,
+        prevoutIndex: (json['prevout_index'] as num).toInt(),
+      );
+
+  Map<String, Object?> toJson() => {
+    'prevout_txid': prevoutTxid,
+    'prevout_index': prevoutIndex,
+  };
+}
+
+class ZcashTransparentOutputSummary {
+  final int outputIndex;
+  final String? address;
+  final String scriptHex;
+  final int valueZatoshis;
+
+  const ZcashTransparentOutputSummary({
+    required this.outputIndex,
+    required this.address,
+    required this.scriptHex,
+    required this.valueZatoshis,
+  });
+
+  factory ZcashTransparentOutputSummary.fromJson(Map<String, dynamic> json) =>
+      ZcashTransparentOutputSummary(
+        outputIndex: (json['output_index'] as num).toInt(),
+        address: json['address'] as String?,
+        scriptHex: json['script_hex'] as String,
+        valueZatoshis: (json['value_zatoshis'] as num).toInt(),
+      );
+
+  Map<String, Object?> toJson() => {
+    'output_index': outputIndex,
+    'address': address,
+    'script_hex': scriptHex,
+    'value_zatoshis': valueZatoshis,
+  };
+}
+
 class ZcashTransparentBundleSummary {
   final bool present;
   final int vin;
   final int vout;
+  final bool isCoinbase;
+  final List<ZcashTransparentInputSummary> inputs;
+  final List<ZcashTransparentOutputSummary> outputs;
 
   const ZcashTransparentBundleSummary({
     required this.present,
     required this.vin,
     required this.vout,
+    this.isCoinbase = false,
+    this.inputs = const [],
+    this.outputs = const [],
   });
 
   factory ZcashTransparentBundleSummary.fromJson(Map<String, dynamic> json) =>
@@ -80,12 +136,28 @@ class ZcashTransparentBundleSummary {
         present: json['present'] as bool? ?? false,
         vin: (json['vin'] as num?)?.toInt() ?? 0,
         vout: (json['vout'] as num?)?.toInt() ?? 0,
+        isCoinbase: json['is_coinbase'] as bool? ?? false,
+        inputs: [
+          for (final value in json['inputs'] as List? ?? const [])
+            ZcashTransparentInputSummary.fromJson(
+              (value as Map).cast<String, dynamic>(),
+            ),
+        ],
+        outputs: [
+          for (final value in json['outputs'] as List? ?? const [])
+            ZcashTransparentOutputSummary.fromJson(
+              (value as Map).cast<String, dynamic>(),
+            ),
+        ],
       );
 
   Map<String, Object?> toJson() => {
     'present': present,
     'vin': vin,
     'vout': vout,
+    'is_coinbase': isCoinbase,
+    'inputs': [for (final input in inputs) input.toJson()],
+    'outputs': [for (final output in outputs) output.toJson()],
   };
 }
 

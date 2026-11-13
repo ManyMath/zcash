@@ -858,6 +858,17 @@ void main() {
         expect(summary.transparent.present, isTrue);
         expect(summary.transparent.vin, 1);
         expect(summary.transparent.vout, 2);
+        expect(summary.transparent.isCoinbase, isFalse);
+        expect(
+          summary.transparent.inputs.single.prevoutTxid,
+          '0000000000000000000000000000000000000000000000000000000000000000',
+        );
+        expect(summary.transparent.inputs.single.prevoutIndex, 0);
+        expect(summary.transparent.outputs, hasLength(2));
+        expect(summary.transparent.outputs.first.outputIndex, 0);
+        expect(summary.transparent.outputs.first.valueZatoshis, 1000);
+        expect(summary.transparent.outputs.first.scriptHex, isEmpty);
+        expect(summary.transparent.outputs.first.address, isNull);
         expect(summary.sapling.present, isFalse);
         expect(summary.orchard.present, isFalse);
         expect(summary.sprout.present, isFalse);

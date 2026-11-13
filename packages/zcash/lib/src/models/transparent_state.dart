@@ -135,10 +135,12 @@ class ZcashTransparentRefresh {
     required this.chainTipHash,
     required Map<int, String> canonicalBlockHashes,
     required List<ZcashTransparentOutputObservation> unspentOutputs,
+    List<ZcashTransparentOutputObservation> historicalOutputs = const [],
     required List<ZcashTransparentSpendObservation> observedSpends,
   }) : queriedAddresses = List.unmodifiable(queriedAddresses),
        canonicalBlockHashes = Map.unmodifiable(canonicalBlockHashes),
        unspentOutputs = List.unmodifiable(unspentOutputs),
+       historicalOutputs = List.unmodifiable(historicalOutputs),
        observedSpends = List.unmodifiable(observedSpends);
 
   final ZcashAddressNetwork network;
@@ -148,6 +150,7 @@ class ZcashTransparentRefresh {
   final String chainTipHash;
   final Map<int, String> canonicalBlockHashes;
   final List<ZcashTransparentOutputObservation> unspentOutputs;
+  final List<ZcashTransparentOutputObservation> historicalOutputs;
   final List<ZcashTransparentSpendObservation> observedSpends;
 }
 
@@ -551,6 +554,67 @@ class ZcashTransparentState {
         );
       }
       next[observation.outpoint] = ZcashTransparentOutput.unspent(observation);
+    }
+    for (final observation in refresh.historicalOutputs) {
+      if (!known.contains(observation.address)) {
+        throw const ZcashModelException(
+          'transparent history returned an output for an unknown receiver',
+        );
+      }
+      if (observation.minedHeight > refresh.chainHeight ||
+          refresh.canonicalBlockHashes[observation.minedHeight] !=
+              observation.blockHash) {
+        throw const ZcashModelException(
+          'historical transparent output is not bound to its canonical block',
+        );
+      }
+      if (next.containsKey(observation.outpoint)) {
+        throw const ZcashModelException(
+          'transparent refresh returned the same outpoint twice',
+        );
+      }
+      final spend = spends[observation.outpoint];
+      if (spend == null) {
+        throw const ZcashModelException(
+          'historical transparent output must have an authenticated spend',
+        );
+      }
+      if (spend.spentHeight < observation.minedHeight) {
+        throw const ZcashModelException(
+          'historical transparent output cannot be spent before creation',
+        );
+      }
+      final existing = _outputs[observation.outpoint];
+      if (existing != null &&
+          (existing.address != observation.address ||
+              existing.scriptHex != observation.scriptHex ||
+              existing.valueZatoshis != observation.valueZatoshis ||
+              existing.minedHeight != observation.minedHeight ||
+              existing.blockHash != observation.blockHash ||
+              existing.blockTime != observation.blockTime ||
+              existing.isCoinbase != observation.isCoinbase)) {
+        throw const ZcashModelException(
+          'canonical transparent outpoint changed immutable output data',
+        );
+      }
+      next[observation.outpoint] = ZcashTransparentOutput._(
+        address: observation.address,
+        protocolTxid: observation.protocolTxid,
+        outputIndex: observation.outputIndex,
+        scriptHex: observation.scriptHex,
+        valueZatoshis: observation.valueZatoshis,
+        minedHeight: observation.minedHeight,
+        blockHash: observation.blockHash,
+        blockTime: observation.blockTime,
+        creationFeeZatoshis: observation.creationFeeZatoshis,
+        isCoinbase: observation.isCoinbase,
+        spendState: ZcashTransparentSpendState.spent,
+        spendingProtocolTxid: spend.spendingProtocolTxid,
+        spentHeight: spend.spentHeight,
+        spentBlockHash: spend.blockHash,
+        spentBlockTime: spend.blockTime,
+        feeZatoshis: spend.feeZatoshis,
+      );
     }
     for (final existing in _outputs.values) {
       if (next.containsKey(existing.outpoint)) continue;
