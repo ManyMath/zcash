@@ -1,4 +1,5 @@
 import 'account_balance.dart';
+import 'address.dart';
 import 'chain_sync.dart';
 import 'ironwood_pending_send.dart';
 import 'lightwalletd_scan_source.dart';
@@ -12,6 +13,7 @@ import 'tree_state.dart';
 class ZcashWalletSyncState {
   ZcashWalletSyncState({
     required ZcashLightwalletdSyncCursor cursor,
+    required this.network,
     required this.accountFingerprint,
     required this.sapling,
     required this.orchard,
@@ -25,16 +27,20 @@ class ZcashWalletSyncState {
 
   factory ZcashWalletSyncState.atBirthday({
     required ZcashLightwalletdSyncCursor cursor,
+    required ZcashAddressNetwork network,
     required String accountFingerprint,
   }) => ZcashWalletSyncState(
     cursor: cursor,
+    network: network,
     accountFingerprint: accountFingerprint,
     sapling: SaplingNoteStore(),
     orchard: OrchardNoteStore(),
     ironwood: IronwoodNoteStore(),
   );
 
-  static const int version = 1;
+  static const int version = 2;
+
+  final ZcashAddressNetwork network;
 
   final String accountFingerprint;
 
@@ -83,6 +89,25 @@ class ZcashWalletSyncState {
         'resumed on it with resumeFrom rather than by making another.',
       );
     }
+    final expectedNetwork = switch (this.network) {
+      ZcashAddressNetwork.mainnet => 'main',
+      ZcashAddressNetwork.testnet => 'test',
+      ZcashAddressNetwork.regtest => 'regtest',
+    };
+    if (network != null) {
+      final ZcashAddressNetwork requested;
+      try {
+        requested = ZcashAddressNetwork.fromJson(network);
+      } on FormatException {
+        throw ZcashModelException('the requested scan network is unknown');
+      }
+      if (requested != this.network) {
+        throw ZcashModelException(
+          'this wallet is bound to ${this.network.name}; it cannot scan the '
+          '$network network into the same persisted state',
+        );
+      }
+    }
     return _sync = ZcashChainSync(
       cursor: _cursor,
       accountFingerprint: accountFingerprint,
@@ -94,7 +119,7 @@ class ZcashWalletSyncState {
       fetchTreeState: fetchTreeState,
       scan: scan,
       servedBlockHashAt: servedBlockHashAt,
-      network: network,
+      network: expectedNetwork,
       includeSaplingWitnesses: includeSaplingWitnesses,
       includeOrchardWitnesses: includeOrchardWitnesses,
       rangeSize: rangeSize,
@@ -105,6 +130,7 @@ class ZcashWalletSyncState {
     _checkPositions();
     return {
       'wallet_sync_version': version,
+      'network': network.name,
       'account_fingerprint': accountFingerprint,
       'cursor': cursor.toJson(),
       'sapling': sapling.toJson(),
@@ -132,8 +158,22 @@ class ZcashWalletSyncState {
         'next scan would set it from whichever account happened to be scanned.',
       );
     }
+    final networkValue = json['network'];
+    if (networkValue is! String) {
+      throw ZcashModelException(
+        'a wallet document must name its Zcash network; inferring one would '
+        'allow the same account state to be opened against another chain',
+      );
+    }
+    final ZcashAddressNetwork network;
+    try {
+      network = ZcashAddressNetwork.fromJson(networkValue);
+    } on FormatException {
+      throw ZcashModelException('the wallet document names an unknown network');
+    }
     return ZcashWalletSyncState(
       cursor: ZcashLightwalletdSyncCursor.fromJson(_object(json, 'cursor')),
+      network: network,
       accountFingerprint: fingerprint,
       sapling: SaplingNoteStore.fromJson(_object(json, 'sapling')),
       orchard: OrchardNoteStore.fromJson(_object(json, 'orchard')),

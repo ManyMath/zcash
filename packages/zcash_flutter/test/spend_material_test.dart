@@ -60,7 +60,7 @@ ZcashWalletSyncState _restoredWallet() {
     scannedBlocks: 1,
     discoveredNotes: 1,
     totalValue: 50000,
-    notes: [_note(witness: 'should-not-persist')],
+    notes: [_note(witness: '55' * 40)],
     scannedHeightRange: const CompactBlockScanRange(start: 20, end: 20),
   );
   final sapling = SaplingNoteStore()
@@ -70,6 +70,7 @@ ZcashWalletSyncState _restoredWallet() {
   final ironwood = IronwoodNoteStore()
     ..apply(discovered, accountFingerprint: _account);
   final wallet = ZcashWalletSyncState(
+    network: ZcashAddressNetwork.regtest,
     cursor: ZcashLightwalletdSyncCursor.origin(height: 21),
     accountFingerprint: _account,
     sapling: sapling,

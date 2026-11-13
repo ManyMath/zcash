@@ -1,4 +1,30 @@
+import 'dart:convert';
+
+import 'package:crypto/crypto.dart';
+
 import 'address.dart';
+
+String zcashAccountFingerprint({
+  required ZcashAddressNetwork network,
+  required int accountIndex,
+  required String ufvk,
+}) {
+  if (accountIndex < 0) {
+    throw ArgumentError.value(
+      accountIndex,
+      'accountIndex',
+      'must be non-negative',
+    );
+  }
+  if (ufvk.isEmpty) {
+    throw ArgumentError.value(ufvk, 'ufvk', 'must not be empty');
+  }
+  final domainSeparated = utf8.encode(
+    'zcash-account-fingerprint-v1\u0000${network.name}\u0000'
+    '$accountIndex\u0000$ufvk',
+  );
+  return sha256.convert(domainSeparated).toString();
+}
 
 class ZcashAccountReceiverSet {
   final bool orchard;
@@ -76,6 +102,12 @@ class ZcashAccountMetadata {
   bool get hasOrchard => receivers.orchard;
   bool get hasSapling => receivers.sapling;
   bool get hasTransparent => receivers.transparent;
+
+  String get fingerprint => zcashAccountFingerprint(
+    network: network,
+    accountIndex: accountIndex,
+    ufvk: ufvk,
+  );
 
   factory ZcashAccountMetadata.fromJson(Map<String, dynamic> json) {
     final receivers = json['receivers'];

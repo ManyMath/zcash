@@ -1,5 +1,6 @@
 import 'note_store.dart';
 import 'scan.dart';
+import 'spend.dart';
 import 'transaction.dart';
 
 class ZcashHistoryEntry {
@@ -10,6 +11,7 @@ class ZcashHistoryEntry {
     required this.spentZatoshis,
     required this.pools,
     required this.unvaluedSpends,
+    this.blockHash,
   });
 
   final String protocolTxid;
@@ -23,6 +25,8 @@ class ZcashHistoryEntry {
   final Set<String> pools;
 
   final int unvaluedSpends;
+
+  final String? blockHash;
 
   int get netZatoshis => receivedZatoshis - spentZatoshis;
 
@@ -62,11 +66,16 @@ class ZcashTransactionHistory {
     for (final note in notes) {
       entry(note.tx, note.height)
         ..received += note.value
-        ..pools.add(note.pool);
+        ..pools.add(note.pool)
+        ..recordCanonicalBlock(height: note.height, blockHash: note.blockHash);
     }
     for (final spend in spends) {
       final consumed = byNullifier[(spend.pool, spend.nullifier)];
       final builder = entry(spend.tx, spend.height)..pools.add(spend.pool);
+      builder.recordCanonicalBlock(
+        height: spend.height,
+        blockHash: spend.blockHash,
+      );
       if (consumed == null) {
         builder.unvalued += 1;
       } else {
@@ -96,6 +105,22 @@ class _EntryBuilder {
   var spent = 0;
   var unvalued = 0;
   final pools = <String>{};
+  String? blockHash;
+
+  void recordCanonicalBlock({required int height, required String? blockHash}) {
+    if (height != this.height) {
+      throw ZcashModelException(
+        'one transaction was recorded at two different block heights',
+      );
+    }
+    final existing = this.blockHash;
+    if (blockHash != null && existing != null && blockHash != existing) {
+      throw ZcashModelException(
+        'one transaction was recorded under two different canonical blocks',
+      );
+    }
+    this.blockHash ??= blockHash;
+  }
 
   ZcashHistoryEntry build() => ZcashHistoryEntry(
     protocolTxid: tx,
@@ -104,5 +129,6 @@ class _EntryBuilder {
     spentZatoshis: spent,
     pools: Set.unmodifiable(pools),
     unvaluedSpends: unvalued,
+    blockHash: blockHash,
   );
 }

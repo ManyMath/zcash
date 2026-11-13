@@ -167,15 +167,92 @@ class ZcashChainSync {
       );
     }
 
-    saplingStore?.apply(result, accountFingerprint: accountFingerprint);
-    orchardStore?.apply(result, accountFingerprint: accountFingerprint);
-    ironwoodStore?.apply(result, accountFingerprint: accountFingerprint);
+    final canonicalResult = _withCanonicalBlockHashes(result, source);
+
+    saplingStore?.apply(
+      canonicalResult,
+      accountFingerprint: accountFingerprint,
+    );
+    orchardStore?.apply(
+      canonicalResult,
+      accountFingerprint: accountFingerprint,
+    );
+    ironwoodStore?.apply(
+      canonicalResult,
+      accountFingerprint: accountFingerprint,
+    );
 
     _cursor = next;
     return ZcashSyncAdvanced(
       range: CompactBlockScanRange(start: start, end: end),
-      scan: result,
+      scan: canonicalResult,
       cursor: next,
+    );
+  }
+
+  ZcashScanResult _withCanonicalBlockHashes(
+    ZcashScanResult result,
+    ZcashLightwalletdScanSource source,
+  ) {
+    String hashAt(int height, String scannerHash) {
+      final servedHash = source.blockHashAt(height);
+      if (servedHash == null || servedHash.length != 64) {
+        throw ZcashModelException(
+          'the compact-block source did not provide a 32-byte canonical hash '
+          'for a wallet event at height $height',
+        );
+      }
+      if (scannerHash.isNotEmpty && scannerHash != servedHash) {
+        throw ZcashModelException(
+          'the scanner and compact-block source disagree on the canonical '
+          'block at height $height',
+        );
+      }
+      return servedHash;
+    }
+
+    return ZcashScanResult(
+      scannedBlocks: result.scannedBlocks,
+      discoveredNotes: result.discoveredNotes,
+      totalValue: result.totalValue,
+      notes: [
+        for (final note in result.notes)
+          ZcashScannedNote(
+            height: note.height,
+            tx: note.tx,
+            output: note.output,
+            value: note.value,
+            pool: note.pool,
+            nullifier: note.nullifier,
+            commitmentPosition: note.commitmentPosition,
+            isChange: note.isChange,
+            witness: note.witness,
+            recipient: note.recipient,
+            rseed: note.rseed,
+            rho: note.rho,
+            noteVersion: note.noteVersion,
+            blockHash: hashAt(note.height, note.blockHash ?? ''),
+          ),
+      ],
+      spends: [
+        for (final spend in result.spends)
+          ZcashObservedSpend(
+            height: spend.height,
+            tx: spend.tx,
+            pool: spend.pool,
+            nullifier: spend.nullifier,
+            index: spend.index,
+            noteIndex: spend.noteIndex,
+            blockHash: hashAt(spend.height, spend.blockHash ?? ''),
+          ),
+      ],
+      scannedHeightRange: result.scannedHeightRange,
+      orderedBlocks: result.orderedBlocks,
+      diagnostics: result.diagnostics,
+      orchardActions: result.orchardActions,
+      saplingAnchor: result.saplingAnchor,
+      orchardAnchor: result.orchardAnchor,
+      ironwoodAnchor: result.ironwoodAnchor,
     );
   }
 

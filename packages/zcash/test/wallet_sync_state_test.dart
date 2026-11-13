@@ -63,7 +63,7 @@ class _Source {
       notes: [
         ZcashScannedNote(
           height: range.start,
-          tx: 'ab' * 32,
+          tx: _hashHex(range.start),
           output: range.start,
           value: 1000,
           pool: 'ironwood',
@@ -96,6 +96,7 @@ IronwoodNoteStore _ironwoodCovering(int start, int end) =>
 
 ZcashWalletSyncState _walletCovering(int start, int end) =>
     ZcashWalletSyncState(
+      network: ZcashAddressNetwork.regtest,
       cursor: ZcashLightwalletdSyncCursor(
         nextHeight: end + 1,
         priorIronwoodFrontier: 'tree-$end',
@@ -116,6 +117,7 @@ void main() {
   group('ZcashWalletSyncState', () {
     test('a wallet at its birthday holds three empty stores', () {
       final wallet = ZcashWalletSyncState.atBirthday(
+        network: ZcashAddressNetwork.regtest,
         cursor: ZcashLightwalletdSyncCursor.origin(height: 11),
         accountFingerprint: _fingerprint,
       );
@@ -130,6 +132,7 @@ void main() {
     test('a synced wallet writes down the position it reached', () async {
       final source = _Source(tip: 40);
       final wallet = ZcashWalletSyncState.atBirthday(
+        network: ZcashAddressNetwork.regtest,
         cursor: ZcashLightwalletdSyncCursor.origin(height: 11),
         accountFingerprint: _fingerprint,
       );
@@ -159,11 +162,17 @@ void main() {
       expect(restored.cursor.priorIronwoodFrontier, 'tree-40');
       expect(restored.balance().totalZatoshis, 3000);
       expect(restored.accountFingerprint, _fingerprint);
+      expect(restored.history().entries.map((entry) => entry.blockHash), [
+        _hashHex(31),
+        _hashHex(21),
+        _hashHex(11),
+      ]);
     });
 
     test('a restored wallet continues from where it stopped', () async {
       final source = _Source(tip: 40);
       final wallet = ZcashWalletSyncState.atBirthday(
+        network: ZcashAddressNetwork.regtest,
         cursor: ZcashLightwalletdSyncCursor.origin(height: 11),
         accountFingerprint: _fingerprint,
       );
@@ -200,6 +209,7 @@ void main() {
     test('refuses stores behind the cursor, naming the wedge', () {
       expect(
         () => ZcashWalletSyncState(
+          network: ZcashAddressNetwork.regtest,
           cursor: ZcashLightwalletdSyncCursor.origin(height: 201),
           accountFingerprint: _fingerprint,
           sapling: _saplingCovering(11, 150),
@@ -223,6 +233,7 @@ void main() {
     test('refuses stores ahead of the cursor, which nothing else catches', () {
       expect(
         () => ZcashWalletSyncState(
+          network: ZcashAddressNetwork.regtest,
           cursor: ZcashLightwalletdSyncCursor.origin(height: 151),
           accountFingerprint: _fingerprint,
           sapling: _saplingCovering(11, 200),
@@ -242,6 +253,7 @@ void main() {
     test('refuses three stores at three positions', () {
       expect(
         () => ZcashWalletSyncState(
+          network: ZcashAddressNetwork.regtest,
           cursor: ZcashLightwalletdSyncCursor.origin(height: 201),
           accountFingerprint: _fingerprint,
           sapling: _saplingCovering(11, 200),
@@ -261,6 +273,7 @@ void main() {
     test('refuses an empty store beside covered ones', () {
       expect(
         () => ZcashWalletSyncState(
+          network: ZcashAddressNetwork.regtest,
           cursor: ZcashLightwalletdSyncCursor.origin(height: 201),
           accountFingerprint: _fingerprint,
           sapling: SaplingNoteStore(),
@@ -283,6 +296,7 @@ void main() {
     test('refuses stores that end together and begin apart', () {
       expect(
         () => ZcashWalletSyncState(
+          network: ZcashAddressNetwork.regtest,
           cursor: ZcashLightwalletdSyncCursor.origin(height: 201),
           accountFingerprint: _fingerprint,
           sapling: _saplingCovering(11, 200),
@@ -302,6 +316,7 @@ void main() {
     test('refuses a store accumulating another account', () {
       expect(
         () => ZcashWalletSyncState(
+          network: ZcashAddressNetwork.regtest,
           cursor: ZcashLightwalletdSyncCursor.origin(height: 201),
           accountFingerprint: _fingerprint,
           sapling: _saplingCovering(11, 200),
@@ -336,7 +351,7 @@ void main() {
       expect(
         () => ZcashWalletSyncState.fromJson({
           ...document,
-          'wallet_sync_version': 2,
+          'wallet_sync_version': 999,
         }),
         throwsA(
           isA<ZcashModelException>().having(
@@ -345,6 +360,22 @@ void main() {
             contains('half understands'),
           ),
         ),
+      );
+    });
+
+    test('refuses an absent or unknown network', () {
+      final document = _walletCovering(11, 200).toJson();
+
+      expect(
+        () => ZcashWalletSyncState.fromJson({...document}..remove('network')),
+        throwsA(isA<ZcashModelException>()),
+      );
+      expect(
+        () => ZcashWalletSyncState.fromJson({
+          ...document,
+          'network': 'another-chain',
+        }),
+        throwsA(isA<ZcashModelException>()),
       );
     });
 
@@ -407,9 +438,37 @@ void main() {
   });
 
   group('one sync at a time', () {
+    test('refuses a scan network different from the persisted wallet', () {
+      final source = _Source(tip: 40);
+      final wallet = ZcashWalletSyncState.atBirthday(
+        network: ZcashAddressNetwork.regtest,
+        cursor: ZcashLightwalletdSyncCursor.origin(height: 11),
+        accountFingerprint: _fingerprint,
+      );
+
+      expect(
+        () => wallet.syncThrough(
+          chainTip: source.chainTip,
+          fetchRange: source.fetchRange,
+          fetchTreeState: source.fetchTreeState,
+          scan: source.scan,
+          servedBlockHashAt: source.servedBlockHashAt,
+          network: 'main',
+        ),
+        throwsA(
+          isA<ZcashModelException>().having(
+            (error) => error.message,
+            'message',
+            allOf(contains('network'), contains('regtest')),
+          ),
+        ),
+      );
+    });
+
     test('refuses a second sync over the same stores', () {
       final source = _Source(tip: 40);
       final wallet = ZcashWalletSyncState.atBirthday(
+        network: ZcashAddressNetwork.regtest,
         cursor: ZcashLightwalletdSyncCursor.origin(height: 11),
         accountFingerprint: _fingerprint,
       );

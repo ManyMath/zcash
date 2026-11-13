@@ -97,6 +97,22 @@ class _NoteStoreState {
       }
     }
 
+    // Reject stale or malformed canonical identities before mutating any
+    // account, event, or coverage state.
+    for (final note in scan.notes) {
+      if (note.pool != pool) continue;
+      _requireValidOptionalHex(note.witness, 'witness');
+      final key = '${note.tx}:${note.output}';
+      _requireCompatibleCanonicalBlock(_notes[key]?.blockHash, note.blockHash);
+    }
+    for (final spend in scan.spends) {
+      if (spend.pool != pool) continue;
+      _requireCompatibleCanonicalBlock(
+        _spends[spend.nullifier]?.blockHash,
+        spend.blockHash,
+      );
+    }
+
     accountFingerprint = fingerprint;
 
     for (final note in scan.notes) {
@@ -111,7 +127,7 @@ class _NoteStoreState {
       if (spend.pool != pool) {
         continue;
       }
-      _spends[spend.nullifier] = spend;
+      _spends[spend.nullifier] = _mergedSpend(_spends[spend.nullifier], spend);
     }
 
     if (range == null) {
@@ -123,7 +139,7 @@ class _NoteStoreState {
         : through;
   }
 
-  static const int version = 1;
+  static const int version = 2;
 
   Map<String, Object?> toJson() => {
     'note_store_version': version,
@@ -142,10 +158,12 @@ class _NoteStoreState {
           if (note.commitmentPosition != null)
             'commitment_position': note.commitmentPosition,
           if (note.isChange != null) 'is_change': note.isChange,
+          if (note.witness != null) 'witness': note.witness,
           if (note.recipient != null) 'recipient': note.recipient,
           if (note.rseed != null) 'rseed': note.rseed,
           if (note.rho != null) 'rho': note.rho,
           if (note.noteVersion != null) 'note_version': note.noteVersion,
+          if (note.blockHash != null) 'block_hash': note.blockHash,
         },
     ],
     'spends': [
@@ -156,17 +174,18 @@ class _NoteStoreState {
           'nullifier': spend.nullifier,
           'index': spend.index,
           if (spend.noteIndex != null) 'note_index': spend.noteIndex,
+          if (spend.blockHash != null) 'block_hash': spend.blockHash,
         },
     ],
   };
 
   void restore(Map<String, Object?> json) {
     final version = json['note_store_version'];
-    if (version != _NoteStoreState.version) {
+    if (version != 1 && version != _NoteStoreState.version) {
       throw NoteStoreException(
         NoteStoreRefusal.unsupportedVersion,
-        'note_store_version ${version ?? "(absent)"} is not '
-        '${_NoteStoreState.version}',
+        'note_store_version ${version ?? "(absent)"} is not supported; '
+        'this build reads 1 and ${_NoteStoreState.version}',
       );
     }
     final documentPool = json['pool'];
@@ -209,10 +228,12 @@ class _NoteStoreState {
         nullifier: _optionalString(entry, 'nullifier'),
         commitmentPosition: _optionalHeight(entry, 'commitment_position'),
         isChange: entry['is_change'] as bool?,
+        witness: _optionalHexString(entry, 'witness'),
         recipient: _optionalString(entry, 'recipient'),
         rseed: _optionalString(entry, 'rseed'),
         rho: _optionalString(entry, 'rho'),
         noteVersion: _optionalString(entry, 'note_version'),
+        blockHash: _optionalBlockHash(entry, 'block_hash'),
       );
       _notes['${note.tx}:${note.output}'] = note;
     }
@@ -225,6 +246,7 @@ class _NoteStoreState {
         nullifier: _string(entry, 'nullifier'),
         index: _int(entry, 'index'),
         noteIndex: _optionalHeight(entry, 'note_index'),
+        blockHash: _optionalBlockHash(entry, 'block_hash'),
       );
       _spends[spend.nullifier] = spend;
     }
@@ -304,6 +326,44 @@ class _NoteStoreState {
     );
   }
 
+  static String? _optionalBlockHash(Map<String, Object?> json, String key) {
+    final value = _optionalString(json, key);
+    if (value == null) return null;
+    if (value.length != 64 || !_isHex(value)) {
+      throw NoteStoreException(
+        NoteStoreRefusal.malformed,
+        '"$key" must be a 32-byte hexadecimal block hash',
+      );
+    }
+    return value;
+  }
+
+  static String? _optionalHexString(Map<String, Object?> json, String key) {
+    final value = _optionalString(json, key);
+    _requireValidOptionalHex(value, key);
+    return value;
+  }
+
+  static void _requireValidOptionalHex(String? value, String field) {
+    if (value == null) return;
+    if (value.isEmpty || value.length.isOdd || !_isHex(value)) {
+      throw NoteStoreException(
+        NoteStoreRefusal.malformed,
+        '"$field" must be non-empty, even-length hexadecimal data',
+      );
+    }
+  }
+
+  static bool _isHex(String value) {
+    for (final unit in value.codeUnits) {
+      final digit = unit >= 0x30 && unit <= 0x39;
+      final lower = unit >= 0x61 && unit <= 0x66;
+      final upper = unit >= 0x41 && unit <= 0x46;
+      if (!digit && !lower && !upper) return false;
+    }
+    return true;
+  }
+
   List<String> get nullifiersToWatch => List<String>.unmodifiable([
     for (final note in _notes.values)
       if (note.nullifier != null && !_spends.containsKey(note.nullifier))
@@ -313,21 +373,54 @@ class _NoteStoreState {
   static ZcashScannedNote _merged(
     ZcashScannedNote? existing,
     ZcashScannedNote incoming,
-  ) => ZcashScannedNote(
-    height: incoming.height,
-    tx: incoming.tx,
-    output: incoming.output,
-    value: incoming.value,
-    pool: incoming.pool,
-    nullifier: incoming.nullifier ?? existing?.nullifier,
-    commitmentPosition:
-        incoming.commitmentPosition ?? existing?.commitmentPosition,
-    isChange: incoming.isChange ?? existing?.isChange,
-    recipient: incoming.recipient ?? existing?.recipient,
-    rseed: incoming.rseed ?? existing?.rseed,
-    rho: incoming.rho ?? existing?.rho,
-    noteVersion: incoming.noteVersion ?? existing?.noteVersion,
-  );
+  ) {
+    _requireCompatibleCanonicalBlock(existing?.blockHash, incoming.blockHash);
+    return ZcashScannedNote(
+      height: incoming.height,
+      tx: incoming.tx,
+      output: incoming.output,
+      value: incoming.value,
+      pool: incoming.pool,
+      nullifier: incoming.nullifier ?? existing?.nullifier,
+      commitmentPosition:
+          incoming.commitmentPosition ?? existing?.commitmentPosition,
+      isChange: incoming.isChange ?? existing?.isChange,
+      witness: incoming.witness ?? existing?.witness,
+      recipient: incoming.recipient ?? existing?.recipient,
+      rseed: incoming.rseed ?? existing?.rseed,
+      rho: incoming.rho ?? existing?.rho,
+      noteVersion: incoming.noteVersion ?? existing?.noteVersion,
+      blockHash: incoming.blockHash ?? existing?.blockHash,
+    );
+  }
+
+  static ZcashObservedSpend _mergedSpend(
+    ZcashObservedSpend? existing,
+    ZcashObservedSpend incoming,
+  ) {
+    _requireCompatibleCanonicalBlock(existing?.blockHash, incoming.blockHash);
+    return incoming;
+  }
+
+  static void _requireCompatibleCanonicalBlock(
+    String? existing,
+    String? incoming,
+  ) {
+    for (final hash in [existing, incoming]) {
+      if (hash != null && (hash.length != 64 || !_isHex(hash))) {
+        throw NoteStoreException(
+          NoteStoreRefusal.malformed,
+          'a canonical block identity must be a 32-byte hexadecimal hash',
+        );
+      }
+    }
+    if (existing != null && incoming != null && existing != incoming) {
+      throw NoteStoreException(
+        NoteStoreRefusal.malformed,
+        'a wallet event changed canonical block identity without a rollback',
+      );
+    }
+  }
 
   void rollbackTo(int height) {
     _notes.removeWhere((_, note) => note.height > height);

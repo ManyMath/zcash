@@ -33,6 +33,17 @@ class ZcashLightwalletdScanSource {
   String? get lastBlockHash =>
       blocks.isEmpty ? null : _hashHexOrNull(blocks.last.hash);
 
+  /// The protocol-order canonical hash served for [height], if this range
+  /// contains that height and the server supplied a hash.
+  String? blockHashAt(int height) {
+    for (final block in blocks) {
+      if (block.height.toInt() == height) {
+        return _hashHexOrNull(block.hash);
+      }
+    }
+    return null;
+  }
+
   int get ironwoodActions {
     var total = 0;
     for (final block in blocks) {

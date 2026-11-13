@@ -117,7 +117,7 @@ void main() {
       expect(store.coveredThrough, 1000);
     });
 
-    test('a note out of a store carries no witness and is never spendable', () {
+    test('a note out of a store retains its witness and is spendable', () {
       final store = IronwoodNoteStore();
       final scanned = _note(value: 500000, nullifier: 'ab' * 32, height: 100);
       expect(scanned.witness, isNotNull);
@@ -127,18 +127,45 @@ void main() {
         accountFingerprint: _account,
       );
 
-      expect(store.notes.single.witness, isNull);
-      expect(store.noteSet.spendableZatoshis, 0);
-      expect(store.noteSet.spendable, isEmpty);
+      expect(store.notes.single.witness, scanned.witness);
+      expect(store.noteSet.spendableZatoshis, 500000);
+      expect(store.noteSet.spendable, hasLength(1));
       expect(store.noteSet.unspentZatoshis, 500000);
-      expect(
-        store.noteSet.tracked.single.status,
-        IronwoodNoteStatus.incomplete,
-      );
+      expect(store.noteSet.tracked.single.status, IronwoodNoteStatus.spendable);
       expect(
         IronwoodNoteSet.fromScan(notes: [scanned]).spendableZatoshis,
         500000,
       );
+    });
+
+    test('a malformed scanned witness is refused before store mutation', () {
+      final store = IronwoodNoteStore();
+      final malformed = ZcashScannedNote(
+        height: 100,
+        tx: 'aa' * 32,
+        output: 0,
+        value: 500000,
+        pool: 'ironwood',
+        nullifier: 'ab' * 32,
+        witness: 'not-hex',
+      );
+
+      expect(
+        () => store.apply(
+          _scan(notes: [malformed], from: 1, to: 500),
+          accountFingerprint: _account,
+        ),
+        throwsA(
+          isA<NoteStoreException>().having(
+            (error) => error.refusal,
+            'refusal',
+            NoteStoreRefusal.malformed,
+          ),
+        ),
+      );
+      expect(store.accountFingerprint, isNull);
+      expect(store.notes, isEmpty);
+      expect(store.coveredThrough, isNull);
     });
 
     test(
@@ -181,6 +208,7 @@ void main() {
         );
 
         expect(store.notes.single.nullifier, 'ab' * 32);
+        expect(store.notes.single.witness, '33' * 40);
         expect(store.noteSet.unspentZatoshis, 0);
         expect(store.noteSet.spent, hasLength(1));
       },
@@ -390,7 +418,7 @@ void main() {
 
       expect(store.notes, hasLength(1));
       expect(store.noteSet.unspentZatoshis, 400000);
-      expect(store.noteSet.spendableZatoshis, 0);
+      expect(store.noteSet.spendableZatoshis, 400000);
 
       store.apply(
         _scan(
@@ -406,29 +434,21 @@ void main() {
   });
 
   group('OrchardNoteStore', () {
-    test(
-      'what it holds is Orchard value a fresh witness would make movable',
-      () {
-        final store = OrchardNoteStore();
-        store.apply(
-          _scan(
-            notes: [
-              _note(value: 300000, nullifier: 'ab' * 32, pool: 'orchard'),
-            ],
-            from: 1,
-            to: 500,
-          ),
-          accountFingerprint: _account,
-        );
+    test('what it holds is Orchard value with its witness', () {
+      final store = OrchardNoteStore();
+      store.apply(
+        _scan(
+          notes: [_note(value: 300000, nullifier: 'ab' * 32, pool: 'orchard')],
+          from: 1,
+          to: 500,
+        ),
+        accountFingerprint: _account,
+      );
 
-        expect(store.noteSet.unspentZatoshis, 300000);
-        expect(store.noteSet.migratableZatoshis, 0);
-        expect(
-          store.noteSet.tracked.single.status,
-          OrchardNoteStatus.incomplete,
-        );
-      },
-    );
+      expect(store.noteSet.unspentZatoshis, 300000);
+      expect(store.noteSet.migratableZatoshis, 300000);
+      expect(store.noteSet.tracked.single.status, OrchardNoteStatus.migratable);
+    });
   });
 
   group('the three stores side by side', () {
@@ -591,8 +611,42 @@ void main() {
 
       expect(restored.noteSet.unspentZatoshis, store.noteSet.unspentZatoshis);
       expect(restored.noteSet.unspentZatoshis, 200000);
+      expect(restored.noteSet.spendableZatoshis, 200000);
+      expect(restored.notes.map((note) => note.witness), [
+        '33' * 40,
+        '33' * 40,
+      ]);
+    });
+
+    test('a legacy witness-less schema restores but requires a rescan', () {
+      final document = populated().toJson();
+      expect(document['note_store_version'], 2);
+      document['note_store_version'] = 1;
+      for (final note in document['notes']! as List<Object?>) {
+        (note as Map<String, Object?>).remove('witness');
+      }
+
+      final restored = IronwoodNoteStore.fromJson(document);
+
+      expect(restored.noteSet.unspentZatoshis, 200000);
       expect(restored.noteSet.spendableZatoshis, 0);
-      expect(restored.notes.every((note) => note.witness == null), isTrue);
+    });
+
+    test('a corrupt persisted witness is refused', () {
+      final document = populated().toJson();
+      final notes = document['notes']! as List<Object?>;
+      (notes.first as Map<String, Object?>)['witness'] = 'not-hex';
+
+      expect(
+        () => IronwoodNoteStore.fromJson(document),
+        throwsA(
+          isA<NoteStoreException>().having(
+            (error) => error.refusal,
+            'refusal',
+            NoteStoreRefusal.malformed,
+          ),
+        ),
+      );
     });
 
     test('a restored store keeps its coverage, and its refusals', () {

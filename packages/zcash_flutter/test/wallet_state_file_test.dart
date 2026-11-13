@@ -18,6 +18,7 @@ void main() {
   tearDown(() => dir.deleteSync(recursive: true));
 
   ZcashWalletSyncState walletAt(int height) => ZcashWalletSyncState.atBirthday(
+    network: ZcashAddressNetwork.regtest,
     cursor: ZcashLightwalletdSyncCursor.origin(height: height),
     accountFingerprint: 'state-file-test',
   );

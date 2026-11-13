@@ -257,10 +257,10 @@ void main() {
       expect(fromStores.untrackableZatoshis, fromScan.untrackableZatoshis);
 
       expect(fromScan.spendableZatoshis, 500000);
-      expect(fromStores.spendableZatoshis, 0);
-      expect(fromStores.migratableZatoshis, 0);
-      expect(fromStores.unusableZatoshis, 700000);
-      expect(fromStores.isFullyUsable, isFalse);
+      expect(fromStores.spendableZatoshis, 500000);
+      expect(fromStores.migratableZatoshis, 200000);
+      expect(fromStores.unusableZatoshis, 0);
+      expect(fromStores.isFullyUsable, isTrue);
     });
 
     test('untrackable value is named, not folded away', () {
@@ -281,7 +281,7 @@ void main() {
 
       expect(balance.untrackableZatoshis, 250000);
       expect(balance.totalZatoshis, 350000);
-      expect(balance.spendableZatoshis, 0);
+      expect(balance.spendableZatoshis, 100000);
     });
 
     test('stores accumulating different accounts are refused', () {

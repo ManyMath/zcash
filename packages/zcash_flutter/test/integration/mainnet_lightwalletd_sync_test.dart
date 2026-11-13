@@ -69,6 +69,7 @@ void main() {
       final tip = await client!.getTipHeight();
       final birthday = tip - blocks + 1;
       final wallet = ZcashWalletSyncState.atBirthday(
+        network: ZcashAddressNetwork.mainnet,
         cursor: ZcashLightwalletdSyncCursor.fromTreeState(
           treeStateFromLightwalletd(
             await client!.getTreeStateAtHeight(birthday - 1),

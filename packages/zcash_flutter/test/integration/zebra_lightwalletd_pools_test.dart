@@ -380,6 +380,7 @@ void main() {
         );
 
         final wallet = ZcashWalletSyncState.atBirthday(
+          network: ZcashAddressNetwork.regtest,
           cursor: ZcashLightwalletdSyncCursor.fromTreeState(
             treeStateFromLightwalletd(
               await lightwalletd!.client.getTreeStateAtHeight(

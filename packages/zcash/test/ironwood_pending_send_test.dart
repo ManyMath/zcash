@@ -111,6 +111,7 @@ void main() {
     final scan = _scan([_note('a1' * 32, 100000)]);
     final prepared = _prepared(_plan(scan));
     final wallet = ZcashWalletSyncState.atBirthday(
+      network: ZcashAddressNetwork.regtest,
       cursor: ZcashLightwalletdSyncCursor.origin(height: 300),
       accountFingerprint: 'account-0',
     );

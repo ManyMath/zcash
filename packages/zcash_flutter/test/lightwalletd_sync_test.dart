@@ -241,6 +241,7 @@ void main() {
   });
 
   ZcashWalletSyncState walletAt(int height) => ZcashWalletSyncState.atBirthday(
+    network: ZcashAddressNetwork.regtest,
     cursor: ZcashLightwalletdSyncCursor.origin(height: height),
     accountFingerprint: _fingerprint,
   );

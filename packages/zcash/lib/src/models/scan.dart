@@ -308,6 +308,7 @@ class ZcashObservedSpend {
     required this.nullifier,
     required this.index,
     this.noteIndex,
+    this.blockHash,
   });
 
   final int height;
@@ -322,6 +323,8 @@ class ZcashObservedSpend {
 
   final int? noteIndex;
 
+  final String? blockHash;
+
   factory ZcashObservedSpend.fromJson(
     Map<String, Object?> json, {
     String context = 'scan_compact_blocks',
@@ -332,6 +335,7 @@ class ZcashObservedSpend {
     nullifier: _requiredHex(json, 'nullifier', context: context),
     index: _requiredInt(json, 'index', context: context),
     noteIndex: _optionalInt(json, 'note_index', context: context),
+    blockHash: _optionalHex(json, 'block_hash', context: context),
   );
 }
 
@@ -421,6 +425,7 @@ class ZcashScannedNote {
     this.rseed,
     this.rho,
     this.noteVersion,
+    this.blockHash,
   });
 
   final int height;
@@ -449,6 +454,8 @@ class ZcashScannedNote {
   /// `v2` for an Orchard note (ZIP 212), `v3` for Ironwood (ZIP 2005).
   final String? noteVersion;
 
+  final String? blockHash;
+
   factory ZcashScannedNote.fromJson(
     Map<String, Object?> json, {
     String context = 'scan_compact_blocks',
@@ -475,6 +482,7 @@ class ZcashScannedNote {
     rseed: _optionalHex(json, 'rseed', context: context),
     rho: _optionalHex(json, 'rho', context: context),
     noteVersion: _optionalString(json, 'note_version', context: context),
+    blockHash: _optionalHex(json, 'block_hash', context: context),
   );
 }
 

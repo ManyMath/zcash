@@ -79,6 +79,7 @@ void main() {
 
         final prior = await zebra.client.getTreeState('${shieldHeight - 1}');
         final wallet = ZcashWalletSyncState.atBirthday(
+          network: ZcashAddressNetwork.regtest,
           cursor: ZcashLightwalletdSyncCursor.fromTreeState(prior),
           accountFingerprint: _accountFingerprint,
         );
