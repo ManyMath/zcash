@@ -41,4 +41,21 @@ void main() {
       contains('max-page-size=16384'),
     );
   });
+
+  test('Android Cargo builds use the production wallet feature profile', () {
+    expect(
+      androidCargoBuildArguments(
+        manifestDir: '/crate',
+        targetDir: '/out',
+        rustTriple: 'aarch64-linux-android',
+        release: true,
+      ),
+      containsAllInOrder([
+        '--no-default-features',
+        '--features',
+        'ironwood-note-discovery,ironwood-tx-build,orchard-note-discovery,'
+            'orchard-tx-build,sapling-spend-build,transparent-tx-build',
+      ]),
+    );
+  });
 }

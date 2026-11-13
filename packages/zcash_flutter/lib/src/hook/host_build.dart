@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:path/path.dart' as path;
 
+import '../production_native_profile.dart';
 import 'rustup.dart';
 
 /// Maps a code-assets OS and architecture to the Rust target triple for a
@@ -55,6 +56,24 @@ String hostLibraryPath({
   libraryFileName,
 ]);
 
+List<String> hostCargoBuildArguments({
+  required String manifestDir,
+  required String targetDir,
+  required String rustTriple,
+  required bool cross,
+  required bool release,
+}) => [
+  'build',
+  '--lib',
+  ...productionWalletNativeFeatureProfile.cargoArguments,
+  if (release) '--release',
+  if (cross) ...['--target', rustTriple],
+  '--manifest-path',
+  path.join(manifestDir, 'Cargo.toml'),
+  '--target-dir',
+  targetDir,
+];
+
 Future<String> buildHostLibrary({
   required String manifestDir,
   required String targetDir,
@@ -68,16 +87,16 @@ Future<String> buildHostLibrary({
     await ensureRustTarget(rustTriple);
   }
 
-  final result = await Process.run('cargo', [
-    'build',
-    '--lib',
-    if (release) '--release',
-    if (cross) ...['--target', rustTriple],
-    '--manifest-path',
-    path.join(manifestDir, 'Cargo.toml'),
-    '--target-dir',
-    targetDir,
-  ]);
+  final result = await Process.run(
+    'cargo',
+    hostCargoBuildArguments(
+      manifestDir: manifestDir,
+      targetDir: targetDir,
+      rustTriple: rustTriple,
+      cross: cross,
+      release: release,
+    ),
+  );
   if (result.exitCode != 0) {
     throw StateError(
       'cargo build for $rustTriple failed (${result.exitCode}):\n'

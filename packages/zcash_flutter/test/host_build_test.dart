@@ -53,4 +53,22 @@ void main() {
       '/out/x86_64-apple-darwin/release/libzcash_ffi.dylib',
     );
   });
+
+  test('host Cargo builds use the production wallet feature profile', () {
+    expect(
+      hostCargoBuildArguments(
+        manifestDir: '/crate',
+        targetDir: '/out',
+        rustTriple: 'x86_64-unknown-linux-gnu',
+        cross: false,
+        release: true,
+      ),
+      containsAllInOrder([
+        '--no-default-features',
+        '--features',
+        'ironwood-note-discovery,ironwood-tx-build,orchard-note-discovery,'
+            'orchard-tx-build,sapling-spend-build,transparent-tx-build',
+      ]),
+    );
+  });
 }

@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:path/path.dart' as path;
 
+import '../production_native_profile.dart';
 import 'rustup.dart';
 
 ({String rustTriple, String clangPrefix}) androidTarget(String architecture) =>
@@ -49,6 +50,24 @@ Map<String, String> androidCargoEnvironment({
   };
 }
 
+List<String> androidCargoBuildArguments({
+  required String manifestDir,
+  required String targetDir,
+  required String rustTriple,
+  required bool release,
+}) => [
+  'build',
+  '--lib',
+  ...productionWalletNativeFeatureProfile.cargoArguments,
+  if (release) '--release',
+  '--target',
+  rustTriple,
+  '--manifest-path',
+  path.join(manifestDir, 'Cargo.toml'),
+  '--target-dir',
+  targetDir,
+];
+
 Future<String> buildAndroidLibrary({
   required String manifestDir,
   required String targetDir,
@@ -83,17 +102,16 @@ Future<String> buildAndroidLibrary({
     );
   }
 
-  final result = await Process.run('cargo', [
-    'build',
-    '--lib',
-    if (release) '--release',
-    '--target',
-    target.rustTriple,
-    '--manifest-path',
-    path.join(manifestDir, 'Cargo.toml'),
-    '--target-dir',
-    targetDir,
-  ], environment: environment);
+  final result = await Process.run(
+    'cargo',
+    androidCargoBuildArguments(
+      manifestDir: manifestDir,
+      targetDir: targetDir,
+      rustTriple: target.rustTriple,
+      release: release,
+    ),
+    environment: environment,
+  );
   if (result.exitCode != 0) {
     throw StateError(
       'cargo build for ${target.rustTriple} failed (${result.exitCode}):\n'

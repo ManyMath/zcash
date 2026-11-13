@@ -1,3 +1,11 @@
+## Unreleased
+
+- Build host, Android and iOS native assets with a validated production-wallet
+  Cargo feature profile, and expose a runtime capability assertion for apps.
+- Allow `code_assets` 1.2.1 through 2.x so applications can resolve
+  `zcash_flutter` alongside native packages that have not moved to 2.x. The
+  build hook only uses APIs available in 1.2.1.
+
 ## 0.0.3
 
 - Moved the build hook dependencies to `hooks: ^2.2.0` and

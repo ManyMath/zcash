@@ -7,12 +7,12 @@ import 'package:zcash_flutter/zcash_flutter.dart'
         CapabilityStatus,
         CompactBlockScanInput,
         NativeCapability,
-        NativeCapabilitySnapshot,
         ZcashAddressNetwork,
         ZcashAddressPool,
         ZcashAddressReceiverType,
         ZcashKeyType,
-        ZcashKeyValidationReason;
+        ZcashKeyValidationReason,
+        requireProductionWalletNativeCapabilities;
 import 'package:zcash_flutter/src/ffi/zcash_native_assets.dart';
 
 const _seed =
@@ -25,12 +25,12 @@ void main() {
       expect(zcashNativeVersion(), matches(RegExp(r'^\d+\.\d+\.\d+')));
     });
 
-    test('native capabilities match the documented package matrix', () {
+    test('native capabilities satisfy the production wallet profile', () {
       final capabilities = zcashNativeCapabilities();
 
       expect(
-        capabilities.statuses,
-        NativeCapabilitySnapshot.documented.statuses,
+        () => requireProductionWalletNativeCapabilities(capabilities),
+        returnsNormally,
       );
       expect(
         capabilities.statusFor(NativeCapability.saplingScan),
@@ -38,7 +38,11 @@ void main() {
       );
       expect(
         capabilities.statusFor(NativeCapability.orchardNoteDiscovery),
-        CapabilityStatus.unsupported,
+        CapabilityStatus.experimental,
+      );
+      expect(
+        capabilities.statusFor(NativeCapability.orchardTransactionBuild),
+        CapabilityStatus.experimental,
       );
     });
 

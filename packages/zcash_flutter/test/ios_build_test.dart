@@ -26,4 +26,21 @@ void main() {
     );
     expect(env['CARGO_PROFILE_RELEASE_STRIP'], 'none');
   });
+
+  test('iOS Cargo builds use the production wallet feature profile', () {
+    expect(
+      iosCargoBuildArguments(
+        manifestDir: '/crate',
+        targetDir: '/out',
+        rustTriple: 'aarch64-apple-ios',
+        release: true,
+      ),
+      containsAllInOrder([
+        '--no-default-features',
+        '--features',
+        'ironwood-note-discovery,ironwood-tx-build,orchard-note-discovery,'
+            'orchard-tx-build,sapling-spend-build,transparent-tx-build',
+      ]),
+    );
+  });
 }

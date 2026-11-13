@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:path/path.dart' as path;
 
+import '../production_native_profile.dart';
 import 'rustup.dart';
 
 String iosRustTriple(String architecture, {required bool simulator}) =>
@@ -32,6 +33,24 @@ Map<String, String> iosCargoEnvironment({
   };
 }
 
+List<String> iosCargoBuildArguments({
+  required String manifestDir,
+  required String targetDir,
+  required String rustTriple,
+  required bool release,
+}) => [
+  'build',
+  '--lib',
+  ...productionWalletNativeFeatureProfile.cargoArguments,
+  if (release) '--release',
+  '--target',
+  rustTriple,
+  '--manifest-path',
+  path.join(manifestDir, 'Cargo.toml'),
+  '--target-dir',
+  targetDir,
+];
+
 Future<String> buildIOSLibrary({
   required String manifestDir,
   required String targetDir,
@@ -46,17 +65,12 @@ Future<String> buildIOSLibrary({
 
   final result = await Process.run(
     'cargo',
-    [
-      'build',
-      '--lib',
-      if (release) '--release',
-      '--target',
-      triple,
-      '--manifest-path',
-      path.join(manifestDir, 'Cargo.toml'),
-      '--target-dir',
-      targetDir,
-    ],
+    iosCargoBuildArguments(
+      manifestDir: manifestDir,
+      targetDir: targetDir,
+      rustTriple: triple,
+      release: release,
+    ),
     environment: iosCargoEnvironment(
       rustTriple: triple,
       deploymentTarget: deploymentTarget,
