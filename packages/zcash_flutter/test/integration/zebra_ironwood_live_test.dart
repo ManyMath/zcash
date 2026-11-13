@@ -933,6 +933,17 @@ void main() {
       expect(prepared.transaction.feeZatoshis, prepared.plan.feeZatoshis);
       expect(prepared.transaction.ironwoodOutputZatoshis, amount);
 
+      final pending = IronwoodPendingSendState()
+        ..addPrepared(
+          prepared,
+          actualDestinationPool: IronwoodDestinationPool.ironwood,
+          createdHeight: tip,
+        );
+      final restoredReservations = IronwoodPendingSendState.fromJson(
+        (jsonDecode(jsonEncode(pending.toJson())) as Map)
+            .cast<String, Object?>(),
+      );
+
       final reserved = prepareNativeIronwoodSend(
         network: ZcashNetwork.regtest,
         scan: scanned,
@@ -940,7 +951,7 @@ void main() {
         amountZatoshis: amount,
         targetHeight: tip + 1,
         seedHex: _testSeedHex,
-        inFlight: [prepared.plan],
+        reservations: restoredReservations,
         regtestNu63ActivationHeight: nu63Activation,
         allowExperimentalIronwoodBuild: true,
         bindings: ffi,

@@ -1,4 +1,5 @@
 import 'ironwood_send.dart';
+import 'ironwood_pending_send.dart';
 import 'scan.dart';
 import 'transaction.dart';
 
@@ -61,8 +62,10 @@ Future<IronwoodBroadcastReceipt> broadcastIronwoodSend({
   required IronwoodPreparedSend send,
   required Future<String> Function(String transactionHex) submit,
   int? chainHeight,
+  IronwoodPendingSendState? pendingSends,
   bool Function(Object error)? isRejection,
 }) async {
+  pendingSends?.requireBroadcastable(send, chainHeight: chainHeight);
   if (chainHeight != null && chainHeight >= send.expiryHeight) {
     throw IronwoodBroadcastException(
       IronwoodBroadcastRefusal.expired,
@@ -73,22 +76,25 @@ Future<IronwoodBroadcastReceipt> broadcastIronwoodSend({
       'Plan it again against the current tip; its notes are free',
     );
   }
+  pendingSends?.markSubmitting(send.txid);
 
   final String acknowledged;
   try {
     acknowledged = await submit(send.transactionHex);
   } catch (error) {
     if (isRejection != null && isRejection(error)) {
+      pendingSends?.releaseRejected(send.txid);
       throw IronwoodBroadcastException(
         IronwoodBroadcastRefusal.rejected,
-        'the node rejected this payment: $error. It reached no mempool, so its '
+        'the node rejected this payment. It reached no mempool, so its '
         'notes may be selected again',
         cause: error,
       );
     }
+    pendingSends?.markIndeterminate(send.txid);
     throw IronwoodBroadcastException(
       IronwoodBroadcastRefusal.undetermined,
-      'the payment may or may not have been broadcast: $error. Keep its notes '
+      'the payment may or may not have been broadcast. Keep its notes '
       'committed until a scan sees them spent or the chain passes height '
       '${send.expiryHeight} — re-selecting them now risks publishing a second '
       'transaction over the same nullifiers',
@@ -98,15 +104,17 @@ Future<IronwoodBroadcastReceipt> broadcastIronwoodSend({
 
   if (acknowledged.isNotEmpty &&
       acknowledged.toLowerCase() != send.txid.toLowerCase()) {
+    pendingSends?.markIndeterminate(send.txid);
     throw IronwoodBroadcastException(
       IronwoodBroadcastRefusal.txidMismatch,
-      'the node acknowledged $acknowledged where this payment is ${send.txid}. '
-      'A transaction id is a hash of its bytes, so the node parsed something '
-      'other than what was built here, and this receipt would name the wrong '
-      'transaction. Treat the notes as committed',
+      'the node acknowledged a different transaction id. A transaction id is '
+      'a hash of its bytes, so the node parsed something other than what was '
+      'built here, and this receipt would name the wrong transaction. Treat '
+      'the notes as committed',
       cause: acknowledged,
     );
   }
+  pendingSends?.markAcknowledged(send.txid);
 
   return IronwoodBroadcastReceipt(
     plan: send.plan,

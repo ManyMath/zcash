@@ -1,5 +1,6 @@
 import 'account_balance.dart';
 import 'chain_sync.dart';
+import 'ironwood_pending_send.dart';
 import 'lightwalletd_scan_source.dart';
 import 'note_store.dart';
 import 'scan.dart';
@@ -15,7 +16,10 @@ class ZcashWalletSyncState {
     required this.sapling,
     required this.orchard,
     required this.ironwood,
-  }) : _cursor = cursor {
+    IronwoodPendingSendState? pendingIronwoodSends,
+  }) : pendingIronwoodSends =
+           pendingIronwoodSends ?? IronwoodPendingSendState(),
+       _cursor = cursor {
     _checkPositions();
   }
 
@@ -37,6 +41,7 @@ class ZcashWalletSyncState {
   final SaplingNoteStore sapling;
   final OrchardNoteStore orchard;
   final IronwoodNoteStore ironwood;
+  final IronwoodPendingSendState pendingIronwoodSends;
 
   ZcashLightwalletdSyncCursor _cursor;
   ZcashChainSync? _sync;
@@ -105,6 +110,7 @@ class ZcashWalletSyncState {
       'sapling': sapling.toJson(),
       'orchard': orchard.toJson(),
       'ironwood': ironwood.toJson(),
+      'pending_ironwood_sends': pendingIronwoodSends.toJson(),
     };
   }
 
@@ -132,6 +138,11 @@ class ZcashWalletSyncState {
       sapling: SaplingNoteStore.fromJson(_object(json, 'sapling')),
       orchard: OrchardNoteStore.fromJson(_object(json, 'orchard')),
       ironwood: IronwoodNoteStore.fromJson(_object(json, 'ironwood')),
+      pendingIronwoodSends: json['pending_ironwood_sends'] == null
+          ? IronwoodPendingSendState()
+          : IronwoodPendingSendState.fromJson(
+              _object(json, 'pending_ironwood_sends'),
+            ),
     );
   }
 

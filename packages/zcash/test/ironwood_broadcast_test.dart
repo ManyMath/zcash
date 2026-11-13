@@ -185,6 +185,21 @@ void main() {
       },
     );
 
+    test('broadcast diagnostics never echo raw transaction bytes', () async {
+      final send = _prepared();
+
+      try {
+        await broadcastIronwoodSend(
+          send: send,
+          submit: (_) async =>
+              throw Exception('transport included ${send.transactionHex}'),
+        );
+        fail('the transport failure must be reported');
+      } on IronwoodBroadcastException catch (error) {
+        expect(error.toString(), isNot(contains(send.transactionHex)));
+      }
+    });
+
     test(
       'frees the notes only when the caller can say the node refused',
       () async {

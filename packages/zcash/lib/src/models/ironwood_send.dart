@@ -28,6 +28,10 @@ class IronwoodSendException implements Exception {
   String toString() => 'IronwoodSendException: $message';
 }
 
+abstract interface class IronwoodNoteReservations {
+  Set<String> reservedNullifiersAt(int chainHeight);
+}
+
 class IronwoodSendPlan {
   IronwoodSendPlan._({
     required this.recipientAddress,
@@ -86,6 +90,7 @@ class IronwoodSendPlan {
     required int targetHeight,
     required int Function(List<ZcashScannedNote> spends) feeForSpends,
     Iterable<IronwoodSendPlan> inFlight = const [],
+    IronwoodNoteReservations? reservations,
     int? maxNotes,
     int? expiryHeight,
     Uint8List? memo,
@@ -122,6 +127,7 @@ class IronwoodSendPlan {
 
     final reserved = <String>{
       for (final plan in inFlight) ...plan.spentNullifiers,
+      ...?reservations?.reservedNullifiersAt(targetHeight),
     };
 
     IronwoodSendPlan planFrom(IronwoodNoteSet candidates) {
@@ -177,7 +183,7 @@ class IronwoodSendPlan {
         IronwoodSendRefusal.notesInFlight,
         'the wallet holds enough Ironwood value to pay $amountZatoshis '
         'zatoshis, but $committed of it is committed to ${reserved.length} '
-        'note(s) in ${inFlight.length} unconfirmed payment(s). Spending them '
+        'note(s) in a pending or confirmed payment. Spending them '
         'again would be a double spend the network rejects. Wait until a scan '
         'observes them spent rather than treating this as an insufficient '
         'balance (${refusal.message})',

@@ -123,8 +123,18 @@ void main() {
           allowExperimentalIronwoodBuild: true,
           bindings: ffi,
         );
+        restored.pendingIronwoodSends.addPrepared(
+          prepared,
+          actualDestinationPool: IronwoodDestinationPool.ironwood,
+          createdHeight: anchorHeight,
+        );
+        final durableBeforeBroadcast = ZcashWalletSyncState.fromJson(
+          (jsonDecode(jsonEncode(restored.toJson())) as Map)
+              .cast<String, Object?>(),
+        );
         final receipt = await broadcastIronwoodSend(
           send: prepared,
+          pendingSends: durableBeforeBroadcast.pendingIronwoodSends,
           chainHeight: anchorHeight,
           submit: zebra.client.sendRawTransaction,
           isRejection: (error) => error is ZebraRpcException,
@@ -157,6 +167,28 @@ void main() {
           ),
         );
         expect(receipt.isConfirmedBy(observation), isTrue);
+        durableBeforeBroadcast.pendingIronwoodSends.reconcileWithScan(
+          scan: observation,
+          canonicalBlockHashAt: (height) => height == spendHeight
+              ? blockHashFromDisplayedHash(minedHash)
+              : null,
+          scannedBlockHashAt: (height) {
+            for (final block in observedRange.blocks) {
+              if (block.height.toInt() == height) {
+                return ZcashLightwalletdScanSource([block]).lastBlockHash;
+              }
+            }
+            return null;
+          },
+        );
+        expect(
+          durableBeforeBroadcast
+              .pendingIronwoodSends
+              .records
+              .single
+              .isConfirmed,
+          isTrue,
+        );
       } finally {
         await lightwalletd?.shutdown();
         await zebra?.shutdown();

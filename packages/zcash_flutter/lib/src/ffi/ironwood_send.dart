@@ -15,6 +15,7 @@ IronwoodPreparedSend prepareNativeIronwoodSend({
   required String seedHex,
   int account = 0,
   Iterable<IronwoodSendPlan> inFlight = const [],
+  IronwoodNoteReservations? reservations,
   int? maxNotes,
   int? expiryHeight,
   Uint8List? memo,
@@ -40,6 +41,7 @@ IronwoodPreparedSend prepareNativeIronwoodSend({
     targetHeight: targetHeight,
     expiryHeight: expiryHeight,
     inFlight: inFlight,
+    reservations: reservations,
     maxNotes: maxNotes,
     memo: memo,
     feeForSpends: (spends) => quoteNativeIronwoodFee(
