@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import 'proposal.dart';
+import 'ironwood_build.dart';
 import 'sapling_build.dart';
 import 'sapling_notes.dart';
 import 'sapling_selection.dart';
@@ -18,6 +19,10 @@ enum SaplingSendRefusal {
   invalidMemo,
 
   planBuildMismatch,
+}
+
+abstract interface class SaplingNoteReservations {
+  Set<String> reservedSaplingNullifiersAt(int chainHeight);
 }
 
 class SaplingSendException implements Exception {
@@ -89,6 +94,7 @@ class SaplingSendPlan {
     required int targetHeight,
     required int Function(List<ZcashScannedNote> spends) feeForSpends,
     Iterable<SaplingSendPlan> inFlight = const [],
+    SaplingNoteReservations? reservations,
     int? maxNotes,
     Uint8List? memo,
   }) {
@@ -131,6 +137,7 @@ class SaplingSendPlan {
 
     final reserved = <String>{
       for (final plan in inFlight) ...plan.spentNullifiers,
+      ...?reservations?.reservedSaplingNullifiersAt(targetHeight),
     };
 
     SaplingSendPlan planFrom(SaplingNoteSet candidates) {
@@ -193,6 +200,132 @@ class SaplingSendPlan {
       );
     }
   }
+}
+
+/// A post-NU6.3 payment funded by Sapling notes whose destination route was
+/// resolved independently from its encoded address.
+class SaplingPaymentPlan {
+  SaplingPaymentPlan._({
+    required this.output,
+    required this.expiryHeight,
+    required SaplingSendPlan base,
+  }) : _base = base;
+
+  final ProposalOutput output;
+  final int expiryHeight;
+  final SaplingSendPlan _base;
+
+  List<ZcashScannedNote> get notes => _base.notes;
+  int get amountZatoshis => output.amountZatoshis;
+  int get feeZatoshis => _base.feeZatoshis;
+  int get changeZatoshis => _base.changeZatoshis;
+  String get anchorHex => _base.anchorHex;
+  String get changeAddress => _base.changeAddress;
+  int get targetHeight => _base.targetHeight;
+  int get inputZatoshis => _base.inputZatoshis;
+  Set<String> get spentNullifiers => _base.spentNullifiers;
+
+  static SaplingPaymentPlan fromScan({
+    required ZcashScanResult scan,
+    required ProposalOutput output,
+    required String saplingChangeAddress,
+    required int targetHeight,
+    required int expiryHeight,
+    required int Function(List<ZcashScannedNote> spends) feeForSpends,
+    SaplingNoteReservations? reservations,
+    int? maxNotes,
+  }) {
+    final base = SaplingSendPlan.fromScan(
+      scan: scan,
+      recipientAddress: output.receiverAddress,
+      changeAddress: saplingChangeAddress,
+      amountZatoshis: output.amountZatoshis,
+      targetHeight: targetHeight,
+      feeForSpends: feeForSpends,
+      reservations: reservations,
+      maxNotes: maxNotes,
+      memo: output.memo,
+    );
+    return SaplingPaymentPlan._(
+      output: output,
+      expiryHeight: expiryHeight,
+      base: base,
+    );
+  }
+}
+
+class SaplingPreparedPayment {
+  factory SaplingPreparedPayment({
+    required SaplingPaymentPlan plan,
+    required IronwoodBuildResult transaction,
+  }) {
+    void require(String field, int planned, int built) {
+      if (planned != built) {
+        throw SaplingSendException(
+          SaplingSendRefusal.planBuildMismatch,
+          'the built transaction $field is $built where the approved payment '
+          'plan says $planned',
+        );
+      }
+    }
+
+    if (plan.output.actualOutputPool != ProposalOutputPool.ironwood) {
+      throw SaplingSendException(
+        SaplingSendRefusal.planBuildMismatch,
+        'this post-NU6.3 path creates an Ironwood payment output',
+      );
+    }
+    require('fee', plan.feeZatoshis, transaction.feeZatoshis);
+    require('input', plan.inputZatoshis, transaction.saplingInputZatoshis);
+    require(
+      'Ironwood payment',
+      plan.amountZatoshis,
+      transaction.ironwoodOutputZatoshis,
+    );
+    require(
+      'Sapling change',
+      plan.changeZatoshis,
+      transaction.nonIronwoodOutputZatoshis,
+    );
+    require('Ironwood spend count', 0, transaction.ironwoodSpends);
+    require(
+      'Sapling spend count',
+      plan.notes.length,
+      transaction.saplingSpends,
+    );
+    require(
+      'ZIP 317 padded Sapling output count',
+      plan.changeZatoshis > 0 ? 2 : 0,
+      transaction.saplingOutputs,
+    );
+    require('transparent output count', 0, transaction.vout);
+    if (transaction.feeRule != 'zip317' || !transaction.isConsensusValid) {
+      throw SaplingSendException(
+        SaplingSendRefusal.planBuildMismatch,
+        'the payment requires ZIP 317 accounting and real proofs',
+      );
+    }
+    if (plan.inputZatoshis !=
+        plan.amountZatoshis + plan.feeZatoshis + plan.changeZatoshis) {
+      throw SaplingSendException(
+        SaplingSendRefusal.planBuildMismatch,
+        'the Sapling-funded payment does not conserve value',
+      );
+    }
+    return SaplingPreparedPayment._(plan: plan, transaction: transaction);
+  }
+
+  const SaplingPreparedPayment._({
+    required this.plan,
+    required this.transaction,
+  });
+
+  final SaplingPaymentPlan plan;
+  final IronwoodBuildResult transaction;
+
+  String get transactionHex => transaction.transactionHex;
+  String get txid => transaction.txid;
+  int get expiryHeight => transaction.expiryHeight;
 }
 
 class SaplingPreparedSend {

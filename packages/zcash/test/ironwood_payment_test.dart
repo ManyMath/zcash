@@ -92,6 +92,106 @@ IronwoodBuildResult _built(
 );
 
 void main() {
+  test('Sapling Path B accepts ZIP 317 padded change output actions', () {
+    final note = ZcashScannedNote(
+      height: 200,
+      tx: 'dd' * 32,
+      output: 0,
+      value: 100000,
+      pool: 'sapling',
+      nullifier: 'ee' * 32,
+      recipient: 'zregtest-wallet-note',
+      rseed: '11' * 32,
+      witness: '33' * 40,
+    );
+    final scan = ZcashScanResult(
+      scannedBlocks: 1,
+      discoveredNotes: 1,
+      totalValue: note.value,
+      notes: [note],
+      saplingAnchor: 'aa' * 32,
+      ironwoodAnchor: _anchor,
+    );
+    final output = resolveProposalOutput(
+      recipient: ProposalRecipient(
+        address: 'uregtest1-path-b-recipient',
+        amountZatoshis: 50000,
+      ),
+      address: const ZcashAddressMetadata(
+        network: ZcashAddressNetwork.regtest,
+        receiverType: ZcashAddressReceiverType.unified,
+        pool: ZcashAddressPool.orchard,
+        receivers: ZcashAddressReceiverPresence(
+          sprout: false,
+          orchard: true,
+          sapling: false,
+          transparent: false,
+          unknown: 0,
+          total: 1,
+        ),
+      ),
+      unifiedReceivers: const ZcashUnifiedAddressReceiverInventory(
+        network: ZcashAddressNetwork.regtest,
+        receivers: [
+          ZcashUnifiedAddressReceiver(
+            index: 0,
+            kind: ZcashAddressReceiverType.orchard,
+            pool: ZcashAddressPool.orchard,
+          ),
+        ],
+        counts: ZcashUnifiedAddressReceiverCounts(
+          orchard: 1,
+          sapling: 0,
+          transparent: 0,
+          p2pkh: 0,
+          p2sh: 0,
+          unknown: 0,
+          total: 1,
+        ),
+      ),
+      network: ZcashAddressNetwork.regtest,
+      targetHeight: 301,
+      transactionExpiryHeight: 340,
+      currentUnixTime: 1000,
+    );
+    final plan = SaplingPaymentPlan.fromScan(
+      scan: scan,
+      output: output,
+      saplingChangeAddress: 'zregtest-wallet-change',
+      targetHeight: 301,
+      expiryHeight: 340,
+      feeForSpends: (_) => 10000,
+    );
+    final built = IronwoodBuildResult(
+      network: ZcashAddressNetwork.regtest,
+      transactionHex: 'ff' * 20,
+      txid: 'cc' * 32,
+      version: 'v6',
+      consensusBranchId: 'nu6.3',
+      expiryHeight: 340,
+      feeZatoshis: plan.feeZatoshis,
+      feeRule: 'zip317',
+      proofValidity: 'real',
+      ironwoodAnchor: _anchor,
+      ironwoodAnchorSource: 'anchor',
+      vin: 0,
+      vout: 0,
+      saplingSpends: 1,
+      saplingOutputs: 2,
+      ironwoodActions: 1,
+      totalInputZatoshis: plan.inputZatoshis,
+      saplingInputZatoshis: plan.inputZatoshis,
+      nonIronwoodOutputZatoshis: plan.changeZatoshis,
+      ironwoodOutputZatoshis: plan.amountZatoshis,
+      rng: 'system',
+    );
+
+    final prepared = SaplingPreparedPayment(plan: plan, transaction: built);
+
+    expect(prepared.transaction.saplingOutputs, 2);
+    expect(prepared.plan.changeZatoshis, 40000);
+  });
+
   test('Ironwood source plans and verifies a transparent destination', () {
     final output = _output(
       address: 'tmExactTransparentReceiver',
@@ -134,7 +234,7 @@ void main() {
     );
     final prepared = IronwoodPreparedPayment(
       plan: plan,
-      transaction: _built(plan, vout: 0, saplingOutputs: 1),
+      transaction: _built(plan, vout: 0, saplingOutputs: 2),
     );
 
     expect(plan.output.encodedAddress, 'zregtestExactSaplingReceiver');
@@ -143,6 +243,6 @@ void main() {
     expect(plan.output.actualOutputPool, ProposalOutputPool.sapling);
     expect(plan.feeZatoshis, 10000);
     expect(plan.changeZatoshis, 40000);
-    expect(prepared.transaction.saplingOutputs, 1);
+    expect(prepared.transaction.saplingOutputs, 2);
   });
 }

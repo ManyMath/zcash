@@ -66,6 +66,35 @@ class IronwoodBuildSpendNote {
     required this.anchorHex,
   });
 
+  factory IronwoodBuildSpendNote.fromScannedNote(
+    ZcashScannedNote note, {
+    required String anchorHex,
+  }) {
+    if (note.pool != 'sapling') {
+      throw ArgumentError.value(
+        note.pool,
+        'note.pool',
+        'this spend input must be a Sapling note',
+      );
+    }
+    final recipient = note.recipient;
+    final rseed = note.rseed;
+    final witness = note.witness;
+    if (recipient == null || rseed == null || witness == null) {
+      throw ArgumentError(
+        'the scanned Sapling note is missing recipient, rseed, or witness; '
+        'rescan with includeSaplingWitnesses enabled',
+      );
+    }
+    return IronwoodBuildSpendNote(
+      valueZatoshis: note.value,
+      recipientAddress: recipient,
+      rseedHex: rseed,
+      witnessHex: witness,
+      anchorHex: anchorHex,
+    );
+  }
+
   Map<String, Object?> toRequestJson() => {
     'value_zatoshis': valueZatoshis,
     'recipient': recipientAddress,

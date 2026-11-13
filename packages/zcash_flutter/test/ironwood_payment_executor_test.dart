@@ -15,10 +15,15 @@ class _Backend implements IronwoodPaymentBackend {
   @override
   IronwoodFeeQuote quote(IronwoodPaymentNativeRequest request) {
     quotes.add(request);
-    final input = request.ironwoodSpends.fold(
-      0,
-      (sum, spend) => sum + spend.valueZatoshis,
-    );
+    final input =
+        request.ironwoodSpends.fold<int>(
+          0,
+          (sum, spend) => sum + spend.valueZatoshis,
+        ) +
+        request.saplingSpends.fold<int>(
+          0,
+          (sum, spend) => sum + spend.valueZatoshis,
+        );
     final nonIronwood = request.outputs.fold(
       0,
       (sum, output) => sum + output.valueZatoshis,
@@ -33,7 +38,7 @@ class _Backend implements IronwoodPaymentBackend {
       maxIronwoodOutputZatoshis: input - nonIronwood - 10000,
       ironwoodSpends: request.ironwoodSpends.length,
       orchardSpends: 0,
-      saplingSpends: 0,
+      saplingSpends: request.saplingSpends.length,
       transparentInputs: 0,
     );
   }
@@ -41,10 +46,15 @@ class _Backend implements IronwoodPaymentBackend {
   @override
   IronwoodBuildResult build(IronwoodPaymentNativeRequest request) {
     builds.add(request);
-    final input = request.ironwoodSpends.fold(
-      0,
-      (sum, spend) => sum + spend.valueZatoshis,
-    );
+    final input =
+        request.ironwoodSpends.fold<int>(
+          0,
+          (sum, spend) => sum + spend.valueZatoshis,
+        ) +
+        request.saplingSpends.fold<int>(
+          0,
+          (sum, spend) => sum + spend.valueZatoshis,
+        );
     final nonIronwood = request.outputs.fold(
       0,
       (sum, output) => sum + output.valueZatoshis,
@@ -68,12 +78,20 @@ class _Backend implements IronwoodPaymentBackend {
       ironwoodAnchorSource: 'anchor',
       vin: 0,
       vout: transparent.length,
-      saplingOutputs: sapling.length,
+      saplingSpends: request.saplingSpends.length,
+      saplingOutputs: sapling.isEmpty ? 0 : 2,
       ironwoodActions: 1,
       ironwoodSpends: request.ironwoodSpends.length,
       ironwoodChangeOutputs: request.ironwoodChangeZatoshis == null ? 0 : 1,
       totalInputZatoshis: input,
-      ironwoodInputZatoshis: input,
+      saplingInputZatoshis: request.saplingSpends.fold<int>(
+        0,
+        (sum, spend) => sum + spend.valueZatoshis,
+      ),
+      ironwoodInputZatoshis: request.ironwoodSpends.fold<int>(
+        0,
+        (sum, spend) => sum + spend.valueZatoshis,
+      ),
       ironwoodChangeZatoshis: request.ironwoodChangeZatoshis ?? 0,
       nonIronwoodOutputZatoshis: nonIronwood,
       ironwoodOutputZatoshis: request.ironwoodOutput.valueZatoshis!,
@@ -115,6 +133,28 @@ ZcashScanResult _scan() => ZcashScanResult(
   ironwoodAnchor: _anchor,
 );
 
+ZcashScanResult _saplingScan() => ZcashScanResult(
+  scannedBlocks: 1,
+  discoveredNotes: 1,
+  totalValue: 100000,
+  notes: [
+    ZcashScannedNote(
+      height: 200,
+      tx: 'dd' * 32,
+      output: 0,
+      value: 100000,
+      pool: 'sapling',
+      nullifier: 'ee' * 32,
+      commitmentPosition: 0,
+      recipient: 'zregtest-wallet-note',
+      rseed: '11' * 32,
+      witness: '33' * 40,
+    ),
+  ],
+  saplingAnchor: 'aa' * 32,
+  ironwoodAnchor: _anchor,
+);
+
 ZcashAddressMetadata _metadata(ZcashAddressReceiverType type) =>
     ZcashAddressMetadata(
       network: ZcashAddressNetwork.regtest,
@@ -148,6 +188,150 @@ ProposalOutput _directOutput(
 );
 
 void main() {
+  test(
+    'executes Sapling source to resolved Ironwood with Sapling change',
+    () async {
+      final temp = await Directory.systemTemp.createTemp(
+        'zcash-sapling-path-b-',
+      );
+      addTearDown(() => temp.delete(recursive: true));
+      final spend = utf8.encode('spend fixture');
+      final outputBytes = utf8.encode('output fixture');
+      final manifest = SaplingParameterManifest(
+        version: 'path-b-test-v1',
+        spend: SaplingParameterArtifact(
+          fileName: 'sapling-spend.params',
+          expectedBytes: spend.length,
+          sha256Hex: sha256.convert(spend).toString(),
+        ),
+        output: SaplingParameterArtifact(
+          fileName: 'sapling-output.params',
+          expectedBytes: outputBytes.length,
+          sha256Hex: sha256.convert(outputBytes).toString(),
+        ),
+      );
+      final parameters =
+          await SaplingProvingParameterCache(
+            cacheRoot: temp,
+            manifest: manifest,
+          ).resolve(
+            source: _ParameterSource({
+              manifest.spend.fileName: spend,
+              manifest.output.fileName: outputBytes,
+            }),
+          );
+      const encoded = 'uregtest1-exact-sapling-funded-recipient';
+      final routed = resolveProposalOutput(
+        recipient: ProposalRecipient(address: encoded, amountZatoshis: 50000),
+        address: const ZcashAddressMetadata(
+          network: ZcashAddressNetwork.regtest,
+          receiverType: ZcashAddressReceiverType.unified,
+          pool: ZcashAddressPool.orchard,
+          receivers: ZcashAddressReceiverPresence(
+            sprout: false,
+            orchard: true,
+            sapling: false,
+            transparent: false,
+            unknown: 0,
+            total: 1,
+          ),
+        ),
+        unifiedReceivers: const ZcashUnifiedAddressReceiverInventory(
+          network: ZcashAddressNetwork.regtest,
+          receivers: [
+            ZcashUnifiedAddressReceiver(
+              index: 0,
+              kind: ZcashAddressReceiverType.orchard,
+              pool: ZcashAddressPool.orchard,
+            ),
+          ],
+          counts: ZcashUnifiedAddressReceiverCounts(
+            orchard: 1,
+            sapling: 0,
+            transparent: 0,
+            p2pkh: 0,
+            p2sh: 0,
+            unknown: 0,
+            total: 1,
+          ),
+        ),
+        network: ZcashAddressNetwork.regtest,
+        targetHeight: 301,
+        transactionExpiryHeight: 340,
+        currentUnixTime: 1000,
+      );
+      final backend = _Backend();
+
+      final prepared = prepareNativeSaplingPayment(
+        scan: _saplingScan(),
+        output: routed,
+        saplingChangeAddress: 'zregtest-wallet-change',
+        targetHeight: 301,
+        expiryHeight: 340,
+        network: ZcashNetwork.regtest,
+        provingParameters: parameters,
+        backend: backend,
+      );
+
+      expect(routed.encodedAddress, encoded);
+      expect(routed.receiverAddress, encoded);
+      expect(routed.selectedReceiver, ZcashAddressReceiverType.orchard);
+      expect(routed.actualOutputPool, ProposalOutputPool.ironwood);
+      expect(backend.quotes, isNotEmpty);
+      expect(backend.builds.single.saplingSpends, hasLength(1));
+      expect(backend.builds.single.ironwoodSpends, isEmpty);
+      expect(backend.builds.single.ironwoodOutput.address, encoded);
+      expect(backend.builds.single.ironwoodOutput.valueZatoshis, 50000);
+      expect(
+        backend.builds.single.outputs.single.address,
+        'zregtest-wallet-change',
+      );
+      expect(backend.builds.single.outputs.single.valueZatoshis, 40000);
+      expect(backend.builds.single.provingParameters, same(parameters));
+      expect(prepared.transaction.saplingOutputs, 2);
+      expect(prepared.plan.feeZatoshis, prepared.transaction.feeZatoshis);
+      expect(
+        prepared.plan.inputZatoshis,
+        prepared.plan.amountZatoshis +
+            prepared.plan.feeZatoshis +
+            prepared.plan.changeZatoshis,
+      );
+
+      final pending = IronwoodPendingSendState()
+        ..addPreparedSaplingPayment(prepared, createdHeight: 300);
+      final restoredPending = IronwoodPendingSendState.fromJson(
+        (jsonDecode(jsonEncode(pending.toJson())) as Map)
+            .cast<String, Object?>(),
+      );
+      expect(restoredPending.reservedSaplingNullifiersAt(301), {'ee' * 32});
+      expect(
+        restoredPending.requireBroadcastableSaplingPayment(prepared),
+        isA<IronwoodPendingSendRecord>(),
+      );
+
+      expect(
+        () => prepareNativeSaplingPayment(
+          scan: _saplingScan(),
+          output: routed,
+          saplingChangeAddress: 'zregtest-wallet-change',
+          targetHeight: 301,
+          expiryHeight: 340,
+          network: ZcashNetwork.regtest,
+          provingParameters: parameters,
+          reservations: restoredPending,
+          backend: _Backend(),
+        ),
+        throwsA(
+          isA<SaplingSendException>().having(
+            (error) => error.refusal,
+            'refusal',
+            SaplingSendRefusal.notesInFlight,
+          ),
+        ),
+      );
+    },
+  );
+
   test('executes an Orchard UA receiver as an actual Ironwood output', () {
     const encoded = 'uregtest1-exact-user-address';
     final output = resolveProposalOutput(

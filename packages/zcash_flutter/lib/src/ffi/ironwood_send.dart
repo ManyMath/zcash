@@ -13,6 +13,7 @@ class IronwoodPaymentNativeRequest {
     required this.targetHeight,
     required this.expiryHeight,
     required this.anchorHex,
+    this.saplingSpends = const [],
     required this.ironwoodSpends,
     required this.outputs,
     required this.ironwoodOutput,
@@ -23,6 +24,7 @@ class IronwoodPaymentNativeRequest {
   final int targetHeight;
   final int? expiryHeight;
   final String anchorHex;
+  final List<IronwoodBuildSpendNote> saplingSpends;
   final List<IronwoodBuildIronwoodSpendNote> ironwoodSpends;
   final List<TransparentBuildOutput> outputs;
   final IronwoodBuildOutput ironwoodOutput;
@@ -67,6 +69,7 @@ class _NativeIronwoodPaymentBackend implements IronwoodPaymentBackend {
         anchor: IronwoodAnchorSource.anchor(request.anchorHex),
         inputs: const [],
         outputs: request.outputs,
+        saplingSpends: request.saplingSpends,
         ironwoodSpends: request.ironwoodSpends,
         ironwoodOutput: request.ironwoodOutput,
         ironwoodChangeZatoshis: request.ironwoodChangeZatoshis,
@@ -91,6 +94,7 @@ class _NativeIronwoodPaymentBackend implements IronwoodPaymentBackend {
         anchor: IronwoodAnchorSource.anchor(request.anchorHex),
         inputs: const [],
         outputs: request.outputs,
+        saplingSpends: request.saplingSpends,
         ironwoodSpends: request.ironwoodSpends,
         ironwoodOutput: request.ironwoodOutput,
         ironwoodChangeZatoshis: request.ironwoodChangeZatoshis,
@@ -104,6 +108,165 @@ class _NativeIronwoodPaymentBackend implements IronwoodPaymentBackend {
         allowExperimentalIronwoodBuild: true,
         bindings: bindings,
       );
+}
+
+/// Builds the post-NU6.3 Path B shape: Sapling spends, an Ironwood payment,
+/// and any remainder returned to a Sapling change receiver.
+SaplingPreparedPayment prepareNativeSaplingPayment({
+  required ZcashScanResult scan,
+  required ProposalOutput output,
+  required String saplingChangeAddress,
+  required int targetHeight,
+  required int expiryHeight,
+  required SaplingProvingParameters provingParameters,
+  ZcashNetwork network = ZcashNetwork.mainnet,
+  String seedHex = '',
+  int account = 0,
+  SaplingNoteReservations? reservations,
+  int? maxNotes,
+  int? regtestNu63ActivationHeight,
+  DateTime? now,
+  bool allowExperimentalIronwoodBuild = false,
+  ZcashFfiBindings? bindings,
+  IronwoodPaymentBackend? backend,
+}) {
+  if (backend == null && !allowExperimentalIronwoodBuild) {
+    throw StateError(
+      'prepareNativeSaplingPayment is native-backed; set '
+      'allowExperimentalIronwoodBuild: true to opt in',
+    );
+  }
+  if (backend == null && seedHex.isEmpty) {
+    throw ArgumentError.value(
+      seedHex,
+      'seedHex',
+      'Sapling-funded payment proving requires the wallet seed',
+    );
+  }
+  if (output.actualOutputPool != ProposalOutputPool.ironwood) {
+    throw ArgumentError(
+      'Sapling-funded post-NU6.3 Path B requires an actual Ironwood output',
+    );
+  }
+  final addressNetwork = switch (network) {
+    ZcashNetwork.mainnet => ZcashAddressNetwork.mainnet,
+    ZcashNetwork.testnet => ZcashAddressNetwork.testnet,
+    ZcashNetwork.regtest => ZcashAddressNetwork.regtest,
+  };
+  if (output.network != addressNetwork ||
+      output.targetHeight != targetHeight ||
+      output.transactionExpiryHeight != expiryHeight) {
+    throw StateError(
+      'the resolved output network, target, or expiry does not match this build',
+    );
+  }
+  final addressExpiryTime = output.addressExpiryTime;
+  if (addressExpiryTime != null) {
+    final buildTime = now;
+    if (buildTime == null ||
+        buildTime.toUtc().millisecondsSinceEpoch ~/ 1000 > addressExpiryTime) {
+      throw StateError(
+        'the recipient time expiry must be checked immediately before proving',
+      );
+    }
+  }
+  final saplingAnchor = scan.saplingAnchor;
+  if (saplingAnchor == null) {
+    throw SaplingSendException(
+      SaplingSendRefusal.noSaplingAnchor,
+      'the scan reports no Sapling anchor',
+    );
+  }
+  final ironwoodAnchor = scan.ironwoodAnchor;
+  if (ironwoodAnchor == null) {
+    throw IronwoodSendException(
+      IronwoodSendRefusal.noIronwoodAnchor,
+      'the scan reports no Ironwood anchor for the destination output',
+    );
+  }
+  final native =
+      backend ??
+      _NativeIronwoodPaymentBackend(
+        network: network,
+        seedHex: seedHex,
+        account: account,
+        regtestNu63ActivationHeight: regtestNu63ActivationHeight,
+        spendParamsPath: null,
+        outputParamsPath: null,
+        now: now,
+        bindings: bindings,
+      );
+
+  List<IronwoodBuildSpendNote> spendNotes(Iterable<ZcashScannedNote> notes) => [
+    for (final note in notes)
+      IronwoodBuildSpendNote.fromScannedNote(note, anchorHex: saplingAnchor),
+  ];
+
+  IronwoodPaymentNativeRequest requestFor(
+    Iterable<ZcashScannedNote> notes, {
+    required int? changeZatoshis,
+  }) => IronwoodPaymentNativeRequest(
+    targetHeight: targetHeight,
+    expiryHeight: expiryHeight,
+    anchorHex: ironwoodAnchor,
+    saplingSpends: spendNotes(notes),
+    ironwoodSpends: const [],
+    outputs: changeZatoshis == null
+        ? const []
+        : [
+            TransparentBuildOutput(
+              address: saplingChangeAddress,
+              valueZatoshis: changeZatoshis,
+            ),
+          ],
+    ironwoodOutput: IronwoodBuildOutput(
+      address: output.receiverAddress,
+      valueZatoshis: output.amountZatoshis,
+      memoHex: _memoHex(output.memo),
+    ),
+    provingParameters: provingParameters,
+  );
+
+  int quoteFor(List<ZcashScannedNote> notes) {
+    final withChange = native
+        .quote(requestFor(notes, changeZatoshis: 1))
+        .feeZatoshis;
+    final input = notes.fold(0, (sum, note) => sum + note.value);
+    final changeWith = input - output.amountZatoshis - withChange;
+    if (changeWith > 0) return withChange;
+    final withoutChange = native
+        .quote(requestFor(notes, changeZatoshis: null))
+        .feeZatoshis;
+    return input - output.amountZatoshis - withoutChange == 0
+        ? withoutChange
+        : withChange;
+  }
+
+  final plan = SaplingPaymentPlan.fromScan(
+    scan: scan,
+    output: output,
+    saplingChangeAddress: saplingChangeAddress,
+    targetHeight: targetHeight,
+    expiryHeight: expiryHeight,
+    reservations: reservations,
+    maxNotes: maxNotes,
+    feeForSpends: quoteFor,
+  );
+  final buildRequest = requestFor(
+    plan.notes,
+    changeZatoshis: plan.changeZatoshis > 0 ? plan.changeZatoshis : null,
+  );
+  final finalQuote = native.quote(buildRequest);
+  if (finalQuote.feeZatoshis != plan.feeZatoshis ||
+      finalQuote.feeRule != 'zip317') {
+    throw SaplingSendException(
+      SaplingSendRefusal.planBuildMismatch,
+      'the final native ZIP 317 quote differs from note selection; rebuild '
+      'instead of silently changing the approved fee',
+    );
+  }
+  final transaction = native.build(buildRequest);
+  return SaplingPreparedPayment(plan: plan, transaction: transaction);
 }
 
 /// Plans, quotes, and builds one post-NU6.3 payment funded by Ironwood notes.

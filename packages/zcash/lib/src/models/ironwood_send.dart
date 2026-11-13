@@ -374,7 +374,11 @@ class IronwoodPreparedPayment {
           transaction.ironwoodChangeZatoshis,
         );
         require('transparent output count', 0, transaction.vout);
-        require('Sapling output count', 1, transaction.saplingOutputs);
+        require(
+          'ZIP 317 padded Sapling output count',
+          2,
+          transaction.saplingOutputs,
+        );
       case ProposalOutputPool.orchard:
         throw IronwoodSendException(
           IronwoodSendRefusal.planBuildMismatch,
