@@ -2,6 +2,7 @@ import 'dart:typed_data';
 
 import 'package:zcash/zcash.dart';
 
+import '../sapling_proving_parameters.dart';
 import 'address_utils.dart';
 import 'ironwood_build_request.dart';
 import 'transparent_build_request.dart';
@@ -16,6 +17,7 @@ class IronwoodPaymentNativeRequest {
     required this.outputs,
     required this.ironwoodOutput,
     this.ironwoodChangeZatoshis,
+    this.provingParameters,
   });
 
   final int targetHeight;
@@ -25,6 +27,7 @@ class IronwoodPaymentNativeRequest {
   final List<TransparentBuildOutput> outputs;
   final IronwoodBuildOutput ironwoodOutput;
   final int? ironwoodChangeZatoshis;
+  final SaplingProvingParameters? provingParameters;
 }
 
 abstract interface class IronwoodPaymentBackend {
@@ -69,8 +72,10 @@ class _NativeIronwoodPaymentBackend implements IronwoodPaymentBackend {
         ironwoodChangeZatoshis: request.ironwoodChangeZatoshis,
         seedHex: seedHex,
         account: account,
-        spendParamsPath: spendParamsPath,
-        outputParamsPath: outputParamsPath,
+        spendParamsPath:
+            request.provingParameters?.spendParamsPath ?? spendParamsPath,
+        outputParamsPath:
+            request.provingParameters?.outputParamsPath ?? outputParamsPath,
         now: now,
         allowExperimentalIronwoodBuild: true,
         bindings: bindings,
@@ -91,8 +96,10 @@ class _NativeIronwoodPaymentBackend implements IronwoodPaymentBackend {
         ironwoodChangeZatoshis: request.ironwoodChangeZatoshis,
         seedHex: seedHex,
         account: account,
-        spendParamsPath: spendParamsPath,
-        outputParamsPath: outputParamsPath,
+        spendParamsPath:
+            request.provingParameters?.spendParamsPath ?? spendParamsPath,
+        outputParamsPath:
+            request.provingParameters?.outputParamsPath ?? outputParamsPath,
         now: now,
         allowExperimentalIronwoodBuild: true,
         bindings: bindings,
@@ -113,13 +120,25 @@ IronwoodPreparedPayment prepareNativeIronwoodPayment({
   IronwoodNoteReservations? reservations,
   int? maxNotes,
   int? regtestNu63ActivationHeight,
-  String? spendParamsPath,
-  String? outputParamsPath,
+  SaplingProvingParameters? provingParameters,
+  @Deprecated('Use provingParameters') String? spendParamsPath,
+  @Deprecated('Use provingParameters') String? outputParamsPath,
   DateTime? now,
   bool allowExperimentalIronwoodBuild = false,
   ZcashFfiBindings? bindings,
   IronwoodPaymentBackend? backend,
 }) {
+  if (provingParameters != null &&
+      (spendParamsPath != null || outputParamsPath != null)) {
+    throw ArgumentError(
+      'provingParameters cannot be combined with legacy parameter paths',
+    );
+  }
+  if ((spendParamsPath == null) != (outputParamsPath == null)) {
+    throw ArgumentError(
+      'legacy Sapling proving-parameter paths must be supplied as a pair',
+    );
+  }
   if (backend == null && !allowExperimentalIronwoodBuild) {
     throw StateError(
       'prepareNativeIronwoodPayment is native-backed; set '
@@ -223,6 +242,7 @@ IronwoodPreparedPayment prepareNativeIronwoodPayment({
                   ? output.receiverAddress
                   : ironwoodChangeAddress,
             ),
+            provingParameters: provingParameters,
           ),
         )
         .feeZatoshis,
@@ -250,6 +270,7 @@ IronwoodPreparedPayment prepareNativeIronwoodPayment({
       ironwoodChangeZatoshis: paysIronwood && plan.changeZatoshis > 0
           ? plan.changeZatoshis
           : null,
+      provingParameters: provingParameters,
     ),
   );
   return IronwoodPreparedPayment(plan: plan, transaction: transaction);

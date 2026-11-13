@@ -20,4 +20,5 @@ export 'src/ffi/transparent_build_request.dart';
 export 'src/ffi/zcash_ffi_bindings.dart';
 export 'src/ffi/zcash_native_assets.dart';
 export 'src/production_native_profile.dart';
+export 'src/sapling_proving_parameters.dart';
 export 'src/wallet_state_file.dart';

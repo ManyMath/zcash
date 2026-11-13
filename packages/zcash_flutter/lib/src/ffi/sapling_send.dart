@@ -2,6 +2,7 @@ import 'dart:typed_data';
 
 import 'package:zcash/zcash.dart';
 
+import '../sapling_proving_parameters.dart';
 import 'address_utils.dart';
 import 'sapling_build_request.dart';
 import 'zcash_ffi_bindings.dart';
@@ -14,8 +15,9 @@ SaplingPreparedSend prepareNativeSaplingSend({
   required int amountZatoshis,
   required int targetHeight,
   required String seedHex,
-  required String spendParamsPath,
-  required String outputParamsPath,
+  SaplingProvingParameters? provingParameters,
+  @Deprecated('Use provingParameters') String? spendParamsPath,
+  @Deprecated('Use provingParameters') String? outputParamsPath,
   int account = 0,
   Iterable<SaplingSendPlan> inFlight = const [],
   int? maxNotes,
@@ -33,7 +35,25 @@ SaplingPreparedSend prepareNativeSaplingSend({
       'responsible for not spending its notes again until it is mined.',
     );
   }
-  if (spendParamsPath.isEmpty || outputParamsPath.isEmpty) {
+  if (provingParameters != null &&
+      (spendParamsPath != null || outputParamsPath != null)) {
+    throw ArgumentError(
+      'provingParameters cannot be combined with legacy parameter paths',
+    );
+  }
+  if ((spendParamsPath == null) != (outputParamsPath == null)) {
+    throw ArgumentError(
+      'legacy Sapling proving-parameter paths must be supplied as a pair',
+    );
+  }
+  final resolvedSpendParamsPath =
+      provingParameters?.spendParamsPath ?? spendParamsPath;
+  final resolvedOutputParamsPath =
+      provingParameters?.outputParamsPath ?? outputParamsPath;
+  if (resolvedSpendParamsPath == null ||
+      resolvedSpendParamsPath.isEmpty ||
+      resolvedOutputParamsPath == null ||
+      resolvedOutputParamsPath.isEmpty) {
     throw ArgumentError(
       'prepareNativeSaplingSend requires the Sapling MPC proving parameters. '
       'Without them the build produces placeholder proofs and the transaction '
@@ -98,8 +118,8 @@ SaplingPreparedSend prepareNativeSaplingSend({
           valueZatoshis: plan.changeZatoshis,
         ),
     ],
-    spendParamsPath: spendParamsPath,
-    outputParamsPath: outputParamsPath,
+    spendParamsPath: resolvedSpendParamsPath,
+    outputParamsPath: resolvedOutputParamsPath,
     allowExperimentalSaplingBuild: true,
     bindings: bindings,
   );

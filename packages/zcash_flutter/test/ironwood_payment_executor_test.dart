@@ -1,3 +1,7 @@
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:crypto/crypto.dart';
 import 'package:test/test.dart';
 import 'package:zcash_flutter/zcash_flutter.dart';
 
@@ -76,6 +80,16 @@ class _Backend implements IronwoodPaymentBackend {
       rng: 'system',
     );
   }
+}
+
+class _ParameterSource implements SaplingParameterSource {
+  const _ParameterSource(this.bytes);
+
+  final Map<String, List<int>> bytes;
+
+  @override
+  Stream<List<int>> open(SaplingParameterArtifact artifact) =>
+      Stream.value(bytes[artifact.fileName]!);
 }
 
 ZcashScanResult _scan() => ZcashScanResult(
@@ -249,4 +263,61 @@ void main() {
       );
     });
   }
+
+  test('passes one resolved parameter pair through quote and build', () async {
+    final temp = await Directory.systemTemp.createTemp('zcash-builder-params-');
+    addTearDown(() => temp.delete(recursive: true));
+    final spend = utf8.encode('spend fixture');
+    final outputBytes = utf8.encode('output fixture');
+    final manifest = SaplingParameterManifest(
+      version: 'builder-test-v1',
+      spend: SaplingParameterArtifact(
+        fileName: 'sapling-spend.params',
+        expectedBytes: spend.length,
+        sha256Hex: sha256.convert(spend).toString(),
+      ),
+      output: SaplingParameterArtifact(
+        fileName: 'sapling-output.params',
+        expectedBytes: outputBytes.length,
+        sha256Hex: sha256.convert(outputBytes).toString(),
+      ),
+    );
+    final parameters =
+        await SaplingProvingParameterCache(
+          cacheRoot: temp,
+          manifest: manifest,
+        ).resolve(
+          source: _ParameterSource({
+            manifest.spend.fileName: spend,
+            manifest.output.fileName: outputBytes,
+          }),
+        );
+    final backend = _Backend();
+
+    prepareNativeIronwoodPayment(
+      scan: _scan(),
+      output: _directOutput(
+        'zregtestExactSaplingReceiver',
+        ZcashAddressReceiverType.sapling,
+      ),
+      ironwoodChangeAddress: 'uregtest1-wallet-change',
+      targetHeight: 301,
+      expiryHeight: 340,
+      network: ZcashNetwork.regtest,
+      provingParameters: parameters,
+      backend: backend,
+    );
+
+    for (final request in [...backend.quotes, ...backend.builds]) {
+      expect(request.provingParameters, same(parameters));
+      expect(
+        request.provingParameters!.spendParamsPath,
+        parameters.spendParamsPath,
+      );
+      expect(
+        request.provingParameters!.outputParamsPath,
+        parameters.outputParamsPath,
+      );
+    }
+  });
 }
