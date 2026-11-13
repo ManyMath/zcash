@@ -262,6 +262,7 @@ String encodeIronwoodBuildRequest({
   required IronwoodAnchorSource anchor,
   required Iterable<TransparentBuildInput> inputs,
   required IronwoodBuildOutput ironwoodOutput,
+  Iterable<IronwoodBuildOutput> additionalIronwoodOutputs = const [],
   Iterable<TransparentBuildOutput> outputs = const [],
   Iterable<IronwoodBuildSpendNote> saplingSpends = const [],
   Iterable<IronwoodBuildOrchardSpendNote> orchardSpends = const [],
@@ -282,6 +283,7 @@ String encodeIronwoodBuildRequest({
   final spends = [for (final note in saplingSpends) note.toRequestJson()];
   final orchard = [for (final note in orchardSpends) note.toRequestJson()];
   final ironwood = [for (final note in ironwoodSpends) note.toRequestJson()];
+  final ironwoodOutputs = [ironwoodOutput, ...additionalIronwoodOutputs];
   return jsonEncode({
     'ironwood_build_version': ironwoodBuildRequestVersion,
     'network': network,
@@ -304,7 +306,12 @@ String encodeIronwoodBuildRequest({
     'spend_params_path': ?spendParamsPath,
     'output_params_path': ?outputParamsPath,
     if (quoteOnly) 'quote_only': true,
-    'ironwood_output': ironwoodOutput.toRequestJson(),
+    if (ironwoodOutputs.length == 1)
+      'ironwood_output': ironwoodOutput.toRequestJson()
+    else
+      'ironwood_outputs': [
+        for (final output in ironwoodOutputs) output.toRequestJson(),
+      ],
   });
 }
 

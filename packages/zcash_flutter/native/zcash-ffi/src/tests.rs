@@ -2542,6 +2542,34 @@ fn build_ironwood_transaction_shields_transparent_input_into_ironwood() {
 
 #[test]
 #[cfg(feature = "ironwood-tx-build")]
+fn build_ironwood_transaction_pays_multiple_ironwood_recipients() {
+    let to = regtest_unified_address();
+    let (tree_hex, _) = ironwood_build::test_tree_fixture(3);
+    let request = format!(
+        r#"{{"ironwood_build_version":1,"network":"regtest","target_height":10,
+                 "ironwood_tree":"{tree}","rng_seed":"{seed}",
+                 "inputs":[{{"txid":"{txid}","vout":0,"value_zatoshis":100000,"secret_key":"{sk}"}}],
+                 "ironwood_outputs":[
+                   {{"address":"{to}","value_zatoshis":30000}},
+                   {{"address":"{to}","value_zatoshis":55000,"memo":"abcd"}}
+                 ]}}"#,
+        tree = tree_hex,
+        seed = "06".repeat(32),
+        txid = "22".repeat(32),
+        sk = BUILD_TEST_SECRET_KEY,
+        to = to,
+    );
+    let v = build_ironwood_value(&request);
+    assert_eq!(v["status"], "ok", "build should succeed: {v}");
+    assert_eq!(v["fee_rule"], "zip317");
+    assert_eq!(v["fee_zatoshis"], 15000);
+    assert_eq!(v["ironwood_output_zatoshis"], 85000);
+    assert_eq!(v["ironwood"]["outputs"], 2);
+    assert_eq!(v["ironwood"]["actions"], 2);
+}
+
+#[test]
+#[cfg(feature = "ironwood-tx-build")]
 fn ironwood_fee_quote_equals_the_fee_the_build_charges() {
     let to = regtest_unified_address();
     let (tree_hex, _) = ironwood_build::test_tree_fixture(3);
@@ -3538,6 +3566,90 @@ fn orchard_spend_fragment(value: u64, nonce: u8) -> String {
     )
 }
 
+#[cfg(feature = "ironwood-tx-build")]
+fn ironwood_spend_fixture(value: u64, nonce: u8) -> (String, String) {
+    use incrementalmerkletree::witness::IncrementalWitness;
+    use orchard::keys::FullViewingKey;
+    use orchard::note::{ExtractedNoteCommitment, Note, NoteVersion, RandomSeed, Rho};
+    use orchard::tree::MerkleHashOrchard;
+    use orchard::value::NoteValue;
+    use zcash_address::unified::{Encoding, Receiver, Revision, Uitem};
+    use zcash_keys::keys::UnifiedSpendingKey;
+    use zcash_primitives::merkle_tree::{
+        read_commitment_tree, write_commitment_tree, write_incremental_witness,
+    };
+    use zcash_protocol::consensus::NetworkType;
+    use zip32::AccountId;
+
+    let params = staged_regtest::params(Some(1));
+    let usk = UnifiedSpendingKey::from_seed(
+        &params,
+        &hex::decode(TEST_SEED_HEX).expect("test seed is hex"),
+        AccountId::ZERO,
+    )
+    .expect("derive test spending key");
+    let fvk = FullViewingKey::from(usk.orchard());
+    let recipient = fvk.address_at(0u32, orchard::keys::Scope::External);
+
+    let (rho_bytes, rho, rseed) = (0u8..=255)
+        .find_map(|i| {
+            let mut rho_bytes = [0u8; 32];
+            rho_bytes[0] = nonce;
+            rho_bytes[1] = i;
+            let rho = Option::<Rho>::from(Rho::from_bytes(&rho_bytes))?;
+            let rseed = Option::<RandomSeed>::from(RandomSeed::from_bytes([nonce ^ i; 32], &rho))?;
+            Some((rho_bytes, rho, rseed))
+        })
+        .expect("a valid Ironwood (rho, rseed) pair exists");
+    let note = Option::<Note>::from(Note::from_parts(
+        recipient,
+        NoteValue::from_raw(value),
+        rho,
+        rseed,
+        NoteVersion::V3,
+    ))
+    .expect("the fixture parts form a valid Ironwood note");
+
+    const EMPTY_TREE_HEX: &str = "000000";
+    const TREE_DEPTH: u8 = orchard::NOTE_COMMITMENT_TREE_DEPTH as u8;
+    let mut tree = read_commitment_tree::<MerkleHashOrchard, _, TREE_DEPTH>(
+        &hex::decode(EMPTY_TREE_HEX).unwrap()[..],
+    )
+    .expect("empty Ironwood tree");
+    let cmx = ExtractedNoteCommitment::from(note.commitment());
+    tree.append(MerkleHashOrchard::from_cmx(&cmx))
+        .expect("append Ironwood note");
+    let witness: IncrementalWitness<MerkleHashOrchard, TREE_DEPTH> =
+        IncrementalWitness::from_tree(tree.clone()).expect("witness Ironwood note");
+    let mut witness_bytes = Vec::new();
+    write_incremental_witness(&witness, &mut witness_bytes).expect("serialize witness");
+    let mut tree_bytes = Vec::new();
+    write_commitment_tree(&tree, &mut tree_bytes).expect("serialize tree");
+
+    let recipient_ua = zcash_address::unified::Address::try_from_items(
+        Revision::R0,
+        vec![Uitem::Data(Receiver::Orchard(
+            recipient.to_raw_address_bytes(),
+        ))],
+    )
+    .expect("a single Orchard receiver is a valid Unified Address")
+    .encode(&NetworkType::Regtest);
+    let fragment = format!(
+        r#""ironwood_spends":[{{"value_zatoshis":{value},"recipient":"{recipient}",
+                 "rseed":"{rseed}","rho":"{rho}","note_version":"v3",
+                 "witness":"{witness}","anchor":"{anchor}"}}],
+               "seed":"{seed}","account":0"#,
+        value = value,
+        recipient = recipient_ua,
+        rseed = hex::encode(rseed.as_bytes()),
+        rho = hex::encode(rho_bytes),
+        witness = hex::encode(witness_bytes),
+        anchor = hex::encode(tree.root().to_bytes()),
+        seed = TEST_SEED_HEX,
+    );
+    (fragment, hex::encode(tree_bytes))
+}
+
 /// ZIP 318 expiry for the first 30-day window (34560 blocks). `EXPIRY_MODULUS` is
 /// provisional, so the crate takes the expiry as input.
 #[cfg(feature = "ironwood-tx-build")]
@@ -3628,7 +3740,10 @@ fn build_ironwood_transaction_keeps_orchard_change_indistinguishable_from_none()
     assert_eq!(v["ironwood"]["actions"], 1);
     assert_eq!(v["fee_zatoshis"], 15000);
     assert_eq!(v["orchard_change_zatoshis"], 300000);
-    assert_eq!(v["non_ironwood_output_zatoshis"], 300000);
+    assert_eq!(
+        v["non_ironwood_output_zatoshis"], 0,
+        "pool change must not be classified as a recipient payment"
+    );
     assert_eq!(v["ironwood_output_zatoshis"], 685_000);
 
     let tx_hex = v["transaction"].as_str().expect("transaction hex");
@@ -3699,6 +3814,152 @@ fn build_ironwood_transaction_requires_a_seed_to_spend_ironwood() {
             .unwrap()
             .contains("Ironwood notes requires a seed"),
         "{v}"
+    );
+}
+
+#[cfg(feature = "ironwood-tx-build")]
+const MIXED_INPUT: u64 = 1_000_000;
+#[cfg(feature = "ironwood-tx-build")]
+const MIXED_TRANSPARENT_PAYMENT: u64 = 60_000;
+#[cfg(feature = "ironwood-tx-build")]
+const MIXED_SAPLING_PAYMENT: u64 = 50_000;
+#[cfg(feature = "ironwood-tx-build")]
+const MIXED_ADDITIONAL_IRONWOOD_PAYMENT: u64 = 80_000;
+#[cfg(feature = "ironwood-tx-build")]
+const MIXED_IRONWOOD_CHANGE: u64 = 650_000;
+
+#[cfg(feature = "ironwood-tx-build")]
+fn mixed_recipient_ironwood_request(
+    quote_only: bool,
+    primary: u64,
+    proving_params: &str,
+) -> String {
+    let to = regtest_unified_address();
+    let transparent = ironwood_build::test_regtest_transparent_address();
+    let (sapling, _, _, _) = ironwood_build::test_sapling_note_fixture(
+        &hex::decode(TEST_SEED_HEX).unwrap(),
+        1,
+        [0x91; 32],
+    );
+    let (ironwood_spend, tree_hex) = ironwood_spend_fixture(MIXED_INPUT, 0x92);
+    format!(
+        r#"{{"ironwood_build_version":1,"network":"regtest","target_height":10,
+                     "ironwood_tree":"{tree}","ironwood_change_zatoshis":{change},
+                     {quote}{spend},{params}
+                     "outputs":[
+                       {{"address":"{transparent}","value_zatoshis":{transparent_value}}},
+                       {{"address":"{sapling}","value_zatoshis":{sapling_value}}}
+                     ],
+                     "ironwood_outputs":[
+                       {{"address":"{to}","value_zatoshis":{primary}}},
+                       {{"address":"{to}","value_zatoshis":{additional}}}
+                     ]}}"#,
+        tree = tree_hex,
+        change = MIXED_IRONWOOD_CHANGE,
+        quote = if quote_only {
+            r#""quote_only":true,"#
+        } else {
+            ""
+        },
+        spend = ironwood_spend,
+        params = proving_params,
+        transparent = transparent,
+        transparent_value = MIXED_TRANSPARENT_PAYMENT,
+        sapling = sapling,
+        sapling_value = MIXED_SAPLING_PAYMENT,
+        to = to,
+        primary = primary,
+        additional = MIXED_ADDITIONAL_IRONWOOD_PAYMENT,
+    )
+}
+
+#[test]
+#[cfg(feature = "ironwood-tx-build")]
+fn ironwood_change_is_not_reported_as_a_mixed_recipient_payment() {
+    // A fee quote needs the real output shape, but not the proving parameters.
+    let quoted = build_ironwood_value(&mixed_recipient_ironwood_request(true, 1, ""));
+    assert_eq!(quoted["status"], "ok", "quote failed: {quoted}");
+    assert_eq!(quoted["fee_rule"], "zip317");
+    assert_eq!(quoted["total_input_zatoshis"], MIXED_INPUT);
+    assert_eq!(
+        quoted["non_ironwood_output_zatoshis"],
+        MIXED_TRANSPARENT_PAYMENT + MIXED_SAPLING_PAYMENT,
+        "Ironwood pool change is not a recipient payment"
+    );
+    assert_eq!(
+        quoted["additional_ironwood_output_zatoshis"],
+        MIXED_ADDITIONAL_IRONWOOD_PAYMENT
+    );
+    let fee = quoted["fee_zatoshis"].as_u64().expect("quoted fee");
+    let max_primary = quoted["max_ironwood_output_zatoshis"]
+        .as_u64()
+        .expect("funded maximum primary output");
+    assert_eq!(
+        MIXED_INPUT,
+        MIXED_TRANSPARENT_PAYMENT
+            + MIXED_SAPLING_PAYMENT
+            + MIXED_ADDITIONAL_IRONWOOD_PAYMENT
+            + MIXED_IRONWOOD_CHANGE
+            + max_primary
+            + fee,
+        "the quoted primary maximum must reserve every recipient, change, and fee"
+    );
+}
+
+#[test]
+#[ignore = "requires ZCASH_SAPLING_SPEND_PARAMS and ZCASH_SAPLING_OUTPUT_PARAMS"]
+#[cfg(feature = "ironwood-tx-build")]
+fn ironwood_mixed_recipient_build_with_real_sapling_parameters() {
+    let spend_path = std::env::var("ZCASH_SAPLING_SPEND_PARAMS")
+        .expect("ignored test requires ZCASH_SAPLING_SPEND_PARAMS");
+    let output_path = std::env::var("ZCASH_SAPLING_OUTPUT_PARAMS")
+        .expect("ignored test requires ZCASH_SAPLING_OUTPUT_PARAMS");
+    assert!(
+        !spend_path.is_empty(),
+        "Sapling spend parameter path is empty"
+    );
+    assert!(
+        !output_path.is_empty(),
+        "Sapling output parameter path is empty"
+    );
+
+    let quoted = build_ironwood_value(&mixed_recipient_ironwood_request(true, 1, ""));
+    assert_eq!(quoted["status"], "ok", "quote failed: {quoted}");
+    let fee = quoted["fee_zatoshis"].as_u64().expect("quoted fee");
+    let max_primary = quoted["max_ironwood_output_zatoshis"]
+        .as_u64()
+        .expect("funded maximum primary output");
+    let proving_params =
+        format!(r#""spend_params_path":{spend_path:?},"output_params_path":{output_path:?},"#);
+    let built = build_ironwood_value(&mixed_recipient_ironwood_request(
+        false,
+        max_primary,
+        &proving_params,
+    ));
+    assert_eq!(built["status"], "ok", "build failed: {built}");
+    assert_eq!(built["fee_zatoshis"], fee);
+    assert_eq!(built["total_input_zatoshis"], MIXED_INPUT);
+    assert_eq!(built["ironwood_input_zatoshis"], MIXED_INPUT);
+    assert_eq!(built["ironwood_change_zatoshis"], MIXED_IRONWOOD_CHANGE);
+    assert_eq!(
+        built["non_ironwood_output_zatoshis"],
+        MIXED_TRANSPARENT_PAYMENT + MIXED_SAPLING_PAYMENT
+    );
+    assert_eq!(
+        built["ironwood_output_zatoshis"],
+        max_primary + MIXED_ADDITIONAL_IRONWOOD_PAYMENT
+    );
+    assert_eq!(built["transparent"]["vout"], 1);
+    assert_eq!(built["sapling"]["outputs"], 2);
+    assert_eq!(built["ironwood"]["spends"], 1);
+    assert_eq!(built["ironwood"]["outputs"], 3);
+    assert_eq!(
+        MIXED_INPUT,
+        built["non_ironwood_output_zatoshis"].as_u64().unwrap()
+            + built["ironwood_output_zatoshis"].as_u64().unwrap()
+            + built["ironwood_change_zatoshis"].as_u64().unwrap()
+            + built["fee_zatoshis"].as_u64().unwrap(),
+        "the built transaction must conserve value"
     );
 }
 

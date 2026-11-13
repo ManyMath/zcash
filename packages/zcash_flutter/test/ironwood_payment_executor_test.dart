@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 import 'package:test/test.dart';
@@ -28,6 +29,10 @@ class _Backend implements IronwoodPaymentBackend {
       0,
       (sum, output) => sum + output.valueZatoshis,
     );
+    final additionalIronwood = request.additionalIronwoodOutputs.fold(
+      0,
+      (sum, output) => sum + (output.valueZatoshis ?? 0),
+    );
     return IronwoodFeeQuote(
       network: ZcashAddressNetwork.regtest,
       feeZatoshis: 10000,
@@ -35,7 +40,8 @@ class _Backend implements IronwoodPaymentBackend {
       consensusBranchId: 'nu6.3',
       totalInputZatoshis: input,
       nonIronwoodOutputZatoshis: nonIronwood,
-      maxIronwoodOutputZatoshis: input - nonIronwood - 10000,
+      maxIronwoodOutputZatoshis:
+          input - nonIronwood - additionalIronwood - 10000,
       ironwoodSpends: request.ironwoodSpends.length,
       orchardSpends: 0,
       saplingSpends: request.saplingSpends.length,
@@ -58,6 +64,10 @@ class _Backend implements IronwoodPaymentBackend {
     final nonIronwood = request.outputs.fold(
       0,
       (sum, output) => sum + output.valueZatoshis,
+    );
+    final additionalIronwood = request.additionalIronwoodOutputs.fold(
+      0,
+      (sum, output) => sum + (output.valueZatoshis ?? 0),
     );
     final transparent = request.outputs.where(
       (output) => output.address.startsWith('t'),
@@ -82,6 +92,10 @@ class _Backend implements IronwoodPaymentBackend {
       saplingOutputs: sapling.isEmpty ? 0 : 2,
       ironwoodActions: 1,
       ironwoodSpends: request.ironwoodSpends.length,
+      ironwoodOutputs:
+          1 +
+          request.additionalIronwoodOutputs.length +
+          (request.ironwoodChangeZatoshis == null ? 0 : 1),
       ironwoodChangeOutputs: request.ironwoodChangeZatoshis == null ? 0 : 1,
       totalInputZatoshis: input,
       saplingInputZatoshis: request.saplingSpends.fold<int>(
@@ -94,7 +108,8 @@ class _Backend implements IronwoodPaymentBackend {
       ),
       ironwoodChangeZatoshis: request.ironwoodChangeZatoshis ?? 0,
       nonIronwoodOutputZatoshis: nonIronwood,
-      ironwoodOutputZatoshis: request.ironwoodOutput.valueZatoshis!,
+      ironwoodOutputZatoshis:
+          request.ironwoodOutput.valueZatoshis! + additionalIronwood,
       rng: 'system',
     );
   }
@@ -398,6 +413,184 @@ void main() {
           prepared.plan.feeZatoshis +
           prepared.plan.changeZatoshis,
     );
+  });
+
+  test('selects notes once for a mixed multi-recipient payment', () async {
+    final temp = await Directory.systemTemp.createTemp('zcash-multi-payment-');
+    addTearDown(() => temp.delete(recursive: true));
+    final spend = utf8.encode('spend fixture');
+    final outputBytes = utf8.encode('output fixture');
+    final manifest = SaplingParameterManifest(
+      version: 'multi-payment-test-v1',
+      spend: SaplingParameterArtifact(
+        fileName: 'sapling-spend.params',
+        expectedBytes: spend.length,
+        sha256Hex: sha256.convert(spend).toString(),
+      ),
+      output: SaplingParameterArtifact(
+        fileName: 'sapling-output.params',
+        expectedBytes: outputBytes.length,
+        sha256Hex: sha256.convert(outputBytes).toString(),
+      ),
+    );
+    final parameters =
+        await SaplingProvingParameterCache(
+          cacheRoot: temp,
+          manifest: manifest,
+        ).resolve(
+          source: _ParameterSource({
+            manifest.spend.fileName: spend,
+            manifest.output.fileName: outputBytes,
+          }),
+        );
+    const encoded = 'uregtest1-multi-ironwood-recipient';
+    final ironwood = resolveProposalOutput(
+      recipient: ProposalRecipient(address: encoded, amountZatoshis: 30000),
+      address: const ZcashAddressMetadata(
+        network: ZcashAddressNetwork.regtest,
+        receiverType: ZcashAddressReceiverType.unified,
+        pool: ZcashAddressPool.orchard,
+        receivers: ZcashAddressReceiverPresence(
+          sprout: false,
+          orchard: true,
+          sapling: false,
+          transparent: false,
+          unknown: 0,
+          total: 1,
+        ),
+      ),
+      unifiedReceivers: const ZcashUnifiedAddressReceiverInventory(
+        network: ZcashAddressNetwork.regtest,
+        receivers: [
+          ZcashUnifiedAddressReceiver(
+            index: 0,
+            kind: ZcashAddressReceiverType.orchard,
+            pool: ZcashAddressPool.orchard,
+          ),
+        ],
+        counts: ZcashUnifiedAddressReceiverCounts(
+          orchard: 1,
+          sapling: 0,
+          transparent: 0,
+          p2pkh: 0,
+          p2sh: 0,
+          unknown: 0,
+          total: 1,
+        ),
+      ),
+      network: ZcashAddressNetwork.regtest,
+      targetHeight: 301,
+      transactionExpiryHeight: 340,
+      currentUnixTime: 1000,
+    );
+    final transparent = resolveProposalOutput(
+      recipient: ProposalRecipient(
+        address: 'tmMultiTransparentReceiver',
+        amountZatoshis: 20000,
+      ),
+      address: _metadata(ZcashAddressReceiverType.p2pkh),
+      network: ZcashAddressNetwork.regtest,
+      targetHeight: 301,
+      transactionExpiryHeight: 340,
+      currentUnixTime: 1000,
+    );
+    final sapling = resolveProposalOutput(
+      recipient: ProposalRecipient(
+        address: 'zregtestMultiSaplingReceiver',
+        amountZatoshis: 10000,
+        memo: Uint8List.fromList([4, 5]),
+      ),
+      address: _metadata(ZcashAddressReceiverType.sapling),
+      network: ZcashAddressNetwork.regtest,
+      targetHeight: 301,
+      transactionExpiryHeight: 340,
+      currentUnixTime: 1000,
+    );
+    final repeatedIronwood = resolveProposalOutput(
+      recipient: ProposalRecipient(
+        address: encoded,
+        amountZatoshis: 20000,
+        memo: Uint8List.fromList([1, 2, 3]),
+      ),
+      address: const ZcashAddressMetadata(
+        network: ZcashAddressNetwork.regtest,
+        receiverType: ZcashAddressReceiverType.unified,
+        pool: ZcashAddressPool.orchard,
+        receivers: ZcashAddressReceiverPresence(
+          sprout: false,
+          orchard: true,
+          sapling: false,
+          transparent: false,
+          unknown: 0,
+          total: 1,
+        ),
+      ),
+      unifiedReceivers: const ZcashUnifiedAddressReceiverInventory(
+        network: ZcashAddressNetwork.regtest,
+        receivers: [
+          ZcashUnifiedAddressReceiver(
+            index: 0,
+            kind: ZcashAddressReceiverType.orchard,
+            pool: ZcashAddressPool.orchard,
+          ),
+        ],
+        counts: ZcashUnifiedAddressReceiverCounts(
+          orchard: 1,
+          sapling: 0,
+          transparent: 0,
+          p2pkh: 0,
+          p2sh: 0,
+          unknown: 0,
+          total: 1,
+        ),
+      ),
+      network: ZcashAddressNetwork.regtest,
+      targetHeight: 301,
+      transactionExpiryHeight: 340,
+      currentUnixTime: 1000,
+    );
+    final backend = _Backend();
+
+    final prepared = prepareNativeIronwoodPayments(
+      scan: _scan(),
+      outputs: [ironwood, repeatedIronwood, sapling, transparent],
+      ironwoodChangeAddress: 'uregtest1-wallet-change',
+      targetHeight: 301,
+      expiryHeight: 340,
+      network: ZcashNetwork.regtest,
+      provingParameters: parameters,
+      backend: backend,
+    );
+
+    expect(prepared.plan.outputs, [
+      ironwood,
+      repeatedIronwood,
+      sapling,
+      transparent,
+    ]);
+    expect(prepared.plan.amountZatoshis, 80000);
+    expect(prepared.plan.inputZatoshis, 100000);
+    expect(prepared.plan.feeZatoshis, 10000);
+    expect(prepared.plan.changeZatoshis, 10000);
+    expect(backend.builds, hasLength(1));
+    expect(backend.builds.single.outputs.map((output) => output.address), [
+      sapling.receiverAddress,
+      transparent.receiverAddress,
+    ]);
+    expect(
+      backend.builds.single.ironwoodOutput.address,
+      ironwood.receiverAddress,
+    );
+    expect(
+      backend.builds.single.additionalIronwoodOutputs.single.address,
+      encoded,
+    );
+    expect(
+      backend.builds.single.additionalIronwoodOutputs.single.memoHex,
+      '010203',
+    );
+    expect(backend.builds.single.outputs.first.memoHex, '0405');
+    expect(backend.builds.single.ironwoodChangeZatoshis, 10000);
   });
 
   for (final destination in [

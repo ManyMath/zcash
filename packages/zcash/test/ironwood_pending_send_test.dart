@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:test/test.dart';
 import 'package:zcash/zcash.dart';
@@ -153,7 +154,163 @@ IronwoodPreparedPayment _preparedPayment(
   );
 }
 
+IronwoodPreparedPayments _preparedPayments() {
+  ProposalOutput output(int amount, List<int> memo) => resolveProposalOutput(
+    recipient: ProposalRecipient(
+      address: 'zregtestExactSaplingReceiver',
+      amountZatoshis: amount,
+      memo: Uint8List.fromList(memo),
+      pool: ProposalOutputPool.sapling,
+    ),
+    address: const ZcashAddressMetadata(
+      network: ZcashAddressNetwork.regtest,
+      receiverType: ZcashAddressReceiverType.sapling,
+      pool: ZcashAddressPool.sapling,
+      receivers: ZcashAddressReceiverPresence(
+        sprout: false,
+        orchard: false,
+        sapling: true,
+        transparent: false,
+        unknown: 0,
+        total: 1,
+      ),
+    ),
+    network: ZcashAddressNetwork.regtest,
+    targetHeight: 300,
+    transactionExpiryHeight: 340,
+    currentUnixTime: 1000,
+  );
+  final outputs = [
+    output(20000, [1]),
+    output(30000, [2, 3]),
+  ];
+  final plan = IronwoodPaymentBatchPlan.fromScan(
+    scan: _scan([_note('a1' * 32, 100000)]),
+    outputs: outputs,
+    targetHeight: 300,
+    expiryHeight: 340,
+    feeForSpends: _fee,
+  );
+  return IronwoodPreparedPayments(
+    plan: plan,
+    transaction: IronwoodBuildResult(
+      network: ZcashAddressNetwork.regtest,
+      transactionHex: 'dd' * 20,
+      txid: _txid,
+      version: 'v6',
+      expiryHeight: 340,
+      feeZatoshis: plan.feeZatoshis,
+      feeRule: 'zip317',
+      proofValidity: 'real',
+      ironwoodAnchor: plan.anchorHex,
+      ironwoodAnchorSource: 'anchor',
+      vin: 0,
+      vout: 0,
+      saplingOutputs: 2,
+      ironwoodActions: 1,
+      ironwoodSpends: plan.notes.length,
+      totalInputZatoshis: plan.inputZatoshis,
+      ironwoodInputZatoshis: plan.inputZatoshis,
+      ironwoodChangeZatoshis: 0,
+      nonIronwoodOutputZatoshis: plan.amountZatoshis,
+      ironwoodOutputZatoshis: plan.changeZatoshis,
+      rng: 'system',
+    ),
+  );
+}
+
 void main() {
+  test(
+    'multi-payment restart preserves ordered repeated recipients and memos',
+    () {
+      final payment = _preparedPayments();
+      final pending = IronwoodPendingSendState()
+        ..addPreparedPayments(payment, createdHeight: 299);
+
+      final restored = IronwoodPendingSendState.fromJson(
+        (jsonDecode(jsonEncode(pending.toJson())) as Map)
+            .cast<String, Object?>(),
+      );
+      final record = restored.records.single;
+      expect(record.paymentOutputs, hasLength(2));
+      expect(
+        record.paymentOutputs.map((output) => output.encodedRecipient),
+        everyElement('zregtestExactSaplingReceiver'),
+      );
+      expect(record.paymentOutputs.map((output) => output.amountZatoshis), [
+        20000,
+        30000,
+      ]);
+      expect(record.paymentOutputs.map((output) => output.memoHex), [
+        '01',
+        '0203',
+      ]);
+      expect(restored.reservedNullifiersAt(300), {'a1' * 32});
+      expect(
+        restored.requireBroadcastablePayments(payment, chainHeight: 300),
+        same(record),
+      );
+    },
+  );
+
+  test('v3 rejects top-level recipient or pool tampering', () {
+    final payment = _preparedPayments();
+    final pending = IronwoodPendingSendState()
+      ..addPreparedPayments(payment, createdHeight: 299);
+
+    for (final tamper in <void Function(Map<String, Object?>)>[
+      (record) => record['recipient'] = 'zregtestTamperedRecipient',
+      (record) => record['actual_destination_pool'] = 'transparent',
+    ]) {
+      final json = (jsonDecode(jsonEncode(pending.toJson())) as Map)
+          .cast<String, Object?>();
+      final record = (json['records']! as List).single as Map<String, dynamic>;
+      tamper(record.cast<String, Object?>());
+      expect(
+        () => IronwoodPendingSendState.fromJson(json),
+        throwsA(
+          isA<IronwoodPendingSendException>().having(
+            (error) => error.refusal,
+            'refusal',
+            IronwoodPendingSendRefusal.malformed,
+          ),
+        ),
+      );
+    }
+  });
+
+  test('v2 restoration alone synthesizes its legacy singleton output', () {
+    final payment = _preparedPayment(IronwoodDestinationPool.sapling);
+    final pending = IronwoodPendingSendState()
+      ..addPreparedPayment(payment, createdHeight: 299);
+    final json = (jsonDecode(jsonEncode(pending.toJson())) as Map)
+        .cast<String, Object?>();
+    final record = (json['records']! as List).single as Map<String, dynamic>;
+    record['pending_send_version'] = 2;
+    record.remove('payment_outputs');
+
+    final restored = IronwoodPendingSendState.fromJson(json).records.single;
+    expect(restored.paymentOutputs, hasLength(1));
+    expect(restored.paymentOutputs.single.encodedRecipient, restored.recipient);
+    expect(restored.paymentOutputs.single.receiverAddress, restored.recipient);
+    expect(restored.paymentOutputs.single.memoHex, isNull);
+  });
+
+  test('restart treats an interrupted submission as indeterminate', () {
+    final payment = _preparedPayments();
+    final pending = IronwoodPendingSendState()
+      ..addPreparedPayments(payment, createdHeight: 299)
+      ..markSubmitting(payment.txid);
+    final restored = IronwoodPendingSendState.fromJson(pending.toJson())
+      ..recoverInterruptedSubmissions();
+
+    expect(
+      restored.records.single.broadcastState,
+      IronwoodPendingBroadcastState.indeterminate,
+    );
+    expect(restored.reservedNullifiersAt(300), payment.plan.spentNullifiers);
+  });
+
   for (final destination in const [
     IronwoodDestinationPool.transparent,
     IronwoodDestinationPool.sapling,

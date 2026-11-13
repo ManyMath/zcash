@@ -45,6 +45,8 @@ class IronwoodBuildResult {
 
   final int ironwoodSpends;
 
+  final int ironwoodOutputs;
+
   final int ironwoodChangeOutputs;
 
   final bool zip318Canonical;
@@ -94,6 +96,7 @@ class IronwoodBuildResult {
     this.orchardActions = 0,
     this.orchardChangeOutputs = 0,
     this.ironwoodSpends = 0,
+    this.ironwoodOutputs = 1,
     this.ironwoodChangeOutputs = 0,
     this.zip318Canonical = false,
     required this.totalInputZatoshis,
@@ -160,6 +163,7 @@ class IronwoodBuildResult {
       orchardChangeOutputs:
           _optionalInt(_nested(json, 'orchard', 'change_outputs')) ?? 0,
       ironwoodSpends: _optionalInt(_nested(json, 'ironwood', 'spends')) ?? 0,
+      ironwoodOutputs: _optionalInt(_nested(json, 'ironwood', 'outputs')) ?? 1,
       ironwoodChangeOutputs:
           _optionalInt(_nested(json, 'ironwood', 'change_outputs')) ?? 0,
       zip318Canonical: json['zip318_canonical'] == true,

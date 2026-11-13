@@ -17,6 +17,7 @@ class IronwoodPaymentNativeRequest {
     required this.ironwoodSpends,
     required this.outputs,
     required this.ironwoodOutput,
+    this.additionalIronwoodOutputs = const [],
     this.ironwoodChangeZatoshis,
     this.provingParameters,
   });
@@ -28,6 +29,7 @@ class IronwoodPaymentNativeRequest {
   final List<IronwoodBuildIronwoodSpendNote> ironwoodSpends;
   final List<TransparentBuildOutput> outputs;
   final IronwoodBuildOutput ironwoodOutput;
+  final List<IronwoodBuildOutput> additionalIronwoodOutputs;
   final int? ironwoodChangeZatoshis;
   final SaplingProvingParameters? provingParameters;
 }
@@ -72,6 +74,7 @@ class _NativeIronwoodPaymentBackend implements IronwoodPaymentBackend {
         saplingSpends: request.saplingSpends,
         ironwoodSpends: request.ironwoodSpends,
         ironwoodOutput: request.ironwoodOutput,
+        additionalIronwoodOutputs: request.additionalIronwoodOutputs,
         ironwoodChangeZatoshis: request.ironwoodChangeZatoshis,
         seedHex: seedHex,
         account: account,
@@ -97,6 +100,7 @@ class _NativeIronwoodPaymentBackend implements IronwoodPaymentBackend {
         saplingSpends: request.saplingSpends,
         ironwoodSpends: request.ironwoodSpends,
         ironwoodOutput: request.ironwoodOutput,
+        additionalIronwoodOutputs: request.additionalIronwoodOutputs,
         ironwoodChangeZatoshis: request.ironwoodChangeZatoshis,
         seedHex: seedHex,
         account: account,
@@ -437,6 +441,174 @@ IronwoodPreparedPayment prepareNativeIronwoodPayment({
     ),
   );
   return IronwoodPreparedPayment(plan: plan, transaction: transaction);
+}
+
+/// Plans and builds one exact transaction for an ordered set of recipients.
+IronwoodPreparedPayments prepareNativeIronwoodPayments({
+  required ZcashScanResult scan,
+  required List<ProposalOutput> outputs,
+  required String ironwoodChangeAddress,
+  required int targetHeight,
+  required int expiryHeight,
+  ZcashNetwork network = ZcashNetwork.mainnet,
+  String seedHex = '',
+  int account = 0,
+  IronwoodNoteReservations? reservations,
+  int? maxNotes,
+  int? regtestNu63ActivationHeight,
+  SaplingProvingParameters? provingParameters,
+  DateTime? now,
+  bool allowExperimentalIronwoodBuild = false,
+  ZcashFfiBindings? bindings,
+  IronwoodPaymentBackend? backend,
+}) {
+  if (outputs.isEmpty) {
+    throw ArgumentError.value(outputs, 'outputs', 'must not be empty');
+  }
+  if (backend == null && !allowExperimentalIronwoodBuild) {
+    throw StateError(
+      'prepareNativeIronwoodPayments is native-backed; set '
+      'allowExperimentalIronwoodBuild: true to opt in',
+    );
+  }
+  final addressNetwork = switch (network) {
+    ZcashNetwork.mainnet => ZcashAddressNetwork.mainnet,
+    ZcashNetwork.testnet => ZcashAddressNetwork.testnet,
+    ZcashNetwork.regtest => ZcashAddressNetwork.regtest,
+  };
+  for (final output in outputs) {
+    if (output.network != addressNetwork ||
+        output.targetHeight != targetHeight ||
+        output.transactionExpiryHeight != expiryHeight) {
+      throw StateError(
+        'every resolved output must match this build network, target, and expiry',
+      );
+    }
+    final addressExpiryTime = output.addressExpiryTime;
+    if (addressExpiryTime != null &&
+        (now == null ||
+            now.toUtc().millisecondsSinceEpoch ~/ 1000 > addressExpiryTime)) {
+      throw StateError(
+        'every recipient time expiry must be checked immediately before proving',
+      );
+    }
+  }
+  final native =
+      backend ??
+      _NativeIronwoodPaymentBackend(
+        network: network,
+        seedHex: seedHex,
+        account: account,
+        regtestNu63ActivationHeight: regtestNu63ActivationHeight,
+        spendParamsPath: null,
+        outputParamsPath: null,
+        now: now,
+        bindings: bindings,
+      );
+  final anchor = scan.ironwoodAnchor;
+  if (anchor == null) {
+    throw IronwoodSendException(
+      IronwoodSendRefusal.noIronwoodAnchor,
+      'the scan reports no Ironwood anchor',
+    );
+  }
+  final ironwoodPayments = outputs
+      .where((output) => output.actualOutputPool == ProposalOutputPool.ironwood)
+      .toList();
+  final ordinaryPayments = outputs
+      .where((output) => output.actualOutputPool != ProposalOutputPool.ironwood)
+      .toList();
+
+  List<IronwoodBuildIronwoodSpendNote> spendNotes(
+    Iterable<ZcashScannedNote> notes,
+  ) => [
+    for (final note in notes)
+      IronwoodBuildIronwoodSpendNote.fromScannedNote(note, anchorHex: anchor),
+  ];
+
+  IronwoodBuildOutput buildOutput(ProposalOutput output) => IronwoodBuildOutput(
+    address: output.receiverAddress,
+    valueZatoshis: output.amountZatoshis,
+    memoHex: _memoHex(output.memo),
+  );
+
+  IronwoodPaymentNativeRequest requestFor(
+    Iterable<ZcashScannedNote> notes, {
+    required int? changeZatoshis,
+  }) {
+    final paymentOutputs = [
+      for (final output in ironwoodPayments) buildOutput(output),
+    ];
+    final primary = paymentOutputs.isEmpty
+        ? IronwoodBuildOutput(
+            address: ironwoodChangeAddress,
+            valueZatoshis: changeZatoshis,
+          )
+        : paymentOutputs.first;
+    return IronwoodPaymentNativeRequest(
+      targetHeight: targetHeight,
+      expiryHeight: expiryHeight,
+      anchorHex: anchor,
+      ironwoodSpends: spendNotes(notes),
+      outputs: [
+        for (final output in ordinaryPayments)
+          TransparentBuildOutput(
+            address: output.receiverAddress,
+            valueZatoshis: output.amountZatoshis,
+            memoHex: _memoHex(output.memo),
+          ),
+      ],
+      ironwoodOutput: primary,
+      additionalIronwoodOutputs: paymentOutputs.skip(1).toList(),
+      ironwoodChangeZatoshis: paymentOutputs.isNotEmpty ? changeZatoshis : null,
+      provingParameters: provingParameters,
+    );
+  }
+
+  final amount = outputs.fold(0, (sum, output) => sum + output.amountZatoshis);
+  int feeFor(List<ZcashScannedNote> notes) {
+    final input = notes.fold(0, (sum, note) => sum + note.value);
+    final withChange = native
+        .quote(requestFor(notes, changeZatoshis: 1))
+        .feeZatoshis;
+    if (input - amount - withChange > 0) return withChange;
+    if (ironwoodPayments.isEmpty) return withChange;
+    final withoutChange = native
+        .quote(requestFor(notes, changeZatoshis: null))
+        .feeZatoshis;
+    return input - amount - withoutChange == 0 ? withoutChange : withChange;
+  }
+
+  final plan = IronwoodPaymentBatchPlan.fromScan(
+    scan: scan,
+    outputs: outputs,
+    targetHeight: targetHeight,
+    expiryHeight: expiryHeight,
+    reservations: reservations,
+    maxNotes: maxNotes,
+    feeForSpends: feeFor,
+  );
+  if (ironwoodPayments.isEmpty && plan.changeZatoshis <= 0) {
+    throw StateError(
+      'a non-Ironwood-only batch requires positive Ironwood change',
+    );
+  }
+  final buildRequest = requestFor(
+    plan.notes,
+    changeZatoshis: plan.changeZatoshis > 0 ? plan.changeZatoshis : null,
+  );
+  final finalQuote = native.quote(buildRequest);
+  if (finalQuote.feeZatoshis != plan.feeZatoshis ||
+      finalQuote.feeRule != 'zip317') {
+    throw IronwoodSendException(
+      IronwoodSendRefusal.planBuildMismatch,
+      'the final native ZIP 317 quote differs from note selection',
+    );
+  }
+  return IronwoodPreparedPayments(
+    plan: plan,
+    transaction: native.build(buildRequest),
+  );
 }
 
 IronwoodPreparedSend prepareNativeIronwoodSend({

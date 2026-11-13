@@ -34,6 +34,65 @@ class IronwoodPendingSendException implements Exception {
   String toString() => 'IronwoodPendingSendException: $message';
 }
 
+class IronwoodPendingPaymentOutput {
+  const IronwoodPendingPaymentOutput({
+    required this.encodedRecipient,
+    required this.receiverAddress,
+    required this.actualDestinationPool,
+    required this.amountZatoshis,
+    this.memoHex,
+  });
+
+  factory IronwoodPendingPaymentOutput.fromProposal(ProposalOutput output) =>
+      IronwoodPendingPaymentOutput(
+        encodedRecipient: output.encodedAddress,
+        receiverAddress: output.receiverAddress,
+        actualDestinationPool: _paymentDestination(output.actualOutputPool),
+        amountZatoshis: output.amountZatoshis,
+        memoHex: output.memo
+            ?.map((byte) => byte.toRadixString(16).padLeft(2, '0'))
+            .join(),
+      );
+
+  final String encodedRecipient;
+  final String receiverAddress;
+  final IronwoodDestinationPool actualDestinationPool;
+  final int amountZatoshis;
+  final String? memoHex;
+
+  Map<String, Object?> toJson() => {
+    'encoded_recipient': encodedRecipient,
+    'receiver_address': receiverAddress,
+    'actual_destination_pool': actualDestinationPool.name,
+    'amount_zatoshis': amountZatoshis,
+    if (memoHex != null) 'memo': memoHex,
+  };
+
+  factory IronwoodPendingPaymentOutput.fromJson(Map<String, Object?> json) {
+    final output = IronwoodPendingPaymentOutput(
+      encodedRecipient: _string(json, 'encoded_recipient'),
+      receiverAddress: _string(json, 'receiver_address'),
+      actualDestinationPool: _destination(json['actual_destination_pool']),
+      amountZatoshis: _integer(json, 'amount_zatoshis'),
+      memoHex: _optionalString(json, 'memo'),
+    );
+    if (output.encodedRecipient.isEmpty ||
+        output.receiverAddress.isEmpty ||
+        output.amountZatoshis <= 0 ||
+        output.actualDestinationPool == IronwoodDestinationPool.orchard ||
+        output.memoHex != null &&
+            (output.memoHex!.length.isOdd ||
+                output.memoHex!.length > 1024 ||
+                !RegExp(r'^[0-9a-fA-F]*$').hasMatch(output.memoHex!))) {
+      throw const IronwoodPendingSendException(
+        IronwoodPendingSendRefusal.malformed,
+        'pending payment output is malformed',
+      );
+    }
+    return output;
+  }
+}
+
 class IronwoodPendingSendRecord {
   IronwoodPendingSendRecord._({
     required this.transactionHex,
@@ -47,11 +106,13 @@ class IronwoodPendingSendRecord {
     required this.expiryHeight,
     required this.createdHeight,
     required this.broadcastState,
+    required List<IronwoodPendingPaymentOutput> paymentOutputs,
     this.confirmedHeight,
     this.confirmedBlockHash,
-  }) : selectedNullifiers = Set.unmodifiable(selectedNullifiers);
+  }) : selectedNullifiers = Set.unmodifiable(selectedNullifiers),
+       paymentOutputs = List.unmodifiable(paymentOutputs);
 
-  static const int version = 2;
+  static const int version = 3;
 
   final String transactionHex;
   final String txid;
@@ -64,6 +125,7 @@ class IronwoodPendingSendRecord {
   final int expiryHeight;
   final int createdHeight;
   final IronwoodPendingBroadcastState broadcastState;
+  final List<IronwoodPendingPaymentOutput> paymentOutputs;
   final int? confirmedHeight;
   final String? confirmedBlockHash;
 
@@ -84,13 +146,16 @@ class IronwoodPendingSendRecord {
     'expiry_height': expiryHeight,
     'created_height': createdHeight,
     'broadcast_state': broadcastState.name,
+    'payment_outputs': paymentOutputs.map((output) => output.toJson()).toList(),
     if (confirmedHeight != null) 'confirmed_height': confirmedHeight,
     if (confirmedBlockHash != null) 'confirmed_block_hash': confirmedBlockHash,
   };
 
   factory IronwoodPendingSendRecord.fromJson(Map<String, Object?> json) {
     final documentVersion = json['pending_send_version'];
-    if (documentVersion != 1 && documentVersion != version) {
+    if (documentVersion != 1 &&
+        documentVersion != 2 &&
+        documentVersion != version) {
       throw const IronwoodPendingSendException(
         IronwoodPendingSendRefusal.malformed,
         'unsupported Ironwood pending-send record version',
@@ -111,6 +176,12 @@ class IronwoodPendingSendRecord {
         ? ShieldedPendingSourcePool.ironwood
         : _sourcePool(json['source_pool']);
     final broadcast = _broadcastState(json['broadcast_state']);
+    final paymentOutputs = (documentVersion as int) < 3
+        ? null
+        : _objectList(
+            json,
+            'payment_outputs',
+          ).map(IronwoodPendingPaymentOutput.fromJson).toList();
     if (destination == IronwoodDestinationPool.orchard ||
         documentVersion == 1 &&
             destination != IronwoodDestinationPool.ironwood) {
@@ -131,6 +202,20 @@ class IronwoodPendingSendRecord {
       confirmedHeight: confirmedHeight,
       confirmedHash: confirmedHash,
     );
+    if (paymentOutputs != null &&
+        (paymentOutputs.isEmpty ||
+            paymentOutputs.first.encodedRecipient != recipient ||
+            paymentOutputs.first.actualDestinationPool != destination ||
+            paymentOutputs.fold<int>(
+                  0,
+                  (sum, output) => sum + output.amountZatoshis,
+                ) !=
+                amount)) {
+      throw const IronwoodPendingSendException(
+        IronwoodPendingSendRefusal.malformed,
+        'pending payment outputs do not match their total amount',
+      );
+    }
     return IronwoodPendingSendRecord._(
       transactionHex: transaction,
       txid: txid,
@@ -143,6 +228,19 @@ class IronwoodPendingSendRecord {
       expiryHeight: expiry,
       createdHeight: created,
       broadcastState: broadcast,
+      // Versions 1 and 2 did not persist output-level receiver or memo data.
+      // Synthesize their one legacy output only while reading those schemas;
+      // every newly written v3 record supplies exact output metadata.
+      paymentOutputs:
+          paymentOutputs ??
+          [
+            IronwoodPendingPaymentOutput(
+              encodedRecipient: recipient,
+              receiverAddress: recipient,
+              actualDestinationPool: destination,
+              amountZatoshis: amount,
+            ),
+          ],
       confirmedHeight: confirmedHeight,
       confirmedBlockHash: confirmedHash,
     );
@@ -165,6 +263,7 @@ class IronwoodPendingSendRecord {
     expiryHeight: expiryHeight,
     createdHeight: createdHeight,
     broadcastState: broadcastState ?? this.broadcastState,
+    paymentOutputs: paymentOutputs,
     confirmedHeight: clearConfirmation
         ? null
         : confirmedHeight ?? this.confirmedHeight,
@@ -240,6 +339,14 @@ class IronwoodPendingSendState
         expiryHeight: send.expiryHeight,
         createdHeight: createdHeight,
         broadcastState: IronwoodPendingBroadcastState.prepared,
+        paymentOutputs: [
+          IronwoodPendingPaymentOutput(
+            encodedRecipient: send.plan.recipientAddress,
+            receiverAddress: send.plan.recipientAddress,
+            actualDestinationPool: actualDestinationPool,
+            amountZatoshis: send.plan.amountZatoshis,
+          ),
+        ],
       ),
     );
   }
@@ -294,6 +401,59 @@ class IronwoodPendingSendState
         expiryHeight: payment.expiryHeight,
         createdHeight: createdHeight,
         broadcastState: IronwoodPendingBroadcastState.prepared,
+        paymentOutputs: [
+          IronwoodPendingPaymentOutput.fromProposal(payment.plan.output),
+        ],
+      ),
+    );
+  }
+
+  void addPreparedPayments(
+    IronwoodPreparedPayments payment, {
+    required int createdHeight,
+  }) {
+    if (_records.any(
+      (record) => record.txid.toLowerCase() == payment.txid.toLowerCase(),
+    )) {
+      throw const IronwoodPendingSendException(
+        IronwoodPendingSendRefusal.duplicateTransaction,
+        'this Ironwood payment is already in pending-send state',
+      );
+    }
+    final nullifiers = payment.plan.spentNullifiers;
+    if (nullifiers.any(reservedNullifiersAt(createdHeight).contains)) {
+      throw const IronwoodPendingSendException(
+        IronwoodPendingSendRefusal.notesAlreadyReserved,
+        'an Ironwood note selected by this payment is already reserved',
+      );
+    }
+    final outputs = payment.plan.outputs
+        .map(IronwoodPendingPaymentOutput.fromProposal)
+        .toList();
+    _validate(
+      transactionHex: payment.transactionHex,
+      txid: payment.txid,
+      nullifiers: nullifiers,
+      recipient: outputs.first.encodedRecipient,
+      amount: payment.plan.amountZatoshis,
+      fee: payment.plan.feeZatoshis,
+      expiry: payment.expiryHeight,
+      created: createdHeight,
+    );
+    _records.add(
+      IronwoodPendingSendRecord._(
+        transactionHex: payment.transactionHex,
+        txid: payment.txid,
+        selectedNullifiers: nullifiers,
+        sourcePool: ShieldedPendingSourcePool.ironwood,
+        recipient: outputs.first.encodedRecipient,
+        actualDestinationPool: outputs.first.actualDestinationPool,
+        amountZatoshis: payment.plan.amountZatoshis,
+        feeZatoshis: payment.plan.feeZatoshis,
+        expiryHeight: payment.expiryHeight,
+        createdHeight: createdHeight,
+        broadcastState: IronwoodPendingBroadcastState.prepared,
+        paymentOutputs: outputs,
       ),
     );
   }
@@ -347,6 +507,9 @@ class IronwoodPendingSendState
         expiryHeight: payment.expiryHeight,
         createdHeight: createdHeight,
         broadcastState: IronwoodPendingBroadcastState.prepared,
+        paymentOutputs: [
+          IronwoodPendingPaymentOutput.fromProposal(payment.plan.output),
+        ],
       ),
     );
   }
@@ -383,6 +546,31 @@ class IronwoodPendingSendState
     transactionHex: payment.transactionHex,
     nullifiers: payment.plan.spentNullifiers,
     sourcePool: ShieldedPendingSourcePool.ironwood,
+    chainHeight: chainHeight,
+  );
+
+  IronwoodPendingSendRecord requireBroadcastablePayments(
+    IronwoodPreparedPayments payment, {
+    int? chainHeight,
+  }) => _requireBroadcastable(
+    txid: payment.txid,
+    transactionHex: payment.transactionHex,
+    nullifiers: payment.plan.spentNullifiers,
+    sourcePool: ShieldedPendingSourcePool.ironwood,
+    chainHeight: chainHeight,
+  );
+
+  /// Revalidates a prepared send reconstructed from durable state immediately
+  /// before submission. Callers may retain a recovered artifact while the
+  /// chain advances, so recovery-time expiry checks are not sufficient.
+  IronwoodPendingSendRecord requireBroadcastableRecord(
+    IronwoodPendingSendRecord record, {
+    int? chainHeight,
+  }) => _requireBroadcastable(
+    txid: record.txid,
+    transactionHex: record.transactionHex,
+    nullifiers: record.selectedNullifiers,
+    sourcePool: record.sourcePool,
     chainHeight: chainHeight,
   );
 
@@ -423,45 +611,6 @@ class IronwoodPendingSendState
     return record;
   }
 
-  /// Revalidates a prepared send reconstructed from durable state immediately
-  /// before submission. Callers may retain a recovered artifact while the
-  /// chain advances, so recovery-time expiry checks are not sufficient.
-  IronwoodPendingSendRecord requireBroadcastableRecord(
-    IronwoodPendingSendRecord recovered, {
-    int? chainHeight,
-  }) {
-    final index = _records.indexWhere(
-      (record) => record.txid.toLowerCase() == recovered.txid.toLowerCase(),
-    );
-    if (index < 0) {
-      throw const IronwoodPendingSendException(
-        IronwoodPendingSendRefusal.unknownTransaction,
-        'persist an Ironwood prepared send before submitting it',
-      );
-    }
-    final record = _records[index];
-    if (record.transactionHex != recovered.transactionHex ||
-        record.selectedNullifiers.length !=
-            recovered.selectedNullifiers.length ||
-        !record.selectedNullifiers.containsAll(
-          recovered.selectedNullifiers,
-        )) {
-      throw const IronwoodPendingSendException(
-        IronwoodPendingSendRefusal.malformed,
-        'the persisted Ironwood pending send does not match the transaction '
-        'being submitted',
-      );
-    }
-    if (chainHeight != null && record.isExpiredAt(chainHeight)) {
-      throw const IronwoodPendingSendException(
-        IronwoodPendingSendRefusal.expiredRequiresRebuild,
-        'this Ironwood transaction has expired; release its reservation and '
-        'build a new transaction at the current chain height',
-      );
-    }
-    return record;
-  }
-
   void markSubmitting(String txid) => _setBroadcastState(
     txid,
     IronwoodPendingBroadcastState.submitting,
@@ -482,6 +631,20 @@ class IronwoodPendingSendState
     IronwoodPendingBroadcastState.indeterminate,
     allowedFrom: const {IronwoodPendingBroadcastState.submitting},
   );
+
+  /// A process can stop after persisting `submitting` but before recording the
+  /// server response. On restart that outcome is unknown, never safely
+  /// equivalent to either `prepared` or `acknowledged`.
+  void recoverInterruptedSubmissions() {
+    for (var index = 0; index < _records.length; index++) {
+      if (_records[index].broadcastState ==
+          IronwoodPendingBroadcastState.submitting) {
+        _records[index] = _records[index]._copyWith(
+          broadcastState: IronwoodPendingBroadcastState.indeterminate,
+        );
+      }
+    }
+  }
 
   void releaseRejected(String txid) {
     final index = _indexOf(txid);
@@ -739,6 +902,17 @@ List<String> _strings(Map<String, Object?> json, String key) {
   throw const IronwoodPendingSendException(
     IronwoodPendingSendRefusal.malformed,
     'Ironwood pending-send nullifiers must be a string list',
+  );
+}
+
+List<Map<String, Object?>> _objectList(Map<String, Object?> json, String key) {
+  final value = json[key];
+  if (value is List && value.every((entry) => entry is Map)) {
+    return [for (final entry in value) (entry as Map).cast<String, Object?>()];
+  }
+  throw const IronwoodPendingSendException(
+    IronwoodPendingSendRefusal.malformed,
+    'Ironwood pending-send outputs must be an object list',
   );
 }
 

@@ -728,6 +728,7 @@ IronwoodBuildResult buildNativeIronwoodTransaction({
   required IronwoodAnchorSource anchor,
   required Iterable<TransparentBuildInput> inputs,
   required IronwoodBuildOutput ironwoodOutput,
+  Iterable<IronwoodBuildOutput> additionalIronwoodOutputs = const [],
   Iterable<TransparentBuildOutput> outputs = const [],
   Iterable<IronwoodBuildSpendNote> saplingSpends = const [],
   Iterable<IronwoodBuildOrchardSpendNote> orchardSpends = const [],
@@ -761,6 +762,7 @@ IronwoodBuildResult buildNativeIronwoodTransaction({
     anchor: anchor,
     inputs: inputs,
     ironwoodOutput: ironwoodOutput,
+    additionalIronwoodOutputs: additionalIronwoodOutputs,
     outputs: outputs,
     saplingSpends: saplingSpends,
     orchardSpends: orchardSpends,
@@ -785,6 +787,8 @@ IronwoodBuildResult buildNativeIronwoodTransaction({
       for (final input in inputs) input.secretKeyHex,
       if (ironwoodOutput.outgoingViewingKeyHex != null)
         ironwoodOutput.outgoingViewingKeyHex!,
+      for (final output in additionalIronwoodOutputs)
+        if (output.outgoingViewingKeyHex != null) output.outgoingViewingKeyHex!,
       ?seedHex,
     ],
   );
@@ -797,6 +801,7 @@ IronwoodFeeQuote quoteNativeIronwoodFee({
   required IronwoodAnchorSource anchor,
   required Iterable<TransparentBuildInput> inputs,
   required IronwoodBuildOutput ironwoodOutput,
+  Iterable<IronwoodBuildOutput> additionalIronwoodOutputs = const [],
   Iterable<TransparentBuildOutput> outputs = const [],
   Iterable<IronwoodBuildSpendNote> saplingSpends = const [],
   Iterable<IronwoodBuildOrchardSpendNote> orchardSpends = const [],
@@ -828,6 +833,7 @@ IronwoodFeeQuote quoteNativeIronwoodFee({
     anchor: anchor,
     inputs: inputs,
     ironwoodOutput: ironwoodOutput,
+    additionalIronwoodOutputs: additionalIronwoodOutputs,
     outputs: outputs,
     saplingSpends: saplingSpends,
     orchardSpends: orchardSpends,
@@ -852,6 +858,8 @@ IronwoodFeeQuote quoteNativeIronwoodFee({
       for (final input in inputs) input.secretKeyHex,
       if (ironwoodOutput.outgoingViewingKeyHex != null)
         ironwoodOutput.outgoingViewingKeyHex!,
+      for (final output in additionalIronwoodOutputs)
+        if (output.outgoingViewingKeyHex != null) output.outgoingViewingKeyHex!,
       ?seedHex,
     ],
   );

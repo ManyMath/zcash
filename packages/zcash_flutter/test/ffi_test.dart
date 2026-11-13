@@ -1269,6 +1269,34 @@ void main() {
       expect(request['outputs'], isEmpty);
     });
 
+    test('preserves every Ironwood recipient output', () {
+      final request = decode(
+        encodeIronwoodBuildRequest(
+          network: 'regtest',
+          targetHeight: 10,
+          anchor: const IronwoodAnchorSource.tree(''),
+          inputs: inputs,
+          ironwoodOutput: const IronwoodBuildOutput(
+            address: 'uregtest1first',
+            valueZatoshis: 20000,
+          ),
+          additionalIronwoodOutputs: const [
+            IronwoodBuildOutput(
+              address: 'uregtest1second',
+              valueZatoshis: 30000,
+              memoHex: 'abcd',
+            ),
+          ],
+        ),
+      );
+
+      expect(request['ironwood_outputs'], [
+        {'address': 'uregtest1first', 'value_zatoshis': 20000},
+        {'address': 'uregtest1second', 'value_zatoshis': 30000, 'memo': 'abcd'},
+      ]);
+      expect(request.containsKey('ironwood_output'), isFalse);
+    });
+
     test('emits a directly supplied anchor instead of a tree', () {
       final request = decode(
         encodeOrchardBuildRequest(

@@ -400,3 +400,161 @@ class IronwoodPreparedPayment {
   String get txid => transaction.txid;
   int get expiryHeight => transaction.expiryHeight;
 }
+
+/// One note-selection and reservation covering an exact ordered output set.
+class IronwoodPaymentBatchPlan {
+  IronwoodPaymentBatchPlan._({
+    required List<ProposalOutput> outputs,
+    required IronwoodSendPlan base,
+  }) : outputs = List.unmodifiable(outputs),
+       _base = base;
+
+  final List<ProposalOutput> outputs;
+  final IronwoodSendPlan _base;
+
+  List<ZcashScannedNote> get notes => _base.notes;
+  int get amountZatoshis => _base.amountZatoshis;
+  int get feeZatoshis => _base.feeZatoshis;
+  int get changeZatoshis => _base.changeZatoshis;
+  String get anchorHex => _base.anchorHex;
+  int get targetHeight => _base.targetHeight;
+  int? get expiryHeight => _base.expiryHeight;
+  int get inputZatoshis => _base.inputZatoshis;
+  Set<String> get spentNullifiers => _base.spentNullifiers;
+
+  static IronwoodPaymentBatchPlan fromScan({
+    required ZcashScanResult scan,
+    required List<ProposalOutput> outputs,
+    required int targetHeight,
+    required int Function(List<ZcashScannedNote> spends) feeForSpends,
+    IronwoodNoteReservations? reservations,
+    int? maxNotes,
+    int? expiryHeight,
+  }) {
+    if (outputs.isEmpty) {
+      throw ArgumentError.value(outputs, 'outputs', 'must not be empty');
+    }
+    final first = outputs.first;
+    var total = 0;
+    for (final output in outputs) {
+      if (output.network != first.network ||
+          output.targetHeight != targetHeight ||
+          output.transactionExpiryHeight != expiryHeight) {
+        throw StateError(
+          'every payment must be resolved for the same network, target, and expiry',
+        );
+      }
+      if (output.actualOutputPool == ProposalOutputPool.orchard) {
+        throw IronwoodSendException(
+          IronwoodSendRefusal.invalidRecipient,
+          'ordinary post-NU6.3 payments cannot create Orchard outputs',
+        );
+      }
+      total += output.amountZatoshis;
+      if (total > maxMoneyZatoshis) {
+        throw IronwoodSendException(
+          IronwoodSendRefusal.invalidRecipient,
+          'multi-recipient total exceeds max money',
+        );
+      }
+    }
+    final base = IronwoodSendPlan.fromScan(
+      scan: scan,
+      recipientAddress: first.receiverAddress,
+      amountZatoshis: total,
+      targetHeight: targetHeight,
+      feeForSpends: feeForSpends,
+      reservations: reservations,
+      maxNotes: maxNotes,
+      expiryHeight: expiryHeight,
+    );
+    return IronwoodPaymentBatchPlan._(outputs: outputs, base: base);
+  }
+}
+
+class IronwoodPreparedPayments {
+  factory IronwoodPreparedPayments({
+    required IronwoodPaymentBatchPlan plan,
+    required IronwoodBuildResult transaction,
+  }) {
+    void require(String field, int planned, int built) {
+      if (planned != built) {
+        throw IronwoodSendException(
+          IronwoodSendRefusal.planBuildMismatch,
+          'the built transaction $field is $built where the approved payment '
+          'plan says $planned',
+        );
+      }
+    }
+
+    require('fee', plan.feeZatoshis, transaction.feeZatoshis);
+    require('input', plan.inputZatoshis, transaction.ironwoodInputZatoshis);
+    if (transaction.feeRule != 'zip317' ||
+        transaction.ironwoodSpends != plan.notes.length ||
+        transaction.ironwoodAnchor.toLowerCase() !=
+            plan.anchorHex.toLowerCase()) {
+      throw IronwoodSendException(
+        IronwoodSendRefusal.planBuildMismatch,
+        'the native build does not match the approved multi-recipient plan',
+      );
+    }
+    final transparent = plan.outputs
+        .where(
+          (output) => output.actualOutputPool == ProposalOutputPool.transparent,
+        )
+        .toList();
+    final sapling = plan.outputs
+        .where(
+          (output) => output.actualOutputPool == ProposalOutputPool.sapling,
+        )
+        .toList();
+    final ironwood = plan.outputs
+        .where(
+          (output) => output.actualOutputPool == ProposalOutputPool.ironwood,
+        )
+        .toList();
+    int sum(Iterable<ProposalOutput> values) =>
+        values.fold(0, (total, output) => total + output.amountZatoshis);
+    require('transparent output count', transparent.length, transaction.vout);
+    require(
+      'Sapling output count',
+      sapling.isEmpty ? 0 : (sapling.length < 2 ? 2 : sapling.length),
+      transaction.saplingOutputs,
+    );
+    require(
+      'non-Ironwood payment total',
+      sum(transparent) + sum(sapling),
+      transaction.nonIronwoodOutputZatoshis,
+    );
+    require(
+      'Ironwood payment total',
+      ironwood.isEmpty ? plan.changeZatoshis : sum(ironwood),
+      transaction.ironwoodOutputZatoshis,
+    );
+    require(
+      'separate Ironwood change',
+      ironwood.isEmpty ? 0 : plan.changeZatoshis,
+      transaction.ironwoodChangeZatoshis,
+    );
+    require(
+      'Ironwood output count',
+      ironwood.isEmpty
+          ? 1
+          : ironwood.length + (plan.changeZatoshis > 0 ? 1 : 0),
+      transaction.ironwoodOutputs,
+    );
+    return IronwoodPreparedPayments._(plan: plan, transaction: transaction);
+  }
+
+  const IronwoodPreparedPayments._({
+    required this.plan,
+    required this.transaction,
+  });
+
+  final IronwoodPaymentBatchPlan plan;
+  final IronwoodBuildResult transaction;
+
+  String get transactionHex => transaction.transactionHex;
+  String get txid => transaction.txid;
+  int get expiryHeight => transaction.expiryHeight;
+}

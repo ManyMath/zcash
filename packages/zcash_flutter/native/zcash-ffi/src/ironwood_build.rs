@@ -184,6 +184,7 @@ struct ParsedRequest {
     inputs: Vec<ParsedInput>,
     outputs: Vec<ParsedOutput>,
     ironwood_output: ParsedIronwoodOutput,
+    additional_ironwood_outputs: Vec<ParsedIronwoodOutput>,
     sapling_spends: Vec<ParsedSaplingSpend>,
     /// Non-empty selects the ZIP 318 canonical shape.
     orchard_spends: Vec<ParsedOrchardFamilySpend>,
@@ -218,6 +219,60 @@ fn read_zatoshis(value: &Value, field: &str) -> Result<u64, BuildError> {
         ));
     }
     Ok(raw)
+}
+
+fn parse_ironwood_output(raw: &Value, field: &str) -> Result<ParsedIronwoodOutput, BuildError> {
+    if !raw.is_object() {
+        return Err(err(
+            "invalid_request",
+            &format!("{field} must be a JSON object"),
+        ));
+    }
+    let address = raw
+        .get("address")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            err(
+                "invalid_request",
+                &format!("{field} address must be a string"),
+            )
+        })?
+        .to_string();
+    let value = match raw.get("value_zatoshis") {
+        None => None,
+        Some(_) => Some(read_zatoshis(raw, "value_zatoshis")?),
+    };
+    let memo = match raw.get("memo") {
+        None => MemoBytes::empty(),
+        Some(v) => {
+            let memo_hex = v.as_str().ok_or_else(|| {
+                err(
+                    "invalid_memo",
+                    &format!("{field} memo must be a hex string"),
+                )
+            })?;
+            let bytes = hex::decode(memo_hex.trim())
+                .map_err(|_| err("invalid_memo", &format!("{field} memo is not valid hex")))?;
+            if bytes.len() > 512 {
+                return Err(err("invalid_memo", "memo must be at most 512 bytes"));
+            }
+            MemoBytes::from_bytes(&bytes).map_err(|_| err("invalid_memo", "memo is invalid"))?
+        }
+    };
+    let ovk = match raw.get("outgoing_viewing_key") {
+        None => None,
+        Some(_) => Some(orchard::keys::OutgoingViewingKey::from(read_hex_32(
+            raw,
+            "outgoing_viewing_key",
+            "invalid_outgoing_viewing_key",
+        )?)),
+    };
+    Ok(ParsedIronwoodOutput {
+        address,
+        value,
+        memo,
+        ovk,
+    })
 }
 
 fn zatoshis(value: u64, field: &str) -> Result<Zatoshis, BuildError> {
@@ -625,46 +680,54 @@ fn parse_request(request: &Value) -> Result<ParsedRequest, BuildError> {
         }
     }
 
-    let raw_ironwood = request
-        .get("ironwood_output")
-        .filter(|v| v.is_object())
-        .ok_or_else(|| err("invalid_request", "ironwood_output must be a JSON object"))?;
-    let ironwood_address = raw_ironwood
-        .get("address")
-        .and_then(Value::as_str)
-        .ok_or_else(|| {
-            err(
+    let (ironwood_output, additional_ironwood_outputs) = match (
+        request.get("ironwood_output"),
+        request.get("ironwood_outputs"),
+    ) {
+        (Some(_), Some(_)) => {
+            return Err(err(
                 "invalid_request",
-                "ironwood_output address must be a string",
-            )
-        })?
-        .to_string();
-    let ironwood_value = match raw_ironwood.get("value_zatoshis") {
-        None => None,
-        Some(_) => Some(read_zatoshis(raw_ironwood, "value_zatoshis")?),
-    };
-    let memo = match raw_ironwood.get("memo") {
-        None => MemoBytes::empty(),
-        Some(v) => {
-            let memo_hex = v
-                .as_str()
-                .ok_or_else(|| err("invalid_memo", "ironwood_output memo must be a hex string"))?;
-            let bytes = hex::decode(memo_hex.trim())
-                .map_err(|_| err("invalid_memo", "ironwood_output memo is not valid hex"))?;
-            if bytes.len() > 512 {
-                return Err(err("invalid_memo", "memo must be at most 512 bytes"));
+                "supply ironwood_output or ironwood_outputs, not both",
+            ))
+        }
+        (Some(raw), None) => (parse_ironwood_output(raw, "ironwood_output")?, Vec::new()),
+        (None, Some(raw)) => {
+            let raw = raw.as_array().ok_or_else(|| {
+                err(
+                    "invalid_request",
+                    "ironwood_outputs must be a non-empty array",
+                )
+            })?;
+            if raw.is_empty() {
+                return Err(err(
+                    "invalid_request",
+                    "ironwood_outputs must be a non-empty array",
+                ));
             }
-            MemoBytes::from_bytes(&bytes).map_err(|_| err("invalid_memo", "memo is invalid"))?
+            let mut parsed = raw
+                .iter()
+                .enumerate()
+                .map(|(i, value)| parse_ironwood_output(value, &format!("ironwood_outputs[{i}]")))
+                .collect::<Result<Vec<_>, _>>()?;
+            let first = parsed.remove(0);
+            (first, parsed)
+        }
+        (None, None) => {
+            return Err(err(
+                "invalid_request",
+                "ironwood_output or ironwood_outputs is required",
+            ))
         }
     };
-    let ovk = match raw_ironwood.get("outgoing_viewing_key") {
-        None => None,
-        Some(_) => Some(orchard::keys::OutgoingViewingKey::from(read_hex_32(
-            raw_ironwood,
-            "outgoing_viewing_key",
-            "invalid_outgoing_viewing_key",
-        )?)),
-    };
+    if additional_ironwood_outputs
+        .iter()
+        .any(|output| output.value.is_none())
+    {
+        return Err(err(
+            "invalid_request",
+            "only the first Ironwood output may omit value_zatoshis",
+        ));
+    }
 
     Ok(ParsedRequest {
         network,
@@ -676,12 +739,8 @@ fn parse_request(request: &Value) -> Result<ParsedRequest, BuildError> {
         rng_seed,
         inputs,
         outputs,
-        ironwood_output: ParsedIronwoodOutput {
-            address: ironwood_address,
-            value: ironwood_value,
-            memo,
-            ovk,
-        },
+        ironwood_output,
+        additional_ironwood_outputs,
         sapling_spends,
         orchard_spends,
         ironwood_spends,
@@ -940,7 +999,7 @@ fn populate<P: Parameters + Copy>(
         }
     }
 
-    let recipient = ironwood_recipient(&params, &builder, req)?;
+    let recipient = ironwood_recipient(&params, &builder, req, &req.ironwood_output)?;
     builder
         .add_ironwood_output::<std::convert::Infallible>(
             req.ironwood_output.ovk.clone(),
@@ -949,6 +1008,20 @@ fn populate<P: Parameters + Copy>(
             req.ironwood_output.memo.clone(),
         )
         .map_err(|_| err("invalid_output", "could not add the Ironwood output"))?;
+    for output in &req.additional_ironwood_outputs {
+        let recipient = ironwood_recipient(&params, &builder, req, output)?;
+        builder
+            .add_ironwood_output::<std::convert::Infallible>(
+                output.ovk.clone(),
+                recipient,
+                zatoshis(
+                    output.value.expect("additional outputs require a value"),
+                    "value_zatoshis",
+                )?,
+                output.memo.clone(),
+            )
+            .map_err(|_| err("invalid_output", "could not add an Ironwood output"))?;
+    }
 
     Ok((builder, signing_set, sapling_keys, orchard_keys))
 }
@@ -1499,13 +1572,22 @@ where
         ));
     }
     let ironwood_change_total = req.ironwood_change.unwrap_or(0);
-    let output_total: u64 = req
+    let non_ironwood_output_total: u64 = req
         .outputs
         .iter()
         .try_fold(0u64, |acc, o| acc.checked_add(o.value))
-        .and_then(|v| v.checked_add(orchard_change_total))
+        .ok_or_else(|| err("invalid_request", "total output value overflows"))?;
+    let output_total = non_ironwood_output_total
+        .checked_add(orchard_change_total)
         .and_then(|v| v.checked_add(ironwood_change_total))
         .ok_or_else(|| err("invalid_request", "total output value overflows"))?;
+    let additional_ironwood_total: u64 = req
+        .additional_ironwood_outputs
+        .iter()
+        .try_fold(0u64, |acc, output| {
+            acc.checked_add(output.value.expect("additional outputs require a value"))
+        })
+        .ok_or_else(|| err("invalid_request", "total Ironwood output value overflows"))?;
 
     let (probe, _, _, _) = populate(params, req, Zatoshis::ZERO)?;
     let fee = probe
@@ -1516,6 +1598,7 @@ where
 
     let max_ironwood_output = total_input
         .checked_sub(output_total)
+        .and_then(|v| v.checked_sub(additional_ironwood_total))
         .and_then(|v| v.checked_sub(fee_zatoshis));
 
     if req.quote_only {
@@ -1529,7 +1612,8 @@ where
                 BlockHeight::from_u32(req.target_height),
             )),
             "total_input_zatoshis": total_input,
-            "non_ironwood_output_zatoshis": output_total,
+            "non_ironwood_output_zatoshis": non_ironwood_output_total,
+            "additional_ironwood_output_zatoshis": additional_ironwood_total,
             "max_ironwood_output_zatoshis": max_ironwood_output,
             "ironwood_spends": req.ironwood_spends.len(),
             "orchard_spends": req.orchard_spends.len(),
@@ -1553,6 +1637,9 @@ where
             "the Ironwood output value must be positive",
         ));
     }
+    let ironwood_output_total = ironwood_value
+        .checked_add(additional_ironwood_total)
+        .ok_or_else(|| err("invalid_request", "total Ironwood output value overflows"))?;
 
     let (builder, signing_set, sapling_keys, orchard_keys) =
         populate(params, req, zatoshis(ironwood_value, "value_zatoshis")?)?;
@@ -1641,7 +1728,7 @@ where
         "ironwood": {
             "spends": req.ironwood_spends.len(),
             "actions": ironwood_actions,
-            "outputs": 1 + usize::from(ironwood_change_total > 0),
+            "outputs": 1 + req.additional_ironwood_outputs.len() + usize::from(ironwood_change_total > 0),
             "change_outputs": usize::from(ironwood_change_total > 0),
         },
         "zip318_canonical": !req.orchard_spends.is_empty(),
@@ -1653,8 +1740,8 @@ where
         "ironwood_input_zatoshis": ironwood_input_total,
         "ironwood_change_zatoshis": ironwood_change_total,
         "spends_ironwood": !req.ironwood_spends.is_empty(),
-        "non_ironwood_output_zatoshis": output_total,
-        "ironwood_output_zatoshis": ironwood_value,
+        "non_ironwood_output_zatoshis": non_ironwood_output_total,
+        "ironwood_output_zatoshis": ironwood_output_total,
         "rng": if req.rng_seed.is_some() { "deterministic" } else { "os" },
     }))
 }
@@ -1663,8 +1750,9 @@ fn ironwood_recipient<P: Parameters + Copy>(
     params: &P,
     builder: &Builder<P, ()>,
     req: &ParsedRequest,
+    output: &ParsedIronwoodOutput,
 ) -> Result<orchard::Address, BuildError> {
-    match Address::decode(params, &req.ironwood_output.address) {
+    match Address::decode(params, &output.address) {
         Some(Address::Unified(ua)) => {
             super::recipient_expiry::check(
                 &ua,
