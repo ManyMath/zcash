@@ -36,6 +36,31 @@ class _InterruptedSource implements SaplingParameterSource {
   }
 }
 
+class _CancelledSource implements SaplingParameterSource {
+  @override
+  Stream<List<int>> open(SaplingParameterArtifact artifact) async* {
+    throw const SaplingParameterException(
+      SaplingParameterFailure.cancelled,
+      'Sapling parameter acquisition was cancelled',
+    );
+  }
+}
+
+class _CancelAfterTransferSource implements SaplingParameterSource {
+  _CancelAfterTransferSource(this.bytesByName, this.cancel);
+
+  final Map<String, List<int>> bytesByName;
+  final void Function() cancel;
+
+  @override
+  Stream<List<int>> open(SaplingParameterArtifact artifact) async* {
+    yield bytesByName[artifact.fileName]!;
+    if (artifact.fileName == 'sapling-output.params') {
+      cancel();
+    }
+  }
+}
+
 class _GatedSource implements SaplingParameterSource {
   _GatedSource(this.bytesByName);
 
@@ -201,6 +226,168 @@ void main() {
     expect(await File(repaired.outputParamsPath).readAsBytes(), output);
   });
 
+  test('restores a verified quarantine after a publish-time crash', () async {
+    final manifest = _manifest();
+    final namespace = Directory('${temp.path}/zcash-sapling-params');
+    final quarantine = Directory(
+      '${namespace.path}/${manifest.version}.old-crashed',
+    );
+    await quarantine.create(recursive: true);
+    await File(
+      '${quarantine.path}/${manifest.spend.fileName}',
+    ).writeAsBytes(utf8.encode('test spend params'));
+    await File(
+      '${quarantine.path}/${manifest.output.fileName}',
+    ).writeAsBytes(utf8.encode('test output params'));
+
+    final restored = await SaplingProvingParameterCache(
+      cacheRoot: temp,
+      manifest: manifest,
+    ).resolve();
+
+    expect(restored.version, manifest.version);
+    expect(
+      restored.spendParamsPath,
+      '${namespace.path}/${manifest.version}/${manifest.spend.fileName}',
+    );
+    expect(await quarantine.exists(), isFalse);
+  });
+
+  test('removes trusted crash remnants beside a verified target', () async {
+    final manifest = _manifest();
+    final spend = utf8.encode('test spend params');
+    final output = utf8.encode('test output params');
+    await SaplingProvingParameterCache(
+      cacheRoot: temp,
+      manifest: manifest,
+    ).resolve(
+      source: _MemorySource({
+        manifest.spend.fileName: spend,
+        manifest.output.fileName: output,
+      }),
+    );
+    final namespace = Directory('${temp.path}/zcash-sapling-params');
+    final staging = await Directory(
+      '${namespace.path}/.params.tmp-crashed',
+    ).create();
+    await File('${staging.path}/partial').writeAsString('partial');
+    final quarantine = await Directory(
+      '${namespace.path}/${manifest.version}.old-crashed',
+    ).create();
+    await File(
+      '${quarantine.path}/${manifest.spend.fileName}',
+    ).writeAsBytes(spend);
+    await File(
+      '${quarantine.path}/${manifest.output.fileName}',
+    ).writeAsBytes(output);
+
+    await SaplingProvingParameterCache(
+      cacheRoot: temp,
+      manifest: manifest,
+    ).resolve();
+
+    expect(await staging.exists(), isFalse);
+    expect(await quarantine.exists(), isFalse);
+  });
+
+  test('does not choose between multiple verified quarantines', () async {
+    final manifest = _manifest();
+    final namespace = Directory('${temp.path}/zcash-sapling-params');
+    for (final suffix in ['first', 'second']) {
+      final quarantine = await Directory(
+        '${namespace.path}/${manifest.version}.old-$suffix',
+      ).create(recursive: true);
+      await File(
+        '${quarantine.path}/${manifest.spend.fileName}',
+      ).writeAsBytes(utf8.encode('test spend params'));
+      await File(
+        '${quarantine.path}/${manifest.output.fileName}',
+      ).writeAsBytes(utf8.encode('test output params'));
+    }
+
+    await expectLater(
+      SaplingProvingParameterCache(
+        cacheRoot: temp,
+        manifest: manifest,
+      ).resolve(),
+      throwsA(
+        isA<SaplingParameterException>().having(
+          (error) => error.failure,
+          'failure',
+          SaplingParameterFailure.unavailable,
+        ),
+      ),
+    );
+
+    expect(
+      await Directory('${namespace.path}/${manifest.version}').exists(),
+      isFalse,
+    );
+  });
+
+  test('successful publication removes ambiguous stale quarantines', () async {
+    final manifest = _manifest();
+    final spend = utf8.encode('test spend params');
+    final output = utf8.encode('test output params');
+    final namespace = Directory('${temp.path}/zcash-sapling-params');
+    final quarantines = <Directory>[];
+    for (final suffix in ['first', 'second']) {
+      final quarantine = await Directory(
+        '${namespace.path}/${manifest.version}.old-$suffix',
+      ).create(recursive: true);
+      await File(
+        '${quarantine.path}/${manifest.spend.fileName}',
+      ).writeAsString('invalid');
+      quarantines.add(quarantine);
+    }
+
+    final installed =
+        await SaplingProvingParameterCache(
+          cacheRoot: temp,
+          manifest: manifest,
+        ).resolve(
+          source: _MemorySource({
+            manifest.spend.fileName: spend,
+            manifest.output.fileName: output,
+          }),
+        );
+
+    expect(await File(installed.spendParamsPath).readAsBytes(), spend);
+    for (final quarantine in quarantines) {
+      expect(await quarantine.exists(), isFalse);
+    }
+  });
+
+  test('rejects a symlinked crash remnant without following it', () async {
+    if (Platform.isWindows) {
+      return;
+    }
+    final manifest = _manifest();
+    final namespace = await Directory(
+      '${temp.path}/zcash-sapling-params',
+    ).create(recursive: true);
+    final outside = await Directory('${temp.path}/outside').create();
+    final sentinel = File('${outside.path}/sentinel');
+    await sentinel.writeAsString('keep');
+    await Link('${namespace.path}/.params.tmp-crashed').create(outside.path);
+
+    await expectLater(
+      SaplingProvingParameterCache(
+        cacheRoot: temp,
+        manifest: manifest,
+      ).resolve(),
+      throwsA(
+        isA<SaplingParameterException>().having(
+          (error) => error.failure,
+          'failure',
+          SaplingParameterFailure.untrustedCacheEntry,
+        ),
+      ),
+    );
+
+    expect(await sentinel.readAsString(), 'keep');
+  });
+
   test(
     'an interrupted source leaves no published pair or staging files',
     () async {
@@ -240,6 +427,57 @@ void main() {
     },
   );
 
+  test('preserves an explicit source cancellation failure', () async {
+    final manifest = _manifest();
+
+    await expectLater(
+      SaplingProvingParameterCache(
+        cacheRoot: temp,
+        manifest: manifest,
+      ).resolve(source: _CancelledSource()),
+      throwsA(
+        isA<SaplingParameterException>().having(
+          (error) => error.failure,
+          'failure',
+          SaplingParameterFailure.cancelled,
+        ),
+      ),
+    );
+  });
+
+  test(
+    'cancellation after transfer prevents verification publication',
+    () async {
+      final manifest = _manifest();
+      var cancelled = false;
+      final source = _CancelAfterTransferSource({
+        manifest.spend.fileName: utf8.encode('test spend params'),
+        manifest.output.fileName: utf8.encode('test output params'),
+      }, () => cancelled = true);
+
+      await expectLater(
+        SaplingProvingParameterCache(
+          cacheRoot: temp,
+          manifest: manifest,
+        ).resolve(source: source, isCancelled: () => cancelled),
+        throwsA(
+          isA<SaplingParameterException>().having(
+            (error) => error.failure,
+            'failure',
+            SaplingParameterFailure.cancelled,
+          ),
+        ),
+      );
+
+      expect(
+        await Directory(
+          '${temp.path}/zcash-sapling-params/${manifest.version}',
+        ).exists(),
+        isFalse,
+      );
+    },
+  );
+
   test(
     'concurrent callers coalesce and publish only a complete pair',
     () async {
@@ -270,6 +508,32 @@ void main() {
       expect(await published.exists(), isTrue);
     },
   );
+
+  test('coalesced install continues while one caller remains active', () async {
+    final manifest = _manifest();
+    final source = _GatedSource({
+      manifest.spend.fileName: utf8.encode('test spend params'),
+      manifest.output.fileName: utf8.encode('test output params'),
+    });
+    var firstCancelled = false;
+    final cache = SaplingProvingParameterCache(
+      cacheRoot: temp,
+      manifest: manifest,
+    );
+    final first = cache.resolve(
+      source: source,
+      isCancelled: () => firstCancelled,
+    );
+    final second = cache.resolve(source: source, isCancelled: () => false);
+    await source.outputStarted.future;
+
+    firstCancelled = true;
+    source.releaseOutput.complete();
+
+    final installed = await Future.wait([first, second]);
+    expect(source.opens, 2);
+    expect(installed[0].spendParamsPath, installed[1].spendParamsPath);
+  });
 
   test(
     'rejects wrong size and wrong hash without publishing either file',

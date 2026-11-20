@@ -114,6 +114,7 @@ enum SaplingParameterFailure {
   untrustedCacheEntry,
   wrongSize,
   wrongHash,
+  cancelled,
   sourceInterrupted,
   requestTimedOut,
   totalTimedOut,
@@ -148,12 +149,27 @@ final class SaplingProvingParameterCache {
 
   static final Map<
     String,
-    ({String manifestIdentity, Future<SaplingProvingParameters> operation})
+    ({
+      String manifestIdentity,
+      Future<SaplingProvingParameters> operation,
+      List<bool Function()> cancellationChecks,
+    })
   >
   _inFlight = {};
 
-  Future<SaplingProvingParameters> resolve({SaplingParameterSource? source}) {
+  /// Resolves a verified parameter pair, optionally installing it from
+  /// [source].
+  ///
+  /// Concurrent callers for the same manifest share one installation. The
+  /// installation is cancelled only after every coalesced caller that supplied
+  /// [isCancelled] reports cancellation. A caller that needs to detach
+  /// immediately should wrap the shared operation at the application layer.
+  Future<SaplingProvingParameters> resolve({
+    SaplingParameterSource? source,
+    bool Function()? isCancelled,
+  }) {
     _validateManifest();
+    _throwIfCancelled(isCancelled);
     final target = _targetDirectory();
     final key = p.absolute(target.path);
     final manifestIdentity = _manifestIdentity();
@@ -168,25 +184,38 @@ final class SaplingProvingParameterCache {
           ),
         );
       }
+      active.cancellationChecks.add(isCancelled ?? _neverCancelled);
       return active.operation;
     }
-    final acquisition = _resolveSanitized(target, source);
+    final cancellationChecks = <bool Function()>[
+      isCancelled ?? _neverCancelled,
+    ];
+    final acquisition = _resolveSanitized(
+      target,
+      source,
+      () => cancellationChecks.every((check) => check()),
+    );
     late final Future<SaplingProvingParameters> operation;
     operation = acquisition.whenComplete(() {
       if (identical(_inFlight[key]?.operation, operation)) {
         _inFlight.remove(key);
       }
     });
-    _inFlight[key] = (manifestIdentity: manifestIdentity, operation: operation);
+    _inFlight[key] = (
+      manifestIdentity: manifestIdentity,
+      operation: operation,
+      cancellationChecks: cancellationChecks,
+    );
     return operation;
   }
 
   Future<SaplingProvingParameters> _resolveSanitized(
     Directory target,
     SaplingParameterSource? source,
+    bool Function()? isCancelled,
   ) async {
     try {
-      return await _resolve(target, source);
+      return await _resolve(target, source, isCancelled);
     } on SaplingParameterException {
       rethrow;
     } catch (_) {
@@ -200,12 +229,18 @@ final class SaplingProvingParameterCache {
   Future<SaplingProvingParameters> _resolve(
     Directory target,
     SaplingParameterSource? source,
+    bool Function()? isCancelled,
   ) async {
     final deadline = DateTime.now().add(totalTimeout);
     final namespace = Directory(p.dirname(target.path));
+    _throwIfCancelled(isCancelled);
     await _rejectUntrustedDirectoryIfPresent(cacheRoot);
     await _rejectUntrustedDirectoryIfPresent(namespace);
-    final cached = await _verifiedPaths(target);
+    final cached = await _reconcileCrashRemnants(
+      namespace,
+      target,
+      isCancelled,
+    );
     if (cached != null) {
       return cached;
     }
@@ -218,14 +253,32 @@ final class SaplingProvingParameterCache {
 
     await _ensureTrustedDirectory(cacheRoot);
     await _ensureTrustedDirectory(namespace);
+    _throwIfCancelled(isCancelled);
     final nonce = '$pid-${Random.secure().nextInt(1 << 32)}';
     final staging = Directory(p.join(namespace.path, '.params.tmp-$nonce'));
     await staging.create();
     try {
-      await _copyAndVerify(source, manifest.spend, staging, deadline);
-      await _copyAndVerify(source, manifest.output, staging, deadline);
-      await _publish(staging, target, nonce);
-      final installed = await _verifiedPaths(target);
+      await _copyAndVerify(
+        source,
+        manifest.spend,
+        staging,
+        deadline,
+        isCancelled,
+      );
+      await _copyAndVerify(
+        source,
+        manifest.output,
+        staging,
+        deadline,
+        isCancelled,
+      );
+      _throwIfCancelled(isCancelled);
+      await _publish(staging, target, nonce, isCancelled);
+      final installed = await _reconcileCrashRemnants(
+        namespace,
+        target,
+        isCancelled,
+      );
       if (installed == null) {
         throw const SaplingParameterException(
           SaplingParameterFailure.publishFailed,
@@ -245,7 +298,9 @@ final class SaplingProvingParameterCache {
     SaplingParameterArtifact artifact,
     Directory staging,
     DateTime deadline,
+    bool Function()? isCancelled,
   ) async {
+    _throwIfCancelled(isCancelled);
     final remaining = deadline.difference(DateTime.now());
     if (remaining <= Duration.zero) {
       throw const SaplingParameterException(
@@ -321,6 +376,10 @@ final class SaplingProvingParameterCache {
               if (stopped) {
                 return;
               }
+              if (isCancelled?.call() ?? false) {
+                stop(error: _cancelledException);
+                return;
+              }
               if (DateTime.now().isAfter(deadline)) {
                 stop(
                   error: const SaplingParameterException(
@@ -376,13 +435,14 @@ final class SaplingProvingParameterCache {
         stop();
       }
     }
+    _throwIfCancelled(isCancelled);
     if (bytes != artifact.expectedBytes) {
       throw const SaplingParameterException(
         SaplingParameterFailure.wrongSize,
         'a Sapling parameter artifact did not have its expected size',
       );
     }
-    if (await _hash(destination) != artifact.sha256Hex) {
+    if (await _hash(destination, isCancelled) != artifact.sha256Hex) {
       throw const SaplingParameterException(
         SaplingParameterFailure.wrongHash,
         'a Sapling parameter artifact failed cryptographic verification',
@@ -394,9 +454,12 @@ final class SaplingProvingParameterCache {
     Directory staging,
     Directory target,
     String nonce,
+    bool Function()? isCancelled,
   ) async {
+    _throwIfCancelled(isCancelled);
     final type = await FileSystemEntity.type(target.path, followLinks: false);
     if (type == FileSystemEntityType.notFound) {
+      _throwIfCancelled(isCancelled);
       await staging.rename(target.path);
       return;
     }
@@ -407,9 +470,14 @@ final class SaplingProvingParameterCache {
       );
     }
     final quarantine = Directory('${target.path}.old-$nonce');
+    _throwIfCancelled(isCancelled);
     await target.rename(quarantine.path);
     try {
+      _throwIfCancelled(isCancelled);
       await staging.rename(target.path);
+    } on SaplingParameterException {
+      await quarantine.rename(target.path);
+      rethrow;
     } catch (_) {
       await quarantine.rename(target.path);
       throw const SaplingParameterException(
@@ -420,7 +488,11 @@ final class SaplingProvingParameterCache {
     await quarantine.delete(recursive: true);
   }
 
-  Future<SaplingProvingParameters?> _verifiedPaths(Directory directory) async {
+  Future<SaplingProvingParameters?> _verifiedPaths(
+    Directory directory,
+    bool Function()? isCancelled,
+  ) async {
+    _throwIfCancelled(isCancelled);
     final type = await FileSystemEntity.type(
       directory.path,
       followLinks: false,
@@ -436,8 +508,8 @@ final class SaplingProvingParameterCache {
     }
     final spend = File(p.join(directory.path, manifest.spend.fileName));
     final output = File(p.join(directory.path, manifest.output.fileName));
-    if (!await _validFile(spend, manifest.spend) ||
-        !await _validFile(output, manifest.output)) {
+    if (!await _validFile(spend, manifest.spend, isCancelled) ||
+        !await _validFile(output, manifest.output, isCancelled)) {
       return null;
     }
     return SaplingProvingParameters._(
@@ -447,7 +519,12 @@ final class SaplingProvingParameterCache {
     );
   }
 
-  Future<bool> _validFile(File file, SaplingParameterArtifact artifact) async {
+  Future<bool> _validFile(
+    File file,
+    SaplingParameterArtifact artifact,
+    bool Function()? isCancelled,
+  ) async {
+    _throwIfCancelled(isCancelled);
     final type = await FileSystemEntity.type(file.path, followLinks: false);
     if (type == FileSystemEntityType.notFound) {
       return false;
@@ -460,11 +537,100 @@ final class SaplingProvingParameterCache {
     }
     final stat = await file.stat();
     return stat.size == artifact.expectedBytes &&
-        await _hash(file) == artifact.sha256Hex;
+        await _hash(file, isCancelled) == artifact.sha256Hex;
   }
 
-  Future<String> _hash(File file) async =>
-      (await sha256.bind(file.openRead()).first).toString();
+  Future<String> _hash(File file, bool Function()? isCancelled) async {
+    _throwIfCancelled(isCancelled);
+    final digest = await sha256
+        .bind(
+          file.openRead().map((chunk) {
+            _throwIfCancelled(isCancelled);
+            return chunk;
+          }),
+        )
+        .first;
+    _throwIfCancelled(isCancelled);
+    return digest.toString();
+  }
+
+  Future<SaplingProvingParameters?> _reconcileCrashRemnants(
+    Directory namespace,
+    Directory target,
+    bool Function()? isCancelled,
+  ) async {
+    _throwIfCancelled(isCancelled);
+    final namespaceType = await FileSystemEntity.type(
+      namespace.path,
+      followLinks: false,
+    );
+    if (namespaceType == FileSystemEntityType.notFound) {
+      return null;
+    }
+    var cached = await _verifiedPaths(target, isCancelled);
+    final quarantinePrefix = '${manifest.version}.old-';
+    const stagingPrefix = '.params.tmp-';
+    final quarantines = <Directory>[];
+    final verified = <Directory>[];
+    await for (final entry in namespace.list(followLinks: false)) {
+      _throwIfCancelled(isCancelled);
+      final name = p.basename(entry.path);
+      final isStaging = name.startsWith(stagingPrefix);
+      final isQuarantine = name.startsWith(quarantinePrefix);
+      if (!isStaging && !isQuarantine) {
+        continue;
+      }
+      final type = await FileSystemEntity.type(entry.path, followLinks: false);
+      if (type != FileSystemEntityType.directory) {
+        throw const SaplingParameterException(
+          SaplingParameterFailure.untrustedCacheEntry,
+          'the Sapling parameter cache contains an untrusted entry',
+        );
+      }
+      final directory = Directory(entry.path);
+      await _rejectSymlinks(directory);
+      if (isStaging) {
+        await directory.delete(recursive: true);
+      } else {
+        quarantines.add(directory);
+        if (await _verifiedPaths(directory, isCancelled) != null) {
+          verified.add(directory);
+        }
+      }
+    }
+    final targetType = await FileSystemEntity.type(
+      target.path,
+      followLinks: false,
+    );
+    if (targetType == FileSystemEntityType.notFound && verified.length == 1) {
+      await verified.single.rename(target.path);
+      cached = await _verifiedPaths(target, isCancelled);
+    }
+    if (cached != null) {
+      for (final quarantine in quarantines) {
+        final type = await FileSystemEntity.type(
+          quarantine.path,
+          followLinks: false,
+        );
+        if (type == FileSystemEntityType.directory) {
+          await quarantine.delete(recursive: true);
+        }
+      }
+    }
+    return cached;
+  }
+
+  Future<void> _rejectSymlinks(Directory root) async {
+    await for (final entry in root.list(recursive: true, followLinks: false)) {
+      final type = await FileSystemEntity.type(entry.path, followLinks: false);
+      if (type == FileSystemEntityType.link) {
+        throw const SaplingParameterException(
+          SaplingParameterFailure.untrustedCacheEntry,
+          'the Sapling parameter cache contains an untrusted entry',
+        );
+      }
+    }
+  }
 
   Future<void> _ensureTrustedDirectory(Directory directory) async {
     final type = await FileSystemEntity.type(
@@ -526,6 +692,19 @@ final class SaplingProvingParameterCache {
         SaplingParameterFailure.invalidManifest,
         'the Sapling parameter manifest is invalid',
       );
+    }
+  }
+
+  static const _cancelledException = SaplingParameterException(
+    SaplingParameterFailure.cancelled,
+    'Sapling parameter acquisition was cancelled',
+  );
+
+  static bool _neverCancelled() => false;
+
+  void _throwIfCancelled(bool Function()? isCancelled) {
+    if (isCancelled?.call() ?? false) {
+      throw _cancelledException;
     }
   }
 }
